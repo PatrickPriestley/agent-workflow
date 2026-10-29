@@ -49,6 +49,36 @@ A quick test: if you would be comfortable explaining the decision in a PR descri
 the fact, use feature-loop. If someone should approve the decision before the code exists,
 use the intent path.
 
+### Known problem, solution needs approval
+
+A long-standing production bug or batch-job failure, where the cause is understood, there
+are several candidate fixes, and the chosen one must meet internal guidelines or be approved
+by an architecture team, goes through the formal path. The alignment happens in the spec.
+
+- **Intent: short and heavy on evidence.** Incident history, failure rates or failed runs,
+  business impact and hard constraints (batch window, data volume, SLA). No solutions: the
+  intent skill keeps them out so the problem record is not anchored to the first idea. The
+  proposed outcome says what must be true afterwards, for example "the nightly run finishes
+  within its window and a failure no longer needs a manual restart".
+- **Spec: where the options are argued and approved.** Describe each candidate in the
+  Design section with its trade-offs and the recommended one. The spec skill checks the
+  design against every policy skill and turns each conflict into a concern with a named
+  owner (for example the architecture team), which must be resolved before approval. A
+  production batch job is usually `risk: high`, which makes `tech_lead_signoff` mandatory.
+- **Plan: only after approval,** built from the chosen option. The rejected options go in
+  its "Alternatives not taken" section with the reason each lost.
+
+To make this work well:
+
+1. **Write your architecture guidelines as policy skills** (`policy: true` in the skill's
+   frontmatter). The spec skill checks only the policies it can find, and reports any area
+   left unchecked rather than inventing standards.
+2. **Attack the spec before the review meeting:** `agent-review plan docs/specs/<id>.md`
+   has a different model hunt the chosen option for failure modes (restarts, partial runs,
+   ordering, idempotency), so reviewers spend their time on the trade-offs.
+3. **After the fix ships, run the `incident-to-eval` skill** to turn the production failure
+   into a permanent regression case.
+
 ## Install
 
     ./install.sh            # links everything into place; safe to rerun
