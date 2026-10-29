@@ -129,7 +129,10 @@ case "${1:-}" in
           [ -e "$gone" ] && die "commit refused: $gone is removed from the commit but still on disk, so the tests would still see it. Move it aside, or commit with --no-verify and say why."
         done < <(git diff --cached --name-only -z --diff-filter=D)
         echo "commit-gate: running $cmd" >&2
-        # Git exports these to its hooks; left in place they redirect any git the tests run.
+        # Git exports these to its hooks; left in place they redirect any git the tests run, and
+        # break git in other worktrees. The tests read the working tree, which the unstaged check
+        # above guarantees matches the commit; a test that reads the index itself (git diff
+        # --cached) sees the ordinary index, not git's temporary one for `commit -a`.
         env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY \
             -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR sh -c "$cmd" \
           || die "commit refused, because \`$cmd\` failed. Fix it, or commit with --no-verify and say why."
