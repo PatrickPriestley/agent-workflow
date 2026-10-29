@@ -13,6 +13,42 @@ Cursor, Gemini), plus the two commands that make it hold:
   not a Conventional Commit, or when the message or an added line carries AI attribution.
 - `AGENT-WORKFLOW.md`: the rules every agent loads at session start.
 
+## Which loop to use
+
+Use the formal `intent` → `spec` → `plan` loop when the decisions need recording and agreeing
+before code exists. Use `feature-loop` when you are the one deciding and the code plus a short
+note is enough record.
+
+Choose intent, spec and plan when any of these holds:
+
+- **Someone else has to agree:** a teammate, a stakeholder or a reviewer of the
+  requirements, not just of the code. Each stage ends at a human gate for that reason.
+- **The problem is clearer than the solution.** The intent captures the problem in the
+  originator's words; the spec is where competing designs are argued before anyone builds.
+- **The change is hard to undo or crosses boundaries:** a data model or migration, a public
+  API, a security or compliance surface, or work spanning several systems or teams. The spec
+  stage applies the policy skills and flags concerns.
+- **You need traceability later:** an audit trail, or "why did we build it this way"
+  months on, with numbered requirements tied to the plan.
+- **It is more than one PR of work,** or more than one person or agent builds pieces of it.
+
+Choose feature-loop when you own the decision and can state the goal in a sentence, it fits
+on one branch and one PR and can be reverted, and what is uncertain is technical (which
+probing settles) rather than what should be built. Most day-to-day features, fixes,
+refactors and tooling changes fall here.
+
+In between:
+
+- **A small change that still needs sign-off:** write the intent with `size: small`. It
+  skips the spec stage, and the plan names one requirement.
+- **Starting light and finding it bigger:** feature-loop stops when two readings of the
+  request lead to different work, or when scope would grow. That is the moment to write an
+  intent instead of pushing on.
+
+A quick test: if you would be comfortable explaining the decision in a PR description after
+the fact, use feature-loop. If someone should approve the decision before the code exists,
+use the intent path.
+
 ## Install
 
     ./install.sh            # links everything into place; safe to rerun
