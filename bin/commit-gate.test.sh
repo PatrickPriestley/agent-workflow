@@ -185,6 +185,13 @@ it "enable --tests without a command fails with usage"
 out=$(cd "$R" && "$GATE" enable --tests 2>&1); rc=$?
 assert_eq 2 "$rc"
 
+it "a test command that uses git in another repository works inside the hook"
+RG=$(repo gitenv); OTHER=$(repo othergit); git -C "$OTHER" worktree add -q "$TMPROOT/otherwt" -b otherwt
+(cd "$RG" && "$GATE" enable --tests "git -C '$TMPROOT/otherwt' status >/dev/null && git -C '$TMPROOT/otherwt' add -A" >/dev/null 2>&1)
+out=$(commit "$RG" usesgit); rc=$?
+assert_eq 0 "$rc"
+assert_eq "chore: usesgit" "$(git -C "$RG" log -1 --format=%s)"
+
 # ---- commit messages: conventional format and no attribution trailers ----
 msgcommit() { git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -F - 2>&1; }
 

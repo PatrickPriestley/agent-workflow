@@ -129,7 +129,10 @@ case "${1:-}" in
           [ -e "$gone" ] && die "commit refused: $gone is removed from the commit but still on disk, so the tests would still see it. Move it aside, or commit with --no-verify and say why."
         done < <(git diff --cached --name-only -z --diff-filter=D)
         echo "commit-gate: running $cmd" >&2
-        sh -c "$cmd" || die "commit refused, because \`$cmd\` failed. Fix it, or commit with --no-verify and say why."
+        # Git exports these to its hooks; left in place they redirect any git the tests run.
+        env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY \
+            -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR sh -c "$cmd" \
+          || die "commit refused, because \`$cmd\` failed. Fix it, or commit with --no-verify and say why."
         ;;
       commit-msg)
         file="${3:-}"; [ -f "$file" ] || die "commit-msg hook called without a message file"
