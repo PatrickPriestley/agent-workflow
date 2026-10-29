@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: typo-no-loop
+description: "A one-word typo in the README is a no-behaviour, one-file change; the skill should not run."
+tags: [batch2]
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

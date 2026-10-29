@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# agent-review — an independent, read-only review by a different kind of agent, run headless.
+#
+#   agent-review code [RANGE]   review a commit range (default: merge-base with main..HEAD)
+#                               plus any uncommitted work
+#   agent-review plan FILE      adversarially review a plan or design document
+#   options: --reviewer codex|claude|cursor|gemini   --model M   --timeout SECONDS (default 900)
+#
+# The reviewer is never the caller's own kind. The caller is detected from the environment
+# (Codex sets CODEX_THREAD_ID, Claude Code sets CLAUDECODE; Codex is checked first because a
+# child inherits its parent's variables) or set with AGENT_REVIEW_CALLER. The reviewer comes
+# from --reviewer, then `git config agentreview.reviewer`, then the first installed of
+# codex, claude, cursor, gemini that is not the caller.
+#
+# Each reviewer runs read-only: codex exec --sandbox read-only, claude -p with Read/Grep/Glob
+# only, cursor-agent --mode plan, gemini --approval-mode plan. The pinned diff, log and any
+# uncommitted work are written to a folder inside .git for it to read; secret-looking files
+# are listed by name only. The review counts only if it ends with <<AGENT-REVIEW-END>>.
+#
+# Exit: 0 review complete (printed on stdout), 2 usage or setup problem, 3 no end marker,
+# 4 the reviewer failed or timed out.
+set -uo pipefail
+END='<<AGENT-REVIEW-END>>'
+usage() { echo "usage: agent-review code [RANGE] | plan FILE [--reviewer KIND] [--model M] [--timeout SECONDS]" >&2; exit 2; }
+fail() { echo "agent-review: $*" >&2; exit 2; }
+
+mode="${1:-}"; [ -n "$mode" ] || usage; shift
+target=""; reviewer=""; model=""; timeout=900
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --reviewer) [ -n "${2:-}" ] || usage; reviewer="$2"; shift 2 ;;
+    --model) [ -n "${2:-}" ] || usage; model="$2"; shift 2 ;;
+    --timeout) [ -n "${2:-}" ] || usage; timeout="$2"; shift 2 ;;
+    -*) usage ;;
+    *) [ -z "$target" ] || usage; target="$1"; shift ;;
+  esac
+done
+case "$mode" in code|plan) ;; *) usage ;; esac
+git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
+root="$(git rev-parse --show-toplevel)"; cd "$root" || exit 2
+
+# ---- who is calling, who reviews -------------------------------------------------
+caller="${AGENT_REVIEW_CALLER:-}"
+if [ -z "$caller" ]; then
+  if [ -n "${CODEX_THREAD_ID:-}" ]; then caller=codex
+  elif [ -n "${CLAUDECODE:-}" ]; then caller=claude
+  fi
+fi
+bin_of() { case "$1" in cursor) echo cursor-agent ;; *) echo "$1" ;; esac; }
+[ -n "$reviewer" ] || reviewer="$(git config agentreview.reviewer || true)"
+if [ -z "$reviewer" ]; then
+  for k in codex claude cursor gemini; do
+    [ "$k" = "$caller" ] && continue
+    command -v "$(bin_of "$k")" >/dev/null 2>&1 && { reviewer="$k"; break; }
+  done
+  [ -n "$reviewer" ] || fail "no reviewer installed: need one of codex, claude, cursor-agent or gemini other than ${caller:-the caller}"
+fi
+case "$reviewer" in codex|claude|cursor|gemini) ;; *) fail "unknown reviewer '$reviewer' (codex, claude, cursor or gemini)" ;; esac
+[ "$reviewer" = "$caller" ] && fail "--reviewer $reviewer is the same kind as the calling agent; choose a different kind so the review is independent"
+command -v "$(bin_of "$reviewer")" >/dev/null 2>&1 || fail "$(bin_of "$reviewer") is not installed"
+[ -n "$model" ] || model="$(git config "agentreview.$reviewer.model" || true)"
+
+# ---- the material, pinned and written inside .git ---------------------------------
+dir="$(git rev-parse --path-format=absolute --git-path agent-review)/$(date +%Y%m%d-%H%M%S)-$$"
+mkdir -p "$dir" || fail "cannot create $dir"
+secret_re='(^|/)\.env|\.pem$|\.key$|(^|/)id_[a-z0-9]+$|secret|credential|token'
+
+if [ "$mode" = code ]; then
+  if [ -n "$target" ]; then
+    case "$target" in *..*) ;; *) fail "RANGE must look like BASE..HEAD" ;; esac
+    base="$(git rev-parse --verify --quiet "${target%%..*}^{commit}")" || fail "unknown base in $target"
+    head="$(git rev-parse --verify --quiet "${target##*..}^{commit}")" || fail "unknown head in $target"
+  else
+    head="$(git rev-parse HEAD)"; base=""
+    for cand in origin/HEAD main master origin/main origin/master; do
+      git rev-parse --verify --quiet "$cand^{commit}" >/dev/null || continue
+      base="$(git merge-base HEAD "$cand")" && break
+    done
+    [ -n "$base" ] || fail "cannot find a base branch (main, master or origin/HEAD); pass RANGE"
+  fi
+  range="$base..$head"
+  git diff "$base" "$head" > "$dir/diff.patch"
+  git log --stat "$range" > "$dir/log.txt"
+  git diff HEAD > "$dir/worktree.patch"
+  git ls-files --others --exclude-standard | while IFS= read -r f; do
+    if printf '%s\n' "$f" | grep -iqE "$secret_re"; then echo "$f (looks like a secret: do not open)"; else echo "$f"; fi
+  done > "$dir/untracked.txt"
+  if [ "$base" = "$head" ] && [ ! -s "$dir/worktree.patch" ] && [ ! -s "$dir/untracked.txt" ]; then
+    rm -rf "$dir"; fail "nothing to review: $range is empty and there is no uncommitted work"
+  fi
+  subject="the changes in $root, committed range $range"
+  material="- $dir/diff.patch: git diff $range
+- $dir/log.txt: the commits in that range
+- $dir/worktree.patch: uncommitted changes to tracked files (may be empty)
+- $dir/untracked.txt: untracked files; open each one except those marked as secrets"
+  ask="Review $subject. Read the material above and the repository's files for context."
+else
+  [ -n "$target" ] && [ -f "$target" ] || fail "plan mode needs an existing FILE"
+  plan="$(cd "$(dirname "$target")" && pwd)/$(basename "$target")"
+  subject="the plan at $plan"
+  material="- $plan: the plan or design to attack"
+  ask="Adversarially review $subject. Find what is WRONG with it; do not praise it. Hunt for logic errors and unhandled edge cases, wrong or unstated assumptions, failure handling that silently does the wrong thing, anything that would let a test pass while production breaks, and unjustified scope or complexity."
+fi
+
+cat > "$dir/prompt.md" <<PROMPT
+You are an independent reviewer. You may read files but must not modify anything.
+
+Material:
+$material
+
+$ask
+Hunt especially for bugs tests cannot see: state kept between calls, ordering and timing,
+unsafe defaults, and failure paths that report success.
+
+Report only actionable findings. Number each one and give file:line (or the plan section),
+the concrete failure case (an input or sequence and the wrong outcome), and a one-line fix.
+Skip anything you cannot substantiate. End your response with this exact line:
+$END
+PROMPT
+
+# ---- run it, read-only, with a time limit ---------------------------------------------
+out="$dir/review.md"; err="$dir/reviewer.log"
+prompt="$(cat "$dir/prompt.md")"
+cmd=()
+case "$reviewer" in
+  codex)  cmd=(codex exec --sandbox read-only --skip-git-repo-check --ephemeral -o "$out"); [ -n "$model" ] && cmd+=(-m "$model"); cmd+=("$prompt") ;;
+  claude) cmd=(claude -p); [ -n "$model" ] && cmd+=(--model "$model"); cmd+=(--allowedTools Read Grep Glob) ;;
+  cursor) cmd=(cursor-agent -p --trust --mode plan --output-format text); [ -n "$model" ] && cmd+=(--model "$model"); cmd+=("$prompt") ;;
+  gemini) cmd=(gemini --approval-mode plan); [ -n "$model" ] && cmd+=(-m "$model"); cmd+=(-p "$prompt") ;;
+esac
+echo "agent-review: ${caller:-unknown caller} -> $reviewer reviewing $subject" >&2
+if [ "$reviewer" = claude ]; then
+  perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < "$dir/prompt.md" > "$out" 2> "$err"
+elif [ "$reviewer" = codex ]; then
+  perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < /dev/null > "$err" 2>&1
+else
+  perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < /dev/null > "$out" 2> "$err"
+fi
+rc=$?
+if [ "$rc" = 142 ]; then echo "agent-review: $reviewer timed out after ${timeout}s; output so far in $out" >&2; exit 4; fi
+if [ "$rc" != 0 ]; then echo "agent-review: $reviewer exited $rc; see $err" >&2; tail -5 "$err" >&2; exit 4; fi
+[ -f "$out" ] && cat "$out"
+if ! grep -qF "$END" "$out" 2>/dev/null; then
+  echo "agent-review: the reply has no end marker, so it is not a complete review; output in $out" >&2
+  exit 3
+fi
+echo "agent-review: complete; saved in $out" >&2

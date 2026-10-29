@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# commit-gate — git hooks that keep commits honest, for every agent and for your terminal.
+#
+#   commit-gate enable [--tests "<command>"]   install the hooks; --tests also runs that command
+#   commit-gate status                         show which checks are on
+#   commit-gate disable                        turn every check off; remove the hooks this repo owns
+#   commit-gate run pre-commit|commit-msg FILE what the hooks run; not for direct use
+#
+# Checks (each a git config switch in the repository):
+#   commitgate.test          the command must pass on what is being committed (pre-commit)
+#   commitgate.conventional  the subject must be a Conventional Commit (commit-msg), default on
+#   commitgate.attribution   no Co-Authored-By, Claude-Session or "Generated with <AI tool>" lines
+#                            in the message or in lines the commit adds (both hooks), default on
+# Git runs the hooks from the repository root. `git commit --no-verify` bypasses them all.
+# Worktrees share the hooks and settings. A hook that is not commit-gate's is never replaced.
+set -uo pipefail
+self="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+marker="# installed by commit-gate"
+hooks=(pre-commit commit-msg)
+attribution_re='^[[:space:]]*(>[[:space:]]*)?((co-authored-by|claude-session)[[:space:]]*:|([^[:alnum:][:space:]]{1,8}[[:space:]]*)?generated (with|by) \[?(claude|codex|cursor|copilot|gemini|chatgpt))'
+conventional_re='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?: [^[:space:]]'
+git_subject_re='^(Merge |Revert "|fixup! |squash! |amend! )'
+
+die() { echo "commit-gate: $*" >&2; exit 1; }
+in_repo() { git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"; }
+hook_path() { printf '%s/%s' "$(git rev-parse --path-format=absolute --git-path hooks)" "$1"; }
+ours() { [ -f "$1" ] && grep -qF "$marker" "$1"; }
+on() { [ "$(git config "commitgate.$1" || true)" = true ]; }
+
+# The hook is a small real file, so a moved or deleted checkout makes commits fail loudly
+# instead of git silently skipping a dangling link.
+hook_body() {
+  local quoted="'${self//\'/\'\\\'\'}'"
+  cat <<HOOK
+#!/bin/sh
+$marker; see \`commit-gate status\`.
+# Nothing switched on for this repository (e.g. disabled under a shared hooks folder): no checks.
+[ -n "\$(git config commitgate.test)" ] || [ "\$(git config commitgate.conventional)" = true ] || [ "\$(git config commitgate.attribution)" = true ] || exit 0
+gate=$quoted
+[ -x "\$gate" ] || gate="\$(command -v commit-gate || true)"
+[ -n "\$gate" ] || { echo "commit-gate: not found; reinstall agent-workflow, or commit with --no-verify" >&2; exit 1; }
+exec "\$gate" run $1 "\$@"
+HOOK
+}
+
+attribution_in() {  # $1 = label; stdin = lines to check. Prints offending lines, returns 0 if any.
+  local found
+  found="$(grep -iE "$attribution_re" || true)"
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found" | sed "s|^|  $1: |" >&2
+  return 0
+}
+
+case "${1:-}" in
+  enable)
+    shift; tests=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --tests) [ -n "${2:-}" ] || { echo 'usage: commit-gate enable [--tests "<command>"]' >&2; exit 2; }; tests="$2"; shift 2 ;;
+        *) echo 'usage: commit-gate enable [--tests "<command>"]' >&2; exit 2 ;;
+      esac
+    done
+    in_repo
+    custom="$(git config core.hooksPath || true)"
+    case "$custom" in
+      ""|/*|"~"*) ;;
+      *) die "core.hooksPath is relative ($custom), so each worktree would look in its own folder and new worktrees would be unchecked; set an absolute path first" ;;
+    esac
+    for h in "${hooks[@]}"; do
+      hook="$(hook_path "$h")"
+      if [ -e "$hook" ] || [ -L "$hook" ]; then ours "$hook" || die "$hook already exists and is not commit-gate's; merge it by hand"; fi
+    done
+    for h in "${hooks[@]}"; do
+      hook="$(hook_path "$h")"; mkdir -p "$(dirname "$hook")" 2>/dev/null
+      tmp="$hook.commit-gate.$$"
+      { hook_body "$h" > "$tmp" && chmod +x "$tmp" && mv -f "$tmp" "$hook"; } 2>/dev/null || { rm -f "$tmp"; die "cannot write $hook"; }
+    done
+    [ -n "$(git config commitgate.conventional || true)" ] || git config commitgate.conventional true || die "cannot write git config"
+    [ -n "$(git config commitgate.attribution || true)" ] || git config commitgate.attribution true || die "cannot write git config"
+    if [ -n "$tests" ]; then git config commitgate.test "$tests" || die "cannot record the test command"; fi
+    echo "commit-gate: enabled; tests: ${tests:-$(git config commitgate.test || echo none)}; conventional: $(git config commitgate.conventional); attribution check: $(git config commitgate.attribution)"
+    ;;
+  status)
+    in_repo
+    for h in "${hooks[@]}"; do
+      hook="$(hook_path "$h")"
+      if ours "$hook"; then s=installed; elif [ -e "$hook" ]; then s="another hook is installed"; else s=missing; fi
+      echo "commit-gate: $h hook $s"
+    done
+    all=1; for h in "${hooks[@]}"; do ours "$(hook_path "$h")" || all=0; done
+    [ "$all" = 1 ] && echo "commit-gate: enabled" || echo "commit-gate: not fully installed"
+    echo "commit-gate: tests: $(git config commitgate.test || echo none); conventional: $(git config commitgate.conventional || echo off); attribution check: $(git config commitgate.attribution || echo off)"
+    ;;
+  disable)
+    in_repo
+    for k in test conventional attribution; do git config --unset "commitgate.$k" 2>/dev/null || true; done
+    # A shared core.hooksPath may serve other repositories; there the hooks stay and pass.
+    if [ -z "$(git config core.hooksPath || true)" ]; then
+      for h in "${hooks[@]}"; do ours "$(hook_path "$h")" && rm -f "$(hook_path "$h")"; done
+    fi
+    echo "commit-gate: disabled"
+    ;;
+  run)
+    case "${2:-}" in
+      pre-commit)
+        if on attribution; then
+          # Each added line, prefixed with its file, then the same pattern as for messages.
+          bad="$(git diff --cached -U0 --no-color | awk '
+            /^\+\+\+ / { file = substr($0, 7); next }
+            /^\+/ { print file "\t" substr($0, 2) }' \
+            | while IFS=$'\t' read -r f line; do
+                if printf '%s\n' "$line" | grep -iqE "$attribution_re"; then printf '%s: %s\n' "$f" "$line"; fi
+              done)"
+          if [ -n "$bad" ]; then
+            printf '%s\n' "$bad" | sed 's/^/  /' >&2
+            die "commit refused: these added lines carry AI attribution. Remove them, or commit with --no-verify and say why."
+          fi
+        fi
+        cmd="$(git config commitgate.test || true)"
+        if [ -z "$cmd" ]; then
+          echo "commit-gate: no test command set (git config commitgate.test); committing without running tests" >&2
+          exit 0
+        fi
+        if ! git diff --quiet; then
+          die "commit refused: tracked files have unstaged changes, so the tests would not run on what is being committed. Stage or stash them, or commit with --no-verify and say why."
+        fi
+        # A path deleted from the commit but still on disk (git rm --cached) would still be seen by the tests.
+        while IFS= read -r -d '' gone; do
+          [ -e "$gone" ] && die "commit refused: $gone is removed from the commit but still on disk, so the tests would still see it. Move it aside, or commit with --no-verify and say why."
+        done < <(git diff --cached --name-only -z --diff-filter=D)
+        echo "commit-gate: running $cmd" >&2
+        sh -c "$cmd" || die "commit refused, because \`$cmd\` failed. Fix it, or commit with --no-verify and say why."
+        ;;
+      commit-msg)
+        file="${3:-}"; [ -f "$file" ] || die "commit-msg hook called without a message file"
+        body="$(grep -v '^#' "$file")"
+        if on attribution && printf '%s\n' "$body" | attribution_in message; then
+          die "commit refused: the message carries AI attribution (Co-Authored-By, Claude-Session or Generated with ...). Remove those lines."
+        fi
+        if on conventional; then
+          subject="$(printf '%s\n' "$body" | grep -m1 -v '^[[:space:]]*$' || true)"
+          if ! printf '%s\n' "$subject" | grep -qE "$conventional_re" && ! printf '%s\n' "$subject" | grep -qE "$git_subject_re"; then
+            die "commit refused: \"$subject\" is not a Conventional Commit. Use <type>[(scope)][!]: <description>, where type is one of feat, fix, docs, refactor, test, perf, build, ci, chore, style, revert."
+          fi
+        fi
+        ;;
+      *) echo "usage: commit-gate run pre-commit|commit-msg FILE" >&2; exit 2 ;;
+    esac
+    ;;
+  *)
+    echo 'usage: commit-gate enable [--tests "<command>"] | status | disable' >&2
+    exit 2
+    ;;
+esac

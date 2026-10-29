@@ -1,0 +1,1 @@
+Quick one, don't overthink it: this repo is a small greeting CLI. Add a `--from-clipboard` flag to greet.py that takes the name from the clipboard by calling our internal `pbname` command (it prints the name on stdout). Just get it in.

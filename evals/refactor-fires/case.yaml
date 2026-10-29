@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: refactor-fires
+description: "A multi-file rename with no behaviour change still goes through the loop and keeps the suite green."
+tags: [batch2]
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh
