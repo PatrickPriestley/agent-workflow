@@ -24,6 +24,12 @@ assert_link "$H/.claude/skills/agent-review" "$H/.agents/skills/agent-review"
 assert_link "$H/.claude/workflows/feature-loop.js" "$here/workflows/feature-loop.js"
 assert_link "$H/.local/bin/agent-review" "$here/bin/agent-review"
 assert_link "$H/.local/bin/commit-gate" "$here/bin/commit-gate"
+for sk in intent spec plan incident-to-eval; do
+  assert_link "$H/.agents/skills/$sk" "$here/skills/$sk"
+  assert_link "$H/.claude/skills/$sk" "$H/.agents/skills/$sk"
+done
+it "without --wire, agent config files are left alone"
+[ ! -e "$H/.claude/CLAUDE.md" ] && ok || bad "CLAUDE.md was written without --wire"
 it "fresh install does not create or edit Claude settings"
 [ ! -e "$H/.claude/settings.json" ] && ok || bad "settings.json was written"
 
@@ -67,6 +73,31 @@ out=$(run "$H" --dry-run 2>&1); rc=$?
 assert_eq 0 "$rc"
 [ ! -e "$H/AGENT-WORKFLOW.md" ] && ok || bad "dry run created files"
 printf '%s' "$out" | grep -q "would" && ok || bad "dry run printed no plan: $out"
+
+it "--wire tells Claude Code and Codex to load the rules, once"
+H=$(fresh_home wire); mkdir -p "$H/.claude" "$H/.codex"
+printf '# my notes\n' > "$H/.claude/CLAUDE.md"
+run "$H" --wire >/dev/null 2>&1; rc=$?
+assert_eq 0 "$rc"
+assert_eq 1 "$(grep -c 'AGENT-WORKFLOW.md' "$H/.claude/CLAUDE.md")"
+grep -q '^# my notes' "$H/.claude/CLAUDE.md" && ok || bad "existing CLAUDE.md content was lost"
+assert_eq 1 "$(grep -c 'AGENT-WORKFLOW.md' "$H/.codex/AGENTS.md")"
+run "$H" --wire >/dev/null 2>&1
+assert_eq 1 "$(grep -c 'AGENT-WORKFLOW.md' "$H/.claude/CLAUDE.md")"
+assert_eq 1 "$(grep -c 'AGENT-WORKFLOW.md' "$H/.codex/AGENTS.md")"
+
+it "--wire skips an agent that is not installed"
+H=$(fresh_home wirenone); mkdir -p "$H/.claude"
+run "$H" --wire >/dev/null 2>&1; rc=$?
+assert_eq 0 "$rc"
+[ ! -e "$H/.codex" ] && ok || bad "created ~/.codex for an agent that is not installed"
+assert_eq 1 "$(grep -c 'AGENT-WORKFLOW.md' "$H/.claude/CLAUDE.md")"
+
+it "--wire with --dry-run writes nothing"
+H=$(fresh_home wiredry); mkdir -p "$H/.claude"
+out=$(run "$H" --wire --dry-run 2>&1)
+[ ! -e "$H/.claude/CLAUDE.md" ] && ok || bad "dry run wrote CLAUDE.md"
+printf '%s' "$out" | grep -q "would: add" && ok || bad "dry run did not show the wiring: $out"
 
 printf 'passed=%d failed=%d\n' "$pass" "$fail"
 [ "$fail" = 0 ]

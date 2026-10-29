@@ -11,6 +11,9 @@ Cursor, Gemini), plus the two commands that make it hold:
   `gemini -p`).
 - `bin/commit-gate`: git hooks that refuse a commit when the tests fail, when the subject is
   not a Conventional Commit, or when the message or an added line carries AI attribution.
+- `skills/intent`, `skills/spec`, `skills/plan`: the formal SDLC for changes that need
+  agreement before code exists (see "Which loop to use"), and `skills/incident-to-eval`
+  to turn a fixed production failure into a permanent regression case.
 - `AGENT-WORKFLOW.md`: the rules every agent loads at session start.
 
 ## Which loop to use
@@ -82,12 +85,14 @@ To make this work well:
 ## Install
 
     ./install.sh            # links everything into place; safe to rerun
-    ./install.sh --dry-run  # show what it would link
+    ./install.sh --wire     # also tell Claude Code and Codex to load the rules
+    ./install.sh --dry-run  # show what it would do
 
 Skills go into `~/.agents/skills` (read directly by Codex and Cursor) with `~/.claude/skills`
 links for Claude Code; the commands go into `~/.local/bin`; the rules file is linked to
-`~/AGENT-WORKFLOW.md`. Point each agent's config at it, for example a line in
-`~/.claude/CLAUDE.md` or `~/AGENTS.md`: `Follow the rules in ~/AGENT-WORKFLOW.md.`
+`~/AGENT-WORKFLOW.md`. `--wire` adds one line pointing at it to `~/.claude/CLAUDE.md` and
+`~/.codex/AGENTS.md` (once; agents that are not installed are skipped). For other agents,
+add the same line to their global instructions: `Follow the rules in ~/AGENT-WORKFLOW.md.`
 
 A file in the way is replaced only when it equals the repo copy; anything else stops the
 install and names the file. Updates are a `git pull`.
@@ -124,4 +129,4 @@ and without the skill in an isolated session.
 
 ## License
 
-MIT.
+MIT; see [LICENSE](LICENSE).

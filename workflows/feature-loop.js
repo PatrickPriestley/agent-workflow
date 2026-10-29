@@ -89,8 +89,7 @@ ${JSON.stringify(issues, null, 2)}
 Make ONE commit for the batch with a message that names what changed. Report what you changed per finding, the commit SHA, the test summary line, and any finding you rejected and why.`
 
 async function reviewLoop(g, impl, kind, brief, schema, isClean, phase) {
-  let verdict = await agent(brief(g, impl), opts({ label: `${kind}:${g.name}`, phase, schema,
-    agentType: kind === 'quality' ? 'superpowers:code-reviewer' : undefined }))
+  let verdict = await agent(brief(g, impl), opts({ label: `${kind}:${g.name}`, phase, schema }))
   let rounds = 0
   while (verdict && !isClean(verdict) && rounds < FIX_ROUNDS) {
     rounds++
@@ -100,8 +99,7 @@ async function reviewLoop(g, impl, kind, brief, schema, isClean, phase) {
     log(`${g.name}: ${kind} review found ${toFix.length} issue(s); fix round ${rounds}`)
     const fix = await agent(fixBrief(g, kind, toFix), opts({ label: `fix-${kind}:${g.name}`, phase, schema: IMPL }))
     if (fix) impl = { ...impl, report: `${impl.report}\n\nFix round ${rounds}: ${fix.report}`, commits: [...impl.commits, ...fix.commits], tests: fix.tests }
-    verdict = await agent(brief(g, impl), opts({ label: `${kind}:${g.name}:re${rounds}`, phase, schema,
-      agentType: kind === 'quality' ? 'superpowers:code-reviewer' : undefined }))
+    verdict = await agent(brief(g, impl), opts({ label: `${kind}:${g.name}:re${rounds}`, phase, schema }))
   }
   return { verdict, impl, rounds }
 }
