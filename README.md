@@ -85,14 +85,22 @@ To make this work well:
 ## Install
 
     ./install.sh            # links everything into place; safe to rerun
-    ./install.sh --wire     # also tell Claude Code and Codex to load the rules
+    ./install.sh --wire     # also give each installed agent the rules
     ./install.sh --dry-run  # show what it would do
 
 Skills go into `~/.agents/skills` (read directly by Codex and Cursor) with `~/.claude/skills`
 links for Claude Code; the commands go into `~/.local/bin`; the rules file is linked to
-`~/AGENT-WORKFLOW.md`. `--wire` adds one line pointing at it to `~/.claude/CLAUDE.md` and
-`~/.codex/AGENTS.md` (once; agents that are not installed are skipped). For other agents,
-add the same line to their global instructions: `Follow the rules in ~/AGENT-WORKFLOW.md.`
+`~/AGENT-WORKFLOW.md`. `--wire` gives each installed agent the rules:
+
+- **Claude Code:** one `@~/AGENT-WORKFLOW.md` import line in `~/.claude/CLAUDE.md`, added once.
+- **Codex, OpenCode, Gemini:** `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md` and
+  `~/.gemini/GEMINI.md` become links to the rules. A file there with its own content is left
+  alone and named, so you can add the line yourself.
+- **Cursor:** the CLI loads only `~/.cursor/rules/*.mdc`, and only in projects under your home
+  folder, so `--wire` writes the rules into `agent-workflow.mdc`. Rerun it after changing the
+  rules. A hand-written file there is kept as `.bak`.
+
+Agents that are not installed are skipped.
 
 A file in the way is replaced only when it equals the repo copy; anything else stops the
 install and names the file. Updates are a `git pull`.
