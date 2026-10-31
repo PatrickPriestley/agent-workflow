@@ -77,6 +77,21 @@ assert_eq "$(git -C "$R" diff "$base" "$head")" "$(cat "$dir/diff.patch")"
 it "the review leaves the working tree clean"
 assert_eq "" "$(git -C "$R" status --porcelain)"
 
+it "the prompt asks for feasibility against the real system before anything else"
+out=$(run "$R" claude code 2>&1)
+assert_has "Feasibility first" "$(cat "$LOG")"
+assert_has "verified against the real system" "$(cat "$LOG")"
+assert_has "Missing real-system evidence for a new external operation is blocking" "$(cat "$LOG")"
+
+it "--goal puts the desired outcome in the prompt"
+out=$(run "$R" claude code --goal "page_up scrolls the focused pane" 2>&1); rc=$?
+assert_eq 0 "$rc"
+assert_has "Desired outcome: page_up scrolls the focused pane" "$(cat "$LOG")"
+
+it "--goal needs a value"
+out=$(run "$R" claude code --goal 2>&1); rc=$?
+assert_eq 2 "$rc"
+
 it "asking for the caller's own kind is refused"
 out=$(run "$R" claude code --reviewer claude 2>&1); rc=$?
 assert_eq 2 "$rc"

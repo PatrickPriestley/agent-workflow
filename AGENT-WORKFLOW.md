@@ -8,14 +8,23 @@ here. These rules apply to every change, whichever loop it goes through.
 - **Accepted intent or spec:** the `intent`, `spec` and `plan` skills.
   The plan replaces feature-loop's design note; the rules below still apply.
 - **Anything that changes behaviour, or touches more than one file** (refactors and renames
-  included): the `feature-loop` skill, from its first step.
+  included): load the `feature-loop` skill as your first action, before reading code, with
+  your agent's skill tool (in Claude Code, the Skill tool). "Quick", "small" or "don't
+  overthink it" does not change this.
 - **A one-file change with no behaviour change** (a typo, a comment, formatting): no loop.
 
 ## Rules
 
 1. **Probe before you assert.** Try a tool, API or command in a scratch directory before
    relying on how it behaves. Memory and cached docs have been wrong about exit codes, flags
-   and event lists.
+   and event lists. Before building on a call to another system (an API method, CLI,
+   protocol message, file format or device), send the exact request to the version you
+   target, in a disposable environment, and see the outcome you need. A fake or mock that
+   accepts everything proves only your own side; a doc or one parser that lists a value does
+   not prove another accepts it. Until that check passes, the work is a prototype, and say so.
+   Label each claim by its evidence: verified against the real system, supported by the
+   receiver's exact source, tested against a mock, or assumed. A claim changes label only on
+   new evidence.
 2. **Red before green.** Write the test first and see it fail on an assertion about the
    missing behaviour. A test that passes at once, or fails on an import or compile error,
    or asserts only that nothing happened, does not count yet.

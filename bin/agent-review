@@ -5,6 +5,7 @@
 #                               plus any uncommitted work
 #   agent-review plan FILE      adversarially review a plan or design document
 #   options: --reviewer codex|claude|cursor|gemini   --model M   --timeout SECONDS (default 900)
+#            --goal TEXT   the outcome the change must achieve, so the reviewer can test feasibility
 #
 # The reviewer is never the caller's own kind. The caller is detected from the environment
 # (Codex sets CODEX_THREAD_ID, Claude Code sets CLAUDECODE; Codex is checked first because a
@@ -21,16 +22,17 @@
 # 4 the reviewer failed or timed out.
 set -uo pipefail
 END='<<AGENT-REVIEW-END>>'
-usage() { echo "usage: agent-review code [RANGE] | plan FILE [--reviewer KIND] [--model M] [--timeout SECONDS]" >&2; exit 2; }
+usage() { echo "usage: agent-review code [RANGE] | plan FILE [--reviewer KIND] [--model M] [--timeout SECONDS] [--goal TEXT]" >&2; exit 2; }
 fail() { echo "agent-review: $*" >&2; exit 2; }
 
 mode="${1:-}"; [ -n "$mode" ] || usage; shift
-target=""; reviewer=""; model=""; timeout=900
+target=""; reviewer=""; model=""; timeout=900; goal=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --reviewer) [ -n "${2:-}" ] || usage; reviewer="$2"; shift 2 ;;
     --model) [ -n "${2:-}" ] || usage; model="$2"; shift 2 ;;
     --timeout) [ -n "${2:-}" ] || usage; timeout="$2"; shift 2 ;;
+    --goal) [ -n "${2:-}" ] || usage; goal="$2"; shift 2 ;;
     -*) usage ;;
     *) [ -z "$target" ] || usage; target="$1"; shift ;;
   esac
@@ -109,7 +111,18 @@ Material:
 $material
 
 $ask
-Hunt especially for bugs tests cannot see: state kept between calls, ordering and timing,
+${goal:+Desired outcome: $goal
+}
+Feasibility first. Before style or edge cases, list every new call to something outside this
+repository (an API method, CLI, protocol message, file format or device) and trace it through
+the receiver's own validation and dispatch, in the exact version used. Label the evidence for
+each: verified against the real system, supported by the receiver's exact source, tested only
+against a mock or fake, or assumed. A fake that accepts everything proves nothing about the
+receiver. Missing real-system evidence for a new external operation is blocking: report it as
+the first finding, and where you can, give a command that would settle it in a disposable
+environment.
+
+Then hunt especially for bugs tests cannot see: state kept between calls, ordering and timing,
 unsafe defaults, and failure paths that report success.
 
 Report only actionable findings. Number each one and give file:line (or the plan section),

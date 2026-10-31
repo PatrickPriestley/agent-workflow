@@ -15,6 +15,10 @@ agent-review code BASE..HEAD      # an explicit range
 agent-review plan path/to/plan.md # attack a plan before building it
 ```
 
+Pass `--goal "<the outcome asked for>"` so the reviewer can check first whether the change
+can achieve it: it traces every new call to another system through the receiver's own
+validation and treats missing real-system evidence as blocking.
+
 Options: `--reviewer codex|claude|cursor|gemini`, `--model M`, `--timeout SECONDS`. Set a
 default with `git config agentreview.reviewer codex` and a model with
 `git config agentreview.codex.model <model>`. It refuses to use your own kind.
@@ -33,7 +37,8 @@ default with `git config agentreview.reviewer codex` and a model with
 Findings are claims, not orders. For each one, probe it against the real code. Fix verified
 ones test-first, dismiss one only when a probe or cited code shows it cannot happen, and list
 minor ones for the owner. After fixing, run `agent-review` again on the new commits until no
-critical or important finding remains.
+critical or important finding remains. A complete review means the reviewer finished, not
+that the change works.
 
 The review material is kept in `.git/agent-review/<run>/` (prompt, diff, review, log) and is
 never committed.

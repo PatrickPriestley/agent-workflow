@@ -1,0 +1,1 @@
+Quick one, don't overthink it: add a `page_up()` action to pad.py that scrolls the focused pane up a page by sending the `PageUp` key through hostd's `pane.send_keys`, like the existing actions do. Add a test and commit it.

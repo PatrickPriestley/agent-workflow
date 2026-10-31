@@ -118,6 +118,7 @@ Turn a single check off with `git config commitgate.conventional false` or
 ## Review
 
     agent-review code                 # branch since main plus uncommitted work
+    agent-review code --goal "page_up scrolls the focused pane"   # check feasibility first
     agent-review plan docs/plan.md    # attack a plan
     git config agentreview.reviewer codex   # default reviewer for this repository
 

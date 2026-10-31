@@ -17,6 +17,12 @@ under "When to stop".
 1. **Probe** every library, CLI or API behaviour the change depends on, a few lines each in
    a scratch directory, and list the results. If the request turns out impossible or rests
    on something false, stop and report; never build a substitute.
+   **Real-contract gate:** for each new call to another system, send the exact request to
+   the version you target (start it in a disposable environment if needed) and see the
+   smallest outcome you need, before writing the feature. Tests against a fake, a doc, or a
+   second parser that lists the value do not pass the gate. If you cannot run it, trace the
+   receiver's own validation and dispatch in its exact source, and say so. Label each probed
+   fact: verified against the real system, exact source, mock only, or assumed.
 
 2. **Branch and note.** Create the feature branch in its own worktree first. If the change
    adds a command, setting, mode, file format or external call, commit a short design note
@@ -35,14 +41,15 @@ under "When to stop".
    restore it immediately. A survivor gets a test that fails without it (rule 3). Before
    moving on, `git diff` must show no leftover mutation.
 
-5. **Independent review** by a model family other than yours: run `agent-review code`
-   (the `agent-review` skill), which picks one and runs it headless and read-only. Sending the
+5. **Independent review** by a model family other than yours: run
+   `agent-review code --goal "<the outcome asked for>"` (the `agent-review` skill), which picks one and runs it headless and read-only. Sending the
    diff to an installed reviewer is part of the loop: do not ask. It is done only when the reviewer's reply ends with its end marker; an empty
    or cut-off reply is no review. Probe each finding. Critical or important means wrong
    behaviour, lost data, a security hole or a bypassed safeguard, with a concrete case; when
    unsure, treat it as important. Fix those test-first and have the fixes re-reviewed until
    none remain. Dismiss a finding only when a probe, or code you cite, shows it cannot
-   happen. Carry minor ones to step 6.
+   happen. Carry minor ones to step 6. The end marker proves the review finished, not that
+   the change works.
 
 6. **Finish** on a green suite only: run it once more, push the branch and open a PR, and
    report what was done, what was not, and the open minor findings.
@@ -80,4 +87,6 @@ separate sessions.
 | "The reviewer didn't answer, so it's clean" | No end marker, no review |
 | "Mutation testing is overkill for this" | It found six untested guards behind 32 green tests. Every guard the change touches |
 | "The feature is impossible, so I built the nearest thing" | That is scope change. Stop and report |
+| "The fake server accepts it, the tests pass" | The fake accepts everything. Send the exact request to the real one |
+| "The docs list that value as supported" | Docs and one parser are not the receiver. Its validator decides |
 | "I should check this choice with the owner" | If both options lead to the same work, choose, record why, continue |
