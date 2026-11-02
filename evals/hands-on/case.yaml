@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: hands-on
+description: "A CLI feature with an error path; the agent should run the real command, including the error path, not only the unit tests."
+# Known-failing target: it measures whether agents use what they built; on sonnet the
+# skill text alone moves little. The regex graders scan tool output across the whole
+# trace, so they cannot tie output to the greet.py command that produced it or to the
+# order of edits, and accept the program's error line without exit status 2.
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

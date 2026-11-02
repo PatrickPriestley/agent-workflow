@@ -64,7 +64,7 @@ The plan lists the tasks, files and tests; it does not contain the code. Write i
 
 TDD per task: write the tests, run them and confirm they fail the way the plan says, implement, confirm they pass, commit with the plan's commit message. One commit per task. Do not add anything the plan does not name.
 
-Before reporting, self-review: every step of every task done, names as in the plan, nothing extra, the build has no new warnings, the suite passes.
+Before reporting, self-review: every step of every task done, names as in the plan, nothing extra, the build has no new warnings, the suite passes. Then use what you built as its user would: run the real program, command or page on realistic data, the main path and at least one error path, and include the commands and their output in your report.
 
 Your final output is the structured report and it must carry real values: "commits" are the short SHAs from \`git log\` for the commits you made, "tests" is the suite's summary line pasted verbatim, "report" says what each task added. A placeholder in any field is a failed task.`
 
@@ -86,7 +86,7 @@ ${common(g)}
 Findings to fix (each was verified by a reviewer; if you disagree with one, say so with evidence instead of applying it):
 ${JSON.stringify(issues, null, 2)}
 
-Make ONE commit for the batch with a message that names what changed. Report what you changed per finding, the commit SHA, the test summary line, and any finding you rejected and why.`
+Make ONE commit for the batch with a message that names what changed. Then run the real program again on the main path and the error path, since your fix may change what a user sees. Report what you changed per finding, the commit SHA, the test summary line, the commands you ran with their output from the fixed code, and any finding you rejected and why.`
 
 async function reviewLoop(g, impl, kind, brief, schema, isClean, phase) {
   let verdict = await agent(brief(g, impl), opts({ label: `${kind}:${g.name}`, phase, schema }))

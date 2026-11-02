@@ -1,0 +1,1 @@
+Use the feature-loop skill. Add a `--names` option to greet.py that takes a comma-separated list, e.g. `python3 greet.py --names Ana,Bo`, and greets each person on their own line. If the list has no names, print a clear error and exit with status 2. Commit it when it works. Tests run with `python3 -m unittest discover -s tests -t .`
