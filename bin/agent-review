@@ -4,7 +4,7 @@
 #   agent-review code [RANGE]   review a commit range (default: merge-base with main..HEAD)
 #                               plus any uncommitted work
 #   agent-review plan FILE      adversarially review a plan or design document
-#   options: --reviewer codex|claude|cursor|gemini   --model M   --timeout SECONDS (default 900)
+#   options: --reviewer codex|claude|cursor|gemini|opencode   --model M   --timeout SECONDS (default 900)
 #            --goal TEXT   the outcome the change must achieve, so the reviewer can test feasibility
 #
 # The reviewer is never the caller's own kind. The caller is detected from the environment
@@ -13,13 +13,22 @@
 # from --reviewer, then `git config agentreview.reviewer`, then the first installed of
 # codex, claude, cursor, gemini that is not the caller.
 #
+# If the reviewer fails or times out, the review falls back: first to the same reviewer with
+# `git config agentreview.<kind>.fallbackModel` (built in for Claude: sonnet), then to OpenCode
+# with an OpenCode Go model (`git config agentreview.opencode.model`, default
+# opencode-go/kimi-k3.1-pro). OpenCode accepts only opencode-go/ models, never one of the
+# caller's own family. A local model (ollama/, lmstudio/, local/, llama.cpp, or an Ollama tag such as gemma4:e4b that
+# is not :cloud) is always refused.
+#
 # Each reviewer runs read-only: codex exec --sandbox read-only, claude -p with Read/Grep/Glob
-# only, cursor-agent --mode plan, gemini --approval-mode plan. The pinned diff, log and any
+# only, cursor-agent --mode plan, gemini --approval-mode plan, opencode with an inline agent that
+# denies every tool but read, grep, glob and list. The pinned diff, log and any
 # uncommitted work are written to a folder inside .git for it to read; secret-looking files
 # are listed by name only. The review counts only if it ends with <<AGENT-REVIEW-END>>.
 #
-# Exit: 0 review complete (printed on stdout), 2 usage or setup problem, 3 no end marker,
-# 4 the reviewer failed or timed out.
+# Exit: 0 review complete (printed on stdout after a "Reviewed by:" line; also in reviewer.txt),
+# 2 usage or setup problem, 3 no end marker (no fallback: rerun it), 4 every reviewer tried
+# failed or timed out, 5 a reviewer changed the working tree.
 set -uo pipefail
 END='<<AGENT-REVIEW-END>>'
 usage() { echo "usage: agent-review code [RANGE] | plan FILE [--reviewer KIND] [--model M] [--timeout SECONDS] [--goal TEXT]" >&2; exit 2; }
@@ -49,6 +58,22 @@ if [ -z "$caller" ]; then
   fi
 fi
 bin_of() { case "$1" in cursor) echo cursor-agent ;; *) echo "$1" ;; esac; }
+OPENCODE_DEFAULT_MODEL=opencode-go/kimi-k3.1-pro
+# Refuse a model that would not give a strong, independent review: local models for any
+# reviewer, a model of the caller's own family for any reviewer, and for OpenCode anything but
+# an OpenCode Go model.
+check_model() {  # kind model
+  case "$2" in
+    ollama/*|lmstudio/*|local/*|llama.cpp*|llamacpp/*) fail "$2 is a local model; a review by a local model does not count" ;;
+    *:cloud) ;;   # Ollama's hosted models are tagged :cloud
+    *:*) fail "$2 looks like an Ollama tag for a local model; a review by a local model does not count" ;;
+  esac
+  case "$caller:$2" in
+    claude:*claude*|claude:*sonnet*|claude:*opus*|claude:*haiku*|codex:*gpt*|codex:*codex*|codex:o[0-9]*|codex:*/o[0-9]*) fail "$2 is the same family as the calling agent ($caller); choose another model so the review is independent" ;;
+  esac
+  [ "$1" = opencode ] || return 0
+  case "$2" in opencode-go/?*) ;; *) fail "opencode reviews only with an OpenCode Go model (opencode-go/...), not '$2'" ;; esac
+}
 [ -n "$reviewer" ] || reviewer="$(git config agentreview.reviewer || true)"
 if [ -z "$reviewer" ]; then
   for k in codex claude cursor gemini; do
@@ -57,10 +82,30 @@ if [ -z "$reviewer" ]; then
   done
   [ -n "$reviewer" ] || fail "no reviewer installed: need one of codex, claude, cursor-agent or gemini other than ${caller:-the caller}"
 fi
-case "$reviewer" in codex|claude|cursor|gemini) ;; *) fail "unknown reviewer '$reviewer' (codex, claude, cursor or gemini)" ;; esac
+case "$reviewer" in codex|claude|cursor|gemini|opencode) ;; *) fail "unknown reviewer '$reviewer' (codex, claude, cursor, gemini or opencode)" ;; esac
 [ "$reviewer" = "$caller" ] && fail "--reviewer $reviewer is the same kind as the calling agent; choose a different kind so the review is independent"
 command -v "$(bin_of "$reviewer")" >/dev/null 2>&1 || fail "$(bin_of "$reviewer") is not installed"
 [ -n "$model" ] || model="$(git config "agentreview.$reviewer.model" || true)"
+[ "$reviewer" = opencode ] && [ -z "$model" ] && model="$OPENCODE_DEFAULT_MODEL"
+# Codex always runs with the OpenAI provider forced on the command line, which no config
+# layer overrides: a local model then fails instead of running (verified with Codex 0.166.0).
+# With no model given, the model actually used is read from Codex's run header.
+name_of() {  # kind model -> how to report the model
+  if [ -n "$2" ]; then echo "$2"; else echo "default model"; fi
+}
+check_model "$reviewer" "$model"
+
+# The attempts, in order: the chosen reviewer, its fallback model, then OpenCode Go.
+attempts=("$reviewer|$model")
+fallback="$(git config "agentreview.$reviewer.fallbackModel" || true)"
+[ -z "$fallback" ] && [ "$reviewer" = claude ] && fallback=sonnet
+if [ -n "$fallback" ] && [ "$fallback" != "$model" ]; then
+  check_model "$reviewer" "$fallback"; attempts+=("$reviewer|$fallback")
+fi
+if [ "$reviewer" != opencode ] && [ "$caller" != opencode ] && command -v opencode >/dev/null 2>&1; then
+  oc_model="$(git config agentreview.opencode.model || true)"; oc_model="${oc_model:-$OPENCODE_DEFAULT_MODEL}"
+  check_model opencode "$oc_model"; attempts+=("opencode|$oc_model")
+fi
 
 # ---- the material, pinned and written inside .git ---------------------------------
 dir="$(git rev-parse --path-format=absolute --git-path agent-review)/$(date +%Y%m%d-%H%M%S)-$$"
@@ -131,30 +176,65 @@ Skip anything you cannot substantiate. End your response with this exact line:
 $END
 PROMPT
 
-# ---- run it, read-only, with a time limit ---------------------------------------------
+# ---- run it, read-only, with a time limit; fall back on failure ----------------------
 out="$dir/review.md"; err="$dir/reviewer.log"
 prompt="$(cat "$dir/prompt.md")"
-cmd=()
-case "$reviewer" in
-  codex)  cmd=(codex exec --sandbox read-only --skip-git-repo-check --ephemeral -o "$out"); [ -n "$model" ] && cmd+=(-m "$model"); cmd+=("$prompt") ;;
-  claude) cmd=(claude -p); [ -n "$model" ] && cmd+=(--model "$model"); cmd+=(--allowedTools Read Grep Glob) ;;
-  cursor) cmd=(cursor-agent -p --trust --mode plan --output-format text); [ -n "$model" ] && cmd+=(--model "$model"); cmd+=("$prompt") ;;
-  gemini) cmd=(gemini --approval-mode plan); [ -n "$model" ] && cmd+=(-m "$model"); cmd+=(-p "$prompt") ;;
-esac
-echo "agent-review: ${caller:-unknown caller} -> $reviewer reviewing $subject" >&2
-if [ "$reviewer" = claude ]; then
-  perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < "$dir/prompt.md" > "$out" 2> "$err"
-elif [ "$reviewer" = codex ]; then
-  perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < /dev/null > "$err" 2>&1
-else
-  perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < /dev/null > "$out" 2> "$err"
-fi
-rc=$?
-if [ "$rc" = 142 ]; then echo "agent-review: $reviewer timed out after ${timeout}s; output so far in $out" >&2; exit 4; fi
-if [ "$rc" != 0 ]; then echo "agent-review: $reviewer exited $rc; see $err" >&2; tail -5 "$err" >&2; exit 4; fi
-[ -f "$out" ] && cat "$out"
-if ! grep -qF "$END" "$out" 2>/dev/null; then
-  echo "agent-review: the reply has no end marker, so it is not a complete review; output in $out" >&2
-  exit 3
-fi
-echo "agent-review: complete; saved in $out" >&2
+# OpenCode merges this into any config it finds. A reviewed repository's opencode.json could
+# redefine a fixed agent name (probed: its agent.agentreview made the reviewer writable), and
+# OpenCode rewrites that file on load (adds "$schema"). So project config is disabled
+# (OPENCODE_DISABLE_PROJECT_CONFIG, probed to ignore it) and each run gets a fresh agent name.
+# A finite read: an endless `tr < /dev/urandom | head` pipeline hung under a git hook.
+oc_agent="agentreview-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+OPENCODE_AGENT='{"agent":{"'"$oc_agent"'":{"mode":"primary","description":"read-only reviewer","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow","list":"allow"}}}}'
+# Every reviewer must leave the working tree as it found it: tracked content and the set of
+# untracked files. Untracked contents are not compared, so `agent-review > out.txt` inside
+# the repository still works.
+tree_state() { { git status --porcelain=v1 --untracked-files=all; git diff HEAD; } | shasum; }
+tree_before="$(tree_state)"
+for attempt in "${attempts[@]}"; do
+  kind="${attempt%%|*}"; m="${attempt#*|}"; mname="$(name_of "$kind" "$m")"; label="$kind ($mname)"
+  cmd=()
+  case "$kind" in
+    codex)  cmd=(codex exec --sandbox read-only --skip-git-repo-check --ephemeral -c 'model_provider="openai"' -o "$out"); [ -n "$m" ] && cmd+=(-m "$m"); cmd+=("$prompt") ;;
+    claude) cmd=(claude -p); [ -n "$m" ] && cmd+=(--model "$m"); cmd+=(--allowedTools Read Grep Glob) ;;
+    cursor) cmd=(cursor-agent -p --trust --mode plan --output-format text); [ -n "$m" ] && cmd+=(--model "$m"); cmd+=("$prompt") ;;
+    gemini) cmd=(gemini --approval-mode plan); [ -n "$m" ] && cmd+=(-m "$m"); cmd+=(-p "$prompt") ;;
+    opencode) cmd=(env -u OPENCODE_CONFIG -u OPENCODE_CONFIG_DIR OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_DISABLE_AUTOUPDATE=1 "OPENCODE_CONFIG_CONTENT=$OPENCODE_AGENT" opencode run --agent "$oc_agent" -m "$m" "$prompt") ;;
+  esac
+  echo "agent-review: ${caller:-unknown caller} -> $label reviewing $subject" >&2
+  rm -f "$out"; echo "== $label" >> "$err"
+  if [ "$kind" = claude ]; then
+    perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < "$dir/prompt.md" > "$out" 2>> "$err"
+  elif [ "$kind" = codex ]; then
+    perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < /dev/null >> "$err" 2>&1
+  else
+    perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$timeout" "${cmd[@]}" < /dev/null > "$out" 2>> "$err"
+  fi
+  rc=$?
+  if [ "$(tree_state)" != "$tree_before" ]; then
+    echo "agent-review: $label changed the working tree during a read-only review; not a review. Inspect git status" >&2
+    exit 5
+  fi
+  if [ "$rc" = 142 ]; then echo "agent-review: $label timed out after ${timeout}s" >&2; continue; fi
+  if [ "$rc" != 0 ]; then
+    echo "agent-review: $label exited $rc; see $err" >&2
+    { [ -s "$out" ] && tail -3 "$out"; tail -3 "$err"; } | sed 's/^/    /' >&2
+    continue
+  fi
+  if ! grep -qF "$END" "$out" 2>/dev/null; then
+    [ -f "$out" ] && cat "$out"
+    echo "agent-review: the reply from $label has no end marker, so it is not a complete review; output in $out" >&2
+    exit 3
+  fi
+  if [ "$kind" = codex ] && [ -z "$m" ]; then
+    used="$(sed -n '/^== codex/,$p' "$err" | sed -n 's/^model: //p' | tail -1)"
+    [ -n "$used" ] && mname="$used (Codex default)"
+  fi
+  echo "$kind $mname" > "$dir/reviewer.txt"
+  echo "Reviewed by: $kind $mname"
+  cat "$out"
+  echo "agent-review: complete by $label; saved in $out" >&2
+  exit 0
+done
+echo "agent-review: every reviewer tried failed: ${attempts[*]}" >&2
+exit 4

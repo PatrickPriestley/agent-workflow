@@ -35,7 +35,10 @@ here. These rules apply to every change, whichever loop it goes through.
    other than the author's reads the diff. The review counts only if the reply is complete,
    ending with the end marker the prompt asked for. Findings are claims: probe each one, fix
    verified ones test-first, dismiss one only when a probe or cited code shows it cannot
-   happen. `agent-review code` runs one headless. Never send secret files (`.env`, keys, credentials) to a reviewer.
+   happen. `agent-review code` runs one headless; if the reviewer fails it switches to another
+   model, then to OpenCode Go. Never review with a local model (Ollama, LM Studio, llama.cpp):
+   such a review does not count. If no strong reviewer answers, stop and say so. Name the
+   reviewer actually used when reporting the review. Never send secret files (`.env`, keys, credentials) to a reviewer.
 5. **Ask first** before merging into the main branch, releasing or deleting, unless the
    request already asked for it. Pushing a branch and opening a PR need no approval. Never answer another agent's trust, permission, login or update prompt.
 6. **Commits** are Conventional Commits (`feat:`, `fix(scope):`, ...) and carry no AI

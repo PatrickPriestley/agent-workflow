@@ -11,16 +11,22 @@ assert_eq()  { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
 assert_has() { printf '%s' "$2" | grep -qF -- "$1" && ok || bad "expected [$1] in: $(printf '%s' "$2" | head -c 400)"; }
 
 FAKE="$TMPROOT/fake"; mkdir -p "$FAKE"; LOG="$TMPROOT/calls"
-for cli in codex claude cursor-agent gemini; do
+for cli in codex claude cursor-agent gemini opencode; do
 cat > "$FAKE/$cli" <<FAKEEOF
 #!/bin/bash
 # Record argv and stdin; answer like a reviewer.
-{ printf 'CLI=%s\n' "$cli"; printf 'ARG=%s\n' "\$@"; printf 'STDIN=%s\n' "\$( [ -t 0 ] || cat )"; } >> "$LOG"
+{ printf 'CLI=%s\n' "$cli"; printf 'ARG=%s\n' "\$@"; printf 'OPENCODE_CONFIG_CONTENT=%s\n' "\${OPENCODE_CONFIG_CONTENT:-}"; printf 'OPENCODE_DISABLE_PROJECT_CONFIG=%s\n' "\${OPENCODE_DISABLE_PROJECT_CONFIG:-}"; printf 'OPENCODE_CONFIG_PATHS=%s|%s\n' "\${OPENCODE_CONFIG:-}" "\${OPENCODE_CONFIG_DIR:-}"; printf 'STDIN=%s\n' "\$( [ -t 0 ] || cat )"; } >> "$LOG"
 [ -n "\${FAKE_SLEEP:-}" ] && sleep "\$FAKE_SLEEP"
 [ -n "\${FAKE_EXIT:-}" ] && { echo "reviewer broke" >&2; exit "\$FAKE_EXIT"; }
+[ -n "\${FAKE_WRITE:-}" ] && printf 'tampered\n' >> greet.py
+[ -n "\${FAKE_NEWFILE:-}" ] && printf 'x\n' > planted.txt
+# FAKE_FAIL="cli:model ..." fails that CLI on that model ("default" when no model is given).
+model=default; prev=""; for a in "\$@"; do case "\$prev" in --model|-m) model="\$a" ;; esac; prev="\$a"; done
+for f in \${FAKE_FAIL:-}; do [ "\$f" = "$cli:\$model" ] && { echo "You're out of usage credits. Switch to another model" >&2; exit 1; }; done
 reply="1. greet.py:3 - something. Fix: something."
 [ -n "\${FAKE_NO_MARKER:-}" ] || reply="\$reply
 <<AGENT-REVIEW-END>>"
+[ "$cli" = codex ] && [ -n "\${FAKE_CODEX_MODEL:-}" ] && printf 'OpenAI Codex\nmodel: %s\nprovider: openai\n' "\$FAKE_CODEX_MODEL" >&2
 if [ "$cli" = codex ]; then
   out=""; prev=""; for a in "\$@"; do [ "\$prev" = "-o" ] && out="\$a"; prev="\$a"; done
   printf '%s\n' "\$reply" > "\$out"
@@ -162,6 +168,167 @@ it "nothing to review is an error, not an empty review"
 out=$(cd "$R" && git checkout -q main && env -i PATH="$FAKE:/usr/bin:/bin" HOME="$TMPROOT/home" CLAUDECODE=1 bash "$AR" code 2>&1); rc=$?
 assert_eq 2 "$rc"
 git -C "$R" checkout -q feature
+
+it "opencode reviews read-only with an OpenCode Go model"
+out=$(run "$R" claude code --reviewer opencode 2>&1); rc=$?
+assert_eq 0 "$rc"
+assert_has "CLI=opencode" "$(cat "$LOG")"
+assert_has "ARG=opencode-go/kimi-k3.1-pro" "$(cat "$LOG")"
+assert_has "ARG=agentreview" "$(cat "$LOG")"
+
+it "the opencode reviewer agent denies everything but reading"
+out=$(run "$R" claude code --reviewer opencode 2>&1)
+cfg=$(grep '^OPENCODE_CONFIG_CONTENT=' "$LOG" | head -1)
+assert_has '"permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow","list":"allow"}' "$cfg"
+
+it "a non-Go opencode model is refused"
+out=$(run "$R" claude code --reviewer opencode --model opencode/gpt-5.5 2>&1); rc=$?
+assert_eq 2 "$rc"
+assert_has "OpenCode Go" "$out"
+
+it "a local model is refused for any reviewer"
+for m in ollama/gemma4 lmstudio/qwen local/llama llama.cpp/x; do
+  out=$(run "$R" claude code --reviewer gemini --model "$m" 2>&1); rc=$?
+  assert_eq 2 "$rc"
+done
+assert_has "local model" "$out"
+[ -s "$LOG" ] && bad "a reviewer ran with a local model" || ok
+
+it "a same-family opencode model is refused"
+out=$(run "$R" claude code --reviewer opencode --model opencode-go/claude-haiku-5-5 2>&1); rc=$?
+assert_eq 2 "$rc"
+out=$(run "$R" codex code --reviewer opencode --model opencode-go/gpt-6-luna 2>&1); rc=$?
+assert_eq 2 "$rc"
+assert_has "same family" "$out"
+
+it "a failing reviewer falls back to its fallback model"
+out=$(EXTRA_ENV="FAKE_FAIL=claude:default" run "$R" codex code 2>&1); rc=$?
+assert_eq 0 "$rc"
+assert_has "ARG=sonnet" "$(cat "$LOG")"
+assert_has "out of usage credits" "$out"
+grep -q "^CLI=opencode" "$LOG" && bad "fell through past a working fallback model" || ok
+
+it "then to OpenCode Go"
+: > "$LOG"
+out=$(cd "$R" && env -i PATH="$FAKE:/usr/bin:/bin" HOME="$TMPROOT/home" CLAUDECODE=1 CODEX_THREAD_ID=t1 FAKE_FAIL="claude:default claude:sonnet" bash "$AR" code 2>&1); rc=$?
+assert_eq 0 "$rc"
+assert_has "CLI=opencode" "$(cat "$LOG")"
+assert_has "Reviewed by: opencode opencode-go/kimi-k3.1-pro" "$out"
+
+it "git config sets the fallback model"
+git -C "$R" config agentreview.codex.fallbackModel gpt-6-sol
+out=$(EXTRA_ENV="FAKE_FAIL=codex:default" run "$R" claude code 2>&1); rc=$?
+assert_eq 0 "$rc"
+assert_has "ARG=gpt-6-sol" "$(cat "$LOG")"
+git -C "$R" config --unset agentreview.codex.fallbackModel
+
+it "all attempts failing exits 4 and lists each one"
+out=$(EXTRA_ENV="FAKE_FAIL=claude:default FAKE_EXIT=1" run "$R" codex code 2>&1); rc=$?
+assert_eq 4 "$rc"
+assert_has "claude (sonnet) exited" "$out"
+assert_has "opencode (opencode-go/kimi-k3.1-pro) exited" "$out"
+
+it "no end marker does not fall back"
+out=$(EXTRA_ENV=FAKE_NO_MARKER=1 run "$R" codex code 2>&1); rc=$?
+assert_eq 3 "$rc"
+assert_eq 1 "$(grep -c '^CLI=' "$LOG")"
+
+it "the review names the reviewer used, on stdout and in reviewer.txt"
+out=$(run "$R" claude code 2>/dev/null)
+assert_eq "Reviewed by: codex default model" "$(printf '%s\n' "$out" | head -1)"
+dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
+assert_eq "codex default model" "$(cat "$dir/reviewer.txt")"
+
+it "a fallback model equal to the chosen model is not tried twice"
+out=$(EXTRA_ENV="FAKE_FAIL=claude:sonnet" run "$R" codex code --model sonnet 2>&1)
+assert_eq 1 "$(grep -c '^ARG=sonnet$' "$LOG")"
+
+it "a local fallback model is refused before anything runs"
+git -C "$R" config agentreview.codex.fallbackModel ollama/gemma4
+out=$(run "$R" claude code 2>&1); rc=$?
+assert_eq 2 "$rc"
+git -C "$R" config --unset agentreview.codex.fallbackModel
+
+it "a failing OpenCode reviewer is not retried as its own fallback"
+out=$(EXTRA_ENV="FAKE_FAIL=opencode:opencode-go/kimi-k3.1-pro" run "$R" claude code --reviewer opencode 2>&1); rc=$?
+assert_eq 4 "$rc"
+assert_eq 1 "$(grep -c '^CLI=' "$LOG")"
+
+it "a non-Go OpenCode fallback model is refused even when another reviewer is chosen"
+git -C "$R" config agentreview.opencode.model ollama/qwen
+out=$(run "$R" claude code 2>&1); rc=$?
+assert_eq 2 "$rc"
+git -C "$R" config --unset agentreview.opencode.model
+
+it "each OpenCode run uses its own agent name, so a repository's config cannot redefine it"
+out=$(run "$R" claude code --reviewer opencode 2>&1)
+n1=$(grep -A1 '^ARG=--agent$' "$LOG" | sed -n 2p | sed 's/^ARG=//')
+cfg=$(grep '^OPENCODE_CONFIG_CONTENT=' "$LOG" | head -1)
+out=$(run "$R" claude code --reviewer opencode 2>&1)
+n2=$(grep -A1 '^ARG=--agent$' "$LOG" | sed -n 2p | sed 's/^ARG=//')
+printf '%s' "$n1" | grep -qE '^agentreview-[a-f0-9]{16}$' && ok || bad "agent name [$n1] is not unique-looking"
+[ "$n1" != "$n2" ] && ok || bad "two runs shared agent name [$n1]"
+assert_has "\"$n1\":{" "$cfg"
+
+it "a reviewer that changes the working tree fails the review"
+out=$(EXTRA_ENV=FAKE_WRITE=1 run "$R" claude code 2>&1); rc=$?
+assert_eq 5 "$rc"
+assert_has "changed the working tree" "$out"
+git -C "$R" checkout -q -- greet.py
+
+it "OpenCode ignores the reviewed repository's own config"
+out=$(run "$R" claude code --reviewer opencode 2>&1)
+assert_has "OPENCODE_DISABLE_PROJECT_CONFIG=1" "$(grep -A0 '^OPENCODE_DISABLE_PROJECT_CONFIG=' "$LOG" | head -1)"
+
+it "saving the review to a file inside the repository is not a tree change"
+: > "$LOG"
+(cd "$R" && env -i PATH="$FAKE:/usr/bin:/bin" HOME="$TMPROOT/home" CLAUDECODE=1 bash "$AR" code > "$R/review-out.txt" 2> "$R/review-err.txt"); rc=$?
+assert_eq 0 "$rc"
+rm -f "$R/review-out.txt" "$R/review-err.txt"
+
+it "a reviewer that creates a file fails the review"
+out=$(EXTRA_ENV=FAKE_NEWFILE=1 run "$R" claude code 2>&1); rc=$?
+assert_eq 5 "$rc"
+rm -f "$R/planted.txt"
+
+it "an Ollama-style local model tag is refused"
+for m in gemma4:e4b llama3.2:latest gemma4:e2b; do
+  out=$(run "$R" claude code --reviewer codex --model "$m" 2>&1); rc=$?
+  assert_eq 2 "$rc"
+done
+[ -s "$LOG" ] && bad "a reviewer ran with a local Ollama model" || ok
+
+it "an Ollama cloud model is not mistaken for a local one"
+out=$(run "$R" claude code --reviewer codex --model kimi-k3:cloud 2>&1); rc=$?
+assert_eq 0 "$rc"
+
+it "inherited OpenCode config paths are cleared for the reviewer"
+out=$(EXTRA_ENV="OPENCODE_CONFIG=./opencode.json OPENCODE_CONFIG_DIR=./.opencode" run "$R" claude code --reviewer opencode 2>&1)
+assert_eq "OPENCODE_CONFIG_PATHS=|" "$(grep '^OPENCODE_CONFIG_PATHS=' "$LOG" | head -1)"
+
+it "Codex runs with the OpenAI provider forced, so a local default cannot run"
+out=$(run "$R" claude code 2>&1)
+assert_has 'ARG=model_provider="openai"' "$(cat "$LOG")"
+
+it "Codex's default model is named from its run header"
+out=$(EXTRA_ENV=FAKE_CODEX_MODEL=gpt-6-sol run "$R" claude code 2>/dev/null); rc=$?
+assert_eq 0 "$rc"
+assert_eq "Reviewed by: codex gpt-6-sol (Codex default)" "$(printf '%s\n' "$out" | head -1)"
+
+it "a caller-family model is refused through any reviewer"
+out=$(run "$R" claude code --reviewer cursor --model claude-opus-5-5 2>&1); rc=$?
+assert_eq 2 "$rc"
+out=$(run "$R" codex code --reviewer cursor --model gpt-6-sol 2>&1); rc=$?
+assert_eq 2 "$rc"
+assert_has "same family" "$out"
+
+it "family aliases are refused too"
+for m in sonnet opus haiku claude-fable-5-1; do
+  out=$(run "$R" claude code --reviewer cursor --model "$m" 2>&1); rc=$?; assert_eq 2 "$rc"
+done
+for m in o3 o4-mini; do
+  out=$(run "$R" codex code --reviewer cursor --model "$m" 2>&1); rc=$?; assert_eq 2 "$rc"
+done
 
 printf 'passed=%d failed=%d\n' "$pass" "$fail"
 [ "$fail" = 0 ]

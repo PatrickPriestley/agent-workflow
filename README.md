@@ -8,7 +8,7 @@ Cursor, Gemini), plus the two commands that make it hold:
   impossible requests and real ambiguity.
 - `skills/agent-review` and `bin/agent-review`: an independent review by a different kind
   of agent, run headless and read-only (`codex exec`, `claude -p`, `cursor-agent -p`,
-  `gemini -p`).
+  `gemini -p`, `opencode run`).
 - `bin/commit-gate`: git hooks that refuse a commit when the tests fail, when the subject is
   not a Conventional Commit, or when the message or an added line carries AI attribution.
 - `skills/intent`, `skills/spec`, `skills/plan`: the formal SDLC for changes that need
@@ -122,8 +122,11 @@ Turn a single check off with `git config commitgate.conventional false` or
     agent-review plan docs/plan.md    # attack a plan
     git config agentreview.reviewer codex   # default reviewer for this repository
 
-The reviewer is never the caller's own kind. Exit 0 means a complete review; 3 means the
-reply had no end marker; 4 means the reviewer failed or timed out.
+The reviewer is never the caller's own kind. If it fails, the review switches to the same
+reviewer's fallback model (`agentreview.<kind>.fallbackModel`; `sonnet` for Claude), then to
+OpenCode Go (`agentreview.opencode.model`, default `opencode-go/kimi-k3.1-pro`). Local models
+are refused. Exit 0 means a complete review, headed `Reviewed by: <kind> <model>`; 3 means
+the reply had no end marker; 4 means every reviewer tried failed or timed out; 5 means a reviewer changed the working tree.
 
 ## Tests and evals
 

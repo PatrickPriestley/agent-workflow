@@ -19,9 +19,17 @@ Pass `--goal "<the outcome asked for>"` so the reviewer can check first whether 
 can achieve it: it traces every new call to another system through the receiver's own
 validation and treats missing real-system evidence as blocking.
 
-Options: `--reviewer codex|claude|cursor|gemini`, `--model M`, `--timeout SECONDS`. Set a
-default with `git config agentreview.reviewer codex` and a model with
+Options: `--reviewer codex|claude|cursor|gemini|opencode`, `--model M`, `--timeout SECONDS`.
+Set a default with `git config agentreview.reviewer codex` and a model with
 `git config agentreview.codex.model <model>`. It refuses to use your own kind.
+
+If the reviewer fails or times out (for example out of credits), it falls back by itself:
+first the same reviewer with `git config agentreview.<kind>.fallbackModel` (Claude: `sonnet`
+built in), then OpenCode with an OpenCode Go model (`git config agentreview.opencode.model`,
+default `opencode-go/kimi-k3.1-pro`). OpenCode takes only `opencode-go/` models, never one of
+your own family. A local model is always refused, and a review by one does not count: never
+run one by hand as a substitute. The first line of the output, `Reviewed by: <kind> <model>`,
+names the reviewer actually used; report that one.
 
 ## Reading the result
 
@@ -29,8 +37,9 @@ default with `git config agentreview.reviewer codex` and a model with
 |---|---|---|
 | 0 | Complete review on stdout, ending with the end marker | Evaluate the findings |
 | 3 | No end marker | Not a review. Run it again, or with a longer `--timeout` |
-| 4 | The reviewer failed or timed out | Read the log path it prints; fix or pick another reviewer |
+| 4 | Every reviewer tried failed or timed out, fallbacks included | Read the log path it prints; stop and tell the owner. Never substitute a local model |
 | 2 | Usage or setup problem | Read the message |
+| 5 | The reviewer changed the working tree | Not a review. Inspect `git status`, restore, report it |
 
 ## Evaluating findings
 
