@@ -142,3 +142,45 @@ and without the skill in an isolated session.
 ## License
 
 MIT; see [LICENSE](LICENSE).
+
+### Native evaluation contexts
+
+The optional plan execution workflow is named `execute-feature-plan`; the skill remains
+`feature-loop`. Its file and installer link remain `workflows/feature-loop.js` for existing
+installations. Distinct runtime names prevent the workflow from shadowing the skill's
+activation description in Claude Code.
+
+The false-review-finding task has three separate cases:
+
+| Case | Context in both arms | What it measures |
+| --- | --- | --- |
+| `wrong-finding` | No installed working rules or explicit skill request | Automatic package skill discovery |
+| `wrong-finding-rules` | Canonical working rules supplied directly in the prompt and copied into project `CLAUDE.md`, with a fallback for unavailable skills/helpers | Plugin benefit on top of the same written rules |
+| `wrong-finding-explicit` | Conditional request to invoke `agent-workflow:feature-loop` if available | Compliance with an explicit invocation request, not automatic discovery |
+
+Start with `wrong-finding-rules`, then compare the discovery and explicit cases separately.
+All three use the same task and outcome graders. Native with/without ablation treats the
+with-only `skill-fired` grader as an activation indicator rather than part of the score.
+A good outcome without activation does not establish that the plugin caused that outcome.
+The baseline receives the same prompt/context and can proceed without an absent skill.
+
+These cases evaluate the plugin package, not a complete `install.sh --wire` environment:
+`agent-review`, `commit-gate`, global configuration and additional reviewer credentials
+are not installed by the scaffolds. The rules variant copies current repository rules
+into the shared prompt and isolated project, rather than reading the user's home configuration.
+Claude Code 2.1.316 did not automatically load the scaffold's `CLAUDE.md` in our real CLI
+probe, so the prompt supplies the rules explicitly. The test checks for drift against
+`AGENT-WORKFLOW.md`; update this fixture when the canonical rules change.
+
+    node --test evals/context.test.cjs
+    claude plugin eval . --case wrong-finding-rules --runs 1 --scaffold --allow-tools Read Bash Write Edit --trust-plugin --no-publish
+
+The native CLI still applies its sandbox. Commit-dependent cases need a separate proven
+Git capability check in the runner; this context change does not bypass that protection.
+
+`red-first` evaluates test-first behavior only. Its former `committed` grader matched
+an attempted Bash command and could pass even when Git failed; it and the commit request
+have been removed. Successful Git writes were probed with native Claude Code 2.1.316 on
+macOS, but hosted Linux writes remain unverified: the earlier hosted result reported a
+read-only error without retaining the underlying tool trace. Older commit-oriented cases
+outside this recommended CI set are not validated by these probes.

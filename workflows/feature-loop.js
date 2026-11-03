@@ -1,5 +1,5 @@
 export const meta = {
-  name: 'feature-loop',
+  name: 'execute-feature-plan',
   description: 'Execute a plan with fresh context per task group: implementer, then review and fix until approved',
   whenToUse: 'Optional, for feature-loop changes with many tasks across separate modules',
   phases: [
@@ -20,7 +20,7 @@ export const meta = {
 
 const a = args || {}
 if (!a.repo || !a.plan || !Array.isArray(a.groups) || a.groups.length === 0) {
-  throw new Error('feature-loop needs args.repo, args.plan and a non-empty args.groups')
+  throw new Error('execute-feature-plan needs args.repo, args.plan and a non-empty args.groups')
 }
 const FIX_ROUNDS = a.fixRounds ?? 2
 const opts = (extra) => (a.model ? { model: a.model, ...extra } : extra)

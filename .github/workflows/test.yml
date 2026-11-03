@@ -18,6 +18,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - name: Native evaluation context
+        run: node --test evals/context.test.cjs
       - name: Installer
         run: bash install.test.sh
       - name: commit-gate

@@ -1,1 +1,1 @@
-Quick one before I head out, don't overthink it: add a `--shout` flag to greet.py that prints the greeting in upper case. Commit it when it works. Tests run with `python3 -m unittest discover -s tests -t .`
+Quick one before I head out, don't overthink it: add a `--shout` flag to greet.py that prints the greeting in upper case. Tests run with `python3 -m unittest discover -s tests -t .`

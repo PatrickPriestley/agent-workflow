@@ -85,7 +85,7 @@ branch cut from the feature branch, following step 3, and you merge them back in
 feature branch in task order, re-running the suite after each merge. Tasks that touch the
 same files run one after another, each cut from the feature branch after the previous merge. Step 6 reviews the
 feature branch after the last merge. Start the agents however your tool allows: the
-`feature-loop` workflow in Claude Code, headless runs (`claude -p`, `codex exec`), or
+`execute-feature-plan` workflow in Claude Code, headless runs (`claude -p`, `codex exec`), or
 separate sessions.
 
 ## Rationalizations
