@@ -23,8 +23,8 @@
 # Each reviewer runs read-only: codex exec --sandbox read-only, claude -p with Read/Grep/Glob
 # only, cursor-agent --mode plan, gemini --approval-mode plan, opencode with an inline agent that
 # denies every tool but read, grep, glob and list. The pinned diff, log and any
-# uncommitted work are written to a folder inside .git for it to read; secret-looking files
-# are listed by name only. The review counts only if its last nonblank line is <<AGENT-REVIEW-END>>.
+# uncommitted work are written to a folder inside .git for it to read; secret-looking files,
+# tracked or not, are listed by name only. The review counts only if its last nonblank line is <<AGENT-REVIEW-END>>.
 #
 # Exit: 0 review complete (printed on stdout after a "Reviewed by:" line; also in reviewer.txt),
 # 2 usage or setup problem, 3 no end marker (no fallback: rerun it), 4 every reviewer tried
@@ -133,9 +133,25 @@ if [ "$mode" = code ]; then
     size_stop="$(printf '%s' "$size_line" | sed -n 's/.*above the \([0-9]*\)-line stop.*/\1/p')"
     echo "agent-review: this range adds $size_n reviewable lines, above the $size_stop-line stop. One review pass covers a diff this size poorly: split it by task, or review it in parts with agent-review code BASE..HEAD (pr-size $range lists the commits), with a longer --timeout." >&2
   fi
-  git diff "$base" "$head" > "$dir/diff.patch"
+  # Secret-looking tracked paths (#4), committed or not, are left out of both patches and
+  # named in excluded.txt. A rename or copy with a secret-looking path on either side loses
+  # both sides: excluding only the old one would show the new path as a whole added file.
+  secret_paths() {  # git diff args -> each path to exclude, one per line
+    git diff --name-status -z -M "$@" | while IFS= read -r -d '' st; do
+      IFS= read -r -d '' a
+      case "$st" in
+        R*|C*) IFS= read -r -d '' b
+          if printf '%s\n%s\n' "$a" "$b" | grep -iqE "$secret_re"; then printf '%s\n%s\n' "$a" "$b"; fi ;;
+        *) if printf '%s\n' "$a" | grep -iqE "$secret_re"; then printf '%s\n' "$a"; fi ;;
+      esac
+    done
+  }
+  { secret_paths "$base" "$head"; secret_paths HEAD; } | sort -u > "$dir/excluded.txt"
+  paths=(.)  # never empty: bash 3.2 under set -u rejects an empty array
+  while IFS= read -r f; do paths+=(":(exclude,literal)$f"); done < "$dir/excluded.txt"
+  git diff "$base" "$head" -- "${paths[@]}" > "$dir/diff.patch"
   git log --stat "$range" > "$dir/log.txt"
-  git diff HEAD > "$dir/worktree.patch"
+  git diff HEAD -- "${paths[@]}" > "$dir/worktree.patch"
   git ls-files --others --exclude-standard | while IFS= read -r f; do
     if printf '%s\n' "$f" | grep -iqE "$secret_re"; then echo "$f (looks like a secret: do not open)"; else echo "$f"; fi
   done > "$dir/untracked.txt"
@@ -146,7 +162,8 @@ if [ "$mode" = code ]; then
   material="- $dir/diff.patch: git diff $range
 - $dir/log.txt: the commits in that range
 - $dir/worktree.patch: uncommitted changes to tracked files (may be empty)
-- $dir/untracked.txt: untracked files; open each one except those marked as secrets"
+- $dir/untracked.txt: untracked files; open each one except those marked as secrets
+- $dir/excluded.txt: changed tracked files that look like secrets, left out of both patches; do not open them"
   ask="Review $subject. Read the material above and the repository's files for context."
 else
   [ -n "$target" ] && [ -f "$target" ] || fail "plan mode needs an existing FILE"

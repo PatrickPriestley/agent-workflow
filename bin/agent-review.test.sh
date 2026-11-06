@@ -196,14 +196,42 @@ assert_has "timed out" "$out"
 [ $(( $(date +%s) - start )) -lt 15 ] && ok || bad "timeout did not stop the reviewer"
 
 it "uncommitted work is included, and secret files are listed by name only"
-printf 'print("wip")\n' > "$R/greet.py"; printf 'TOKEN=abc\n' > "$R/.env"; printf 'x\n' > "$R/new.py"
+printf 'print("wip")\n' > "$R/greet.py"; printf 'TOKEN=CANARY_UNTRACKED\n' > "$R/.env"; printf 'x\n' > "$R/new.py"
 out=$(run "$R" claude code 2>&1)
 dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
 assert_has "wip" "$(cat "$dir/worktree.patch")"
 assert_has "new.py" "$(cat "$dir/untracked.txt")"
-grep -q "abc" "$dir"/* && bad "secret contents reached the review folder" || ok
+grep -q "CANARY_UNTRACKED" "$dir"/* && bad "secret contents reached the review folder" || ok
 assert_has ".env (looks like a secret: do not open)" "$(cat "$dir/untracked.txt")"
 git -C "$R" checkout -q greet.py; rm -f "$R/.env" "$R/new.py"
+
+it "tracked secret files are named, never diffed: committed, staged, modified, renamed, deleted (#4)"
+S=$(repo secrets); g() { git -C "$S" -c user.name=t -c user.email=t@t "$@"; }
+printf 'OLD=CANARY_DELETED\n' > "$S/old.pem"; printf 'plain\n' > "$S/notes.txt"; printf 'K=CANARY_RENAMED_AWAY\n' > "$S/deploy.key"; printf 'K=CANARY_STAGED_RENAME\n' > "$S/wip.key"
+mkdir -p "$S/config"; printf 'K=CANARY_MODIFIED_BASE\n' > "$S/config/app.key"
+g add -A; g commit -q -m "chore: base secrets"; g checkout -q main; g merge -q --ff-only feature; g checkout -q feature
+printf 'API_KEY=CANARY_COMMITTED\n' > "$S/.env"; g rm -q old.pem; g mv notes.txt db-credentials.txt
+printf 'CANARY_RENAMED\n' >> "$S/db-credentials.txt"; printf 'print("committed")\n' > "$S/app.py"; g add -A; g commit -q -m "feat: secrets"
+g mv deploy.key deploy-notes.txt; g commit -q -m "chore: rename"
+printf 'T=CANARY_STAGED\n' > "$S/.env.local"; g add .env.local; g mv wip.key wip.txt
+printf 'K=CANARY_UNSTAGED\n' > "$S/config/app.key"
+printf 'print("ordinary")\n' > "$S/greet.py"
+out=$(run "$S" claude code main..feature 2>&1)
+dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
+grep -rq CANARY "$dir" && bad "secret contents reached the review folder: $(grep -rl CANARY "$dir")" || ok
+assert_has "committed" "$(cat "$dir/diff.patch")"
+assert_has "ordinary" "$(cat "$dir/worktree.patch")"
+for f in .env old.pem db-credentials.txt .env.local config/app.key deploy.key deploy-notes.txt wip.key wip.txt; do assert_has "$f" "$(cat "$dir/excluded.txt" 2>/dev/null)"; done
+assert_has "excluded.txt" "$(cat "$dir/prompt.md")"
+
+it "run from a subdirectory, secret files there are still left out"
+SD=$(repo subdir); mkdir -p "$SD/sub"; printf 'K=CANARY_SUBDIR\n' > "$SD/sub/.env"; printf 'x = 1\n' > "$SD/sub/app.py"
+git -C "$SD" add -A; git -C "$SD" -c user.name=t -c user.email=t@t commit -q -m "feat: sub"
+out=$(run "$SD/sub" claude code main..feature 2>&1)
+dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
+grep -rq CANARY_SUBDIR "$dir" && bad "the subdirectory's secret reached the review folder" || ok
+assert_has "sub/app.py" "$(cat "$dir/diff.patch")"
+assert_has "sub/.env" "$(cat "$dir/excluded.txt" 2>/dev/null)"
 
 it "plan mode names the plan file"
 printf '# Plan\n' > "$TMPROOT/plan.md"
