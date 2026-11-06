@@ -84,9 +84,17 @@ To make this work well:
 
 ## Install
 
-    ./install.sh            # links everything into place; safe to rerun
-    ./install.sh --wire     # also give each installed agent the rules
-    ./install.sh --dry-run  # show what it would do
+    ./install.sh             # install from a pinned copy at origin/main; safe to rerun
+    ./install.sh --wire      # also give each installed agent the rules
+    ./install.sh --ref v1.2  # pin a tag or branch instead
+    ./install.sh --dry-run   # show what it would do
+    ./install.sh --dev       # link this checkout itself, for working on agent-workflow
+
+By default everything is linked from a pinned clone at
+`${XDG_DATA_HOME:-~/.local/share}/agent-workflow`, checked out at `origin/main` (or `main`
+when there is no remote). Switching branches in your checkout no longer changes what every
+agent on the machine runs. The installer refuses to move a pinned clone that has local
+changes. To update: `git fetch` in your checkout, then rerun `./install.sh`.
 
 Skills go into `~/.agents/skills` (read directly by Codex and Cursor) with `~/.claude/skills`
 links for Claude Code; the commands go into `~/.local/bin`; the rules file is linked to
@@ -103,7 +111,7 @@ links for Claude Code; the commands go into `~/.local/bin`; the rules file is li
 Agents that are not installed are skipped.
 
 A file in the way is replaced only when it equals the repo copy; anything else stops the
-install and names the file. Updates are a `git pull`.
+install and names the file.
 
 ## Commit hooks, per repository
 

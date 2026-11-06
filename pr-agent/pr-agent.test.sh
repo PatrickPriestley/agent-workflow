@@ -111,7 +111,7 @@ chars="$(find "$skill_dir" -name '*.md' -not -path '*/scripts/*' -not -path '*/a
 
 it "the skill is not installed for authoring agents"
 H="$TMPROOT/home"; mkdir -p "$H"
-out="$(HOME="$H" bash "$root/install.sh" --dry-run 2>&1)"
+out="$(HOME="$H" bash "$root/install.sh" --dev --dry-run 2>&1)"
 if [ ! -e "$root/skills/workflow-review" ] && ! printf '%s' "$out" | grep -q 'workflow-review'; then ok
 else bad "workflow-review reaches authoring agents: $out"; fi
 
