@@ -24,7 +24,7 @@
 # only, cursor-agent --mode plan, gemini --approval-mode plan, opencode with an inline agent that
 # denies every tool but read, grep, glob and list. The pinned diff, log and any
 # uncommitted work are written to a folder inside .git for it to read; secret-looking files
-# are listed by name only. The review counts only if it ends with <<AGENT-REVIEW-END>>.
+# are listed by name only. The review counts only if its last nonblank line is <<AGENT-REVIEW-END>>.
 #
 # Exit: 0 review complete (printed on stdout after a "Reviewed by:" line; also in reviewer.txt),
 # 2 usage or setup problem, 3 no end marker (no fallback: rerun it), 4 every reviewer tried
@@ -228,7 +228,9 @@ for attempt in "${attempts[@]}"; do
     { [ -s "$out" ] && tail -3 "$out"; tail -3 "$err"; } | sed 's/^/    /' >&2
     continue
   fi
-  if ! grep -qF "$END" "$out" 2>/dev/null; then
+  # The marker counts only as the last nonblank line (#5), trailing spaces and CR allowed.
+  last="$(awk '{ sub(/[[:space:]]+$/, "") } NF { l = $0 } END { print l }' "$out" 2>/dev/null)"
+  if [ "$last" != "$END" ]; then
     [ -f "$out" ] && cat "$out"
     echo "agent-review: the reply from $label has no end marker, so it is not a complete review; output in $out" >&2
     exit 3

@@ -26,6 +26,7 @@ for f in \${FAKE_FAIL:-}; do [ "\$f" = "$cli:\$model" ] && { echo "You're out of
 reply="1. greet.py:3 - something. Fix: something."
 [ -n "\${FAKE_NO_MARKER:-}" ] || reply="\$reply
 <<AGENT-REVIEW-END>>"
+[ -n "\${FAKE_REPLY_FILE:-}" ] && reply="\$(cat "\$FAKE_REPLY_FILE"; printf x)" && reply="\${reply%x}"
 [ "$cli" = codex ] && [ -n "\${FAKE_CODEX_MODEL:-}" ] && printf 'OpenAI Codex\nmodel: %s\nprovider: openai\n' "\$FAKE_CODEX_MODEL" >&2
 if [ "$cli" = codex ]; then
   out=""; prev=""; for a in "\$@"; do [ "\$prev" = "-o" ] && out="\$a"; prev="\$a"; done
@@ -166,6 +167,22 @@ it "a three-dot range is refused, not read as tip to tip"
 out=$(run "$R" claude code main...feature 2>&1); rc=$?
 assert_eq 2 "$rc"
 assert_has "two dots" "$out"
+
+it "the end marker counts only as the last nonblank line (#5)"
+RF="$TMPROOT/reply.txt"
+printf 'Quoted token: <<AGENT-REVIEW-END>>\nStill reviewing; incomplete\n' > "$RF"
+out=$(EXTRA_ENV=FAKE_REPLY_FILE=$RF run "$R" claude code 2>&1); rc=$?
+assert_eq 3 "$rc"
+printf '1. a finding\n<<AGENT-REVIEW-END>>\nmore findings after the marker\n' > "$RF"
+out=$(EXTRA_ENV=FAKE_REPLY_FILE=$RF run "$R" claude code 2>&1); rc=$?
+assert_eq 3 "$rc"
+printf '1. a finding\nsee `<<AGENT-REVIEW-END>>`\n' > "$RF"
+out=$(EXTRA_ENV=FAKE_REPLY_FILE=$RF run "$R" claude code 2>&1); rc=$?
+assert_eq 3 "$rc"
+printf '1. a finding\n<<AGENT-REVIEW-END>>  \r\n\n   \n\n' > "$RF"
+out=$(EXTRA_ENV=FAKE_REPLY_FILE=$RF run "$R" claude code 2>&1); rc=$?
+assert_eq 0 "$rc"
+assert_has "a finding" "$out"
 
 it "a failing reviewer is reported"
 out=$(EXTRA_ENV=FAKE_EXIT=5 run "$R" claude code 2>&1); rc=$?
