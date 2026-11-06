@@ -128,11 +128,62 @@ OpenCode Go (`agentreview.opencode.model`, default `opencode-go/kimi-k3.1-pro`).
 are refused. Exit 0 means a complete review, headed `Reviewed by: <kind> <model>`; 3 means
 the reply had no end marker; 4 means every reviewer tried failed or timed out; 5 means a reviewer changed the working tree.
 
+## PR-Agent
+
+[PR-Agent](https://github.com/The-PR-Agent/pr-agent) can review each pull request on GitHub as
+a second check. It does not replace `agent-review`, which runs before the push and reads
+the receiver's code; PR-Agent makes one call over the diff after it.
+
+- `.pr_agent.toml` keeps secret files away from the model, with globs that copy
+  `agent-review`'s secret list (a test fails if they drift), and turns skills on.
+- `pr-agent/skills/workflow-review/SKILL.md` has PR-Agent review against the rules in
+  `AGENT-WORKFLOW.md`: real-system evidence, red-first tests, mutation results, the named
+  reviewer, hands-on output, Conventional Commits and no AI attribution. It is kept out of
+  `skills/` so that authoring agents do not load it.
+
+`.github/workflows/pr-agent.yml` runs it on each pull request (opened, reopened, ready for
+review, and on every push to it; not drafts or forks) and posts the review as a comment. Only `/review` runs. The model
+is served by OpenCode Go, which PR-Agent reaches as an OpenAI-compatible endpoint. To turn it
+on, add under Settings > Secrets and variables > Actions:
+
+- secret `OPENCODE_GO_KEY`: the OpenCode Go API key. Without it the job ends with a notice.
+- optional variable `PR_AGENT_MODEL`: another Go model, as `openai/<go-model-id>`. The default
+  is `openai/glm-5.3`. Claude, GPT, Codex and local models are refused, since Claude and
+  Codex author the pull requests here.
+- optional variable `PR_AGENT_VERBOSITY=2` for a first run: the job log then shows the full
+  prompt, to check that the skill loads and secret files stay out. Remove it afterwards.
+
+The image is pinned by digest, because `the-pr-agent/pr-agent@<tag>` always pulls a moving
+image. PR-Agent reads `.pr_agent.toml`
+from the default branch only, so the workflow repeats the ignore globs, and a test fails if
+they differ. Before each review, a step runs `pr-agent/verify-image.py` inside the same pinned
+image and fails the job unless the globs filter sample secret paths and the skill loads. The
+skill is read from the pull request's own checkout, which is fine while only
+the owner opens pull requests. Both were verified in the pinned image on the first live run;
+see `docs/plans/2026-11-02-pr-agent-review-skill.md`.
+
+To try it locally, with nothing posted anywhere:
+
+    python3.12 -m venv ~/.venvs/pr-agent && ~/.venvs/pr-agent/bin/pip install pr-agent==0.49.0
+    export CONFIG__MODEL=openai/glm-5.3 OPENAI__API_BASE=https://opencode.ai/zen/go/v1 \
+           OPENAI__KEY=<OpenCode Go key>      # or any hosted model not of the author's family
+    pr-agent/scratch.sh            # two local test branches, and the three checks to run on them
+    pr-agent/try.sh                # review this branch; also describe, improve
+    pr-agent/try.sh --no-skill     # control run; --no-ignore and --verbose (log the prompts) too
+
+PR-Agent ignores `.pr_agent.toml` in local mode, so `try.sh` passes the globs and the skill
+as environment variables. It reviews committed work only, and refuses uncommitted changes to
+tracked files because PR-Agent reads the working tree. Each run is kept in `.git/pr-agent/`.
+
 ## Tests and evals
 
     bash install.test.sh
     bash bin/commit-gate.test.sh
     bash bin/agent-review.test.sh
+    bash pr-agent/pr-agent.test.sh   # needs python3 3.11 or later
+    bash pr-agent/try.test.sh
+    bash pr-agent/workflow.test.sh
+    bash pr-agent/verify-image.test.sh
     claude plugin eval . --scaffold --allow-tools Bash Write Edit   # skill evals, with and without
 
 The repository is also a Claude Code plugin (`.claude-plugin/plugin.json`), which is what

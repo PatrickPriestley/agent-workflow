@@ -28,6 +28,17 @@ jobs:
         run: bash bin/agent-review.test.sh
       - name: plan skill scripts
         run: for t in skills/plan/scripts/test-*.sh; do bash "$t"; done
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: PR-Agent config and review skill
+        run: bash pr-agent/pr-agent.test.sh
+      - name: PR-Agent trial scripts
+        run: bash pr-agent/try.test.sh
+      - name: PR-Agent workflow
+        run: bash pr-agent/workflow.test.sh
+      - name: PR-Agent image check
+        run: bash pr-agent/verify-image.test.sh
 
   pr-title:
     name: conventional PR title

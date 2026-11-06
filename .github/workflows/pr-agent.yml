@@ -1,0 +1,118 @@
+name: pr-agent
+
+# PR-Agent (https://github.com/The-PR-Agent/pr-agent) reviews each pull request against the
+# rules in AGENT-WORKFLOW.md, through pr-agent/skills/workflow-review, and posts its review as a
+# comment. It is a second check: the review rule 4 asks for is agent-review, before the push.
+#
+# The model is served by OpenCode Go (https://opencode.ai, $10 a month), which PR-Agent reaches
+# as an OpenAI-compatible endpoint: hence the openai/ prefix and OPENAI__API_BASE. Setup, under
+# Settings > Secrets and variables > Actions:
+#   secret   OPENCODE_GO_KEY     the OpenCode Go API key. Without it the job ends with a notice.
+#   variable PR_AGENT_MODEL      optional; another Go model as openai/<go-model-id>. The default
+#                                is GLM-5.3 (0-day retention, not used for training). Go
+#                                also serves GPT and Claude models: those are refused, because
+#                                they author the pull requests here.
+#   variable PR_AGENT_VERBOSITY  optional; 2 logs the full prompt in the job log, for checking
+#                                that the skill loads and secret files stay out. Then remove it.
+#
+# The image is pinned by digest: the-pr-agent/pr-agent@<tag> always pulls the moving
+# pragent/pr-agent:github_action image. To update, take the index digest of
+# pragent/pr-agent:<version>-github_action (docker buildx imagetools inspect, or
+# https://hub.docker.com/v2/repositories/pragent/pr-agent/tags/<version>-github_action).
+#
+# PR-Agent reads .pr_agent.toml from the default branch only, so the ignore globs are repeated
+# here; pr-agent/workflow.test.sh fails if the two differ. The skill is read from this
+# checkout, so a pull request can change its own review guidance: fine while only the owner
+# opens pull requests, to be revisited before that changes.
+
+on:
+  pull_request:
+    # synchronize: each push to an open pull request gets a fresh review, one Go call per push;
+    # the concurrency group below cancels a run that a newer push has replaced.
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    # Read by both the protection check and the review below, so both see the same values.
+    env:
+      SKILLS__ENABLED: 'true'
+      SKILLS__PATHS: '["/github/workspace/pr-agent/skills"]'
+      IGNORE__GLOB: '["vendor/**", "**/.[eE][nN][vV]*", "*.[pP][eE][mM]", "*.[kK][eE][yY]", "**/[iI][dD]_*", "*[sS][eE][cC][rR][eE][tT]*", "*[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]*", "*[tT][oO][kK][eE][nN]*"]'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check the model setting
+        id: check
+        env:
+          MODEL: ${{ vars.PR_AGENT_MODEL || 'openai/glm-5.3' }}
+          KEY_SET: ${{ secrets.OPENCODE_GO_KEY != '' }}
+        run: |
+          if [ -z "$MODEL" ] || [ "$KEY_SET" != true ]; then
+            echo "::notice::PR-Agent is not set up: add the secret OPENCODE_GO_KEY (see .github/workflows/pr-agent.yml)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bash pr-agent/check-model.sh "$MODEL" '[]' --exclude claude --exclude gpt --exclude codex
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      # Inside the same image, with the same settings: the globs and skill paths must arrive as
+      # lists, PR-Agent's own filter must drop sample secret paths and keep ordinary ones, and
+      # the workflow-review skill must be in its skills context. Otherwise nothing is reviewed.
+      - name: Check the protections in the pinned image
+        if: steps.check.outputs.ready == 'true'
+        run: >-
+          docker run --rm -w /app --entrypoint python
+          -e IGNORE__GLOB -e SKILLS__ENABLED -e SKILLS__PATHS
+          -v "$GITHUB_WORKSPACE:/github/workspace:ro"
+          pragent/pr-agent@sha256:b1ed6e8de56eb4d6e4169ee0d5c209bb5ed1ef071a01c0c042c64b80192a785c
+          /github/workspace/pr-agent/verify-image.py
+
+      - name: PR-Agent review
+        if: steps.check.outputs.ready == 'true'
+        # pragent/pr-agent:0.49.0-github_action, pushed 2026-10-25
+        uses: docker://pragent/pr-agent@sha256:b1ed6e8de56eb4d6e4169ee0d5c209bb5ed1ef071a01c0c042c64b80192a785c
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI__KEY: ${{ secrets.OPENCODE_GO_KEY }}
+          OPENAI__API_BASE: 'https://opencode.ai/zen/go/v1'
+          # Go asks each client to name itself and send one stable x-opencode-session per
+          # conversation, and rejects requests without it ("Where can I use it?" in its docs).
+          LITELLM__EXTRA_HEADERS: '{"User-Agent": "pr-agent/0.49.0 (agent-workflow)", "x-opencode-session": "pr-agent-${{ github.repository_id }}-${{ github.event.pull_request.number }}"}'
+          # GLM-5.3, not Kimi K3.1 Pro: Kimi finished one review in four tries through Go, and
+          # timed out at 600 seconds twice (run 41533824510).
+          CONFIG__MODEL: ${{ vars.PR_AGENT_MODEL || 'openai/glm-5.3' }}
+          CONFIG__FALLBACK_MODELS: '[]'
+          # Kimi K3 and K3.1 Pro, if PR_AGENT_MODEL names them, accept only temperature 1.
+          # PR-Agent's main lists them as models that get no temperature, but 0.49.0 does not,
+          # so this is that newer list.
+          CONFIG__NO_TEMPERATURE_MODELS: '["deepseek/deepseek-reasoner", "o1-mini", "o1-mini-2024-09-12", "o1", "o1-2024-12-17", "o3-mini", "o3-mini-2025-01-31", "o3", "o3-2025-04-16", "o4-mini", "o4-mini-2025-04-16", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5-mini", "moonshotai.kimi-k3", "us.moonshotai.kimi-k3", "global.moonshotai.kimi-k3", "kimi-k3", "kimi-k3.1-pro", "zai.glm-5"]'
+          CONFIG__CUSTOM_MODEL_MAX_TOKENS: '100000'
+          # A reasoning model can take minutes on a large diff (Kimi K3.1 Pro took over six,
+          # run 41529229286), past the 120-second default. Client retries would repeat a slow
+          # call, so they are off; the job limit above leaves room for one full call.
+          CONFIG__AI_TIMEOUT: '600'
+          CONFIG__NUM_RETRIES: '0'
+          CONFIG__VERBOSITY_LEVEL: ${{ vars.PR_AGENT_VERBOSITY || '0' }}
+          GITHUB_ACTION_CONFIG__AUTO_REVIEW: 'true'
+          GITHUB_ACTION_CONFIG__AUTO_DESCRIBE: 'false'
+          GITHUB_ACTION_CONFIG__AUTO_IMPROVE: 'false'
+          # A push (synchronize) is skipped unless handle_push_trigger is on, and then runs
+          # push_commands, which default to /describe and /review: keep it to /review.
+          GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: 'true'
+          GITHUB_ACTION_CONFIG__PUSH_COMMANDS: '["/review"]'
+          GITHUB_ACTION_CONFIG__FAIL_ON_TOOL_ERRORS: 'true'

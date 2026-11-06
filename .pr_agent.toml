@@ -1,0 +1,29 @@
+# PR-Agent settings for this repository (https://github.com/The-PR-Agent/pr-agent).
+# PR-Agent reads this file from the default branch, so a pull request cannot change how it is
+# itself reviewed. See docs/plans/2026-11-02-pr-agent-review-skill.md.
+
+[ignore]
+# Never send secret files to the model (AGENT-WORKFLOW.md rule 4). These copy agent-review's
+# secret_re rule by rule; pr-agent/pr-agent.test.sh fails if the two disagree. PR-Agent matches
+# globs case-sensitively and lets '*' cross '/', hence the [xX] brackets and leading '*'.
+# This list replaces PR-Agent's default, so vendor/** is repeated.
+glob = [
+    'vendor/**',
+    # (^|/)\.env
+    '**/.[eE][nN][vV]*',
+    # \.pem$  \.key$
+    '*.[pP][eE][mM]',
+    '*.[kK][eE][yY]',
+    # (^|/)id_[a-z0-9]+$ has no exact glob, so every id_* name is skipped: a superset that
+    # also skips files such as id_utils.py, rather than send a key named id_work.
+    '**/[iI][dD]_*',
+    # secret  credential  token, anywhere in the path
+    '*[sS][eE][cC][rR][eE][tT]*',
+    '*[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]*',
+    '*[tT][oO][kK][eE][nN]*',
+]
+
+[skills]
+# Review against the working rules. Only the host can set skills.paths: point it at
+# pr-agent/skills from a checkout of the default branch (see README, "PR-Agent").
+enabled = true
