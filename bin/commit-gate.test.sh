@@ -291,5 +291,19 @@ it "disable removes the commit-msg hook as well"
 out=$(printf 'Add whatever\n' | msgcommit "$RM"); rc=$?
 assert_eq 0 "$rc"
 
+
+it "every commit subject a bundled skill prescribes passes the conventional check"
+RS=$(repo skillsubjects); (cd "$RS" && "$GATE" enable >/dev/null 2>&1)
+subjects="$(grep -ohiE 'commit `[^`]+`' "$here"/../skills/*/SKILL.md | sed -E 's/^[Cc]ommit `//; s/`$//' | sort -u)"
+[ -n "$subjects" ] && ok || bad "found no prescribed subjects in skills/*/SKILL.md"
+refused=""
+while IFS= read -r subj; do
+  [ -n "$subj" ] || continue
+  filled="$(printf '%s' "$subj" | sed -e 's/<change_id>/0001-example/g' -e 's/<one line>/a regression case/g' -e 's/ N$/ 1/')"
+  printf '%s\n' "$filled" > "$TMPROOT/skillmsg"
+  (cd "$RS" && "$GATE" run commit-msg "$TMPROOT/skillmsg" >/dev/null 2>&1) || refused="$refused [$subj]"
+done <<< "$subjects"
+[ -z "$refused" ] && ok || bad "refused:$refused"
+
 printf 'passed=%d failed=%d\n' "$pass" "$fail"
 [ "$fail" = 0 ]

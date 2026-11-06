@@ -68,7 +68,7 @@ tech_lead_signoff: null  # required when risk: high
 7. Set `risk` and `generated_by`. `commit` is `git rev-parse --short HEAD` and records
    the code the spec read. Skills live outside the repo, so the commit does not record
    them: `skills` maps each SDLC and policy skill applied to the first 12 hex digits of
-   `shasum -a 256 <its SKILL.md>`. Branch `spec/<change_id>`, commit `spec: <change_id>`
+   `shasum -a 256 <its SKILL.md>`. Branch `spec/<change_id>`, commit `docs(spec): <change_id>`
    per Conventions, and put it up for review (a PR, or show a summary and the path if
    there is no remote).
 8. Resolve concerns as an interview: one message per concern, stating it in two or

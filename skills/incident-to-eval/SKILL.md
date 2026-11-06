@@ -46,7 +46,7 @@ agent can write. Run only the relevant tests, not the whole suite.
 6. **Re-run** with `--runs 5`. Target at least 4 of 5. Put before and after counts in the
    commit or PR.
 7. Append a dated paragraph to `lessons/incidents.md`: what happened, the eval id, the
-   rule or skill change. Commit `eval: <change_id> <one line>`.
+   rule or skill change. Commit `test(eval): <change_id> <one line>`.
 
 ## Running the suite
 

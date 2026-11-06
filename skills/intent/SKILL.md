@@ -110,8 +110,8 @@ questions. `author` is the triggering identity. Commit; a human triages it.
 ## Commit
 
 With a remote: `git fetch`, branch `intent/<change_id>` from the latest default
-branch, commit `intent: <change_id>`, and open a PR. Without a remote: once the
-originator has approved the draft, commit `intent: <change_id>` straight on the default
+branch, commit `docs(intent): <change_id>`, and open a PR. Without a remote: once the
+originator has approved the draft, commit `docs(intent): <change_id>` straight on the default
 branch with the `Accepted-by:` trailer; no branch. Either way the product owner (which
 may be you) is the one who accepts or rejects.
 
