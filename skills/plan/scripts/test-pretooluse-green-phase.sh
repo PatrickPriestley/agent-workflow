@@ -49,12 +49,21 @@ REASON=green-phase expect "the installed herd-sdlc-phase helper is blocked" 2 Ba
 REASON=green-phase expect "the helper script by path is blocked"         2 Bash  "{\"command\":\"bash ~/Code/herd-tools/helpers/herd-sdlc-phase.sh off 0001-x\"}"
 expect "an unrelated herd-sdlc command is not mistaken for the helper"   0 Bash  "{\"command\":\"herd-sdlc-ctx spec 0001-x\"}"
 REASON=green-phase PANE=w5:p2 expect "another pane cannot clear the marker" 2 Bash "{\"command\":\"rm .git/green-phase\"}"
+REASON="conductor's pane (w9:p1)" PANE=w5:p2 expect "with Herdr, the block names the conductor's pane" 2 Bash "{\"command\":\"rm .git/green-phase\"}"
 PANE=w9:p1 expect "the owner pane may clear the marker"                  0 Bash  "{\"command\":\"rm .git/green-phase .git/green-phase.owner\"}"
 PANE=w9:p1 expect "the owner pane still cannot edit the tests"            2 Edit  "{\"file_path\":\"$ABS\",\"old_string\":\"a\",\"new_string\":\"b\"}"
 expect "reading the marker is allowed"                                   0 Bash  "{\"command\":\"cat .git/green-phase\"}"
 expect "a file named green-phase outside .git is not the marker"         0 Write "{\"file_path\":\"$repo/src/green-phase-notes.md\",\"content\":\"x\"}"
 rm "$repo/.git/green-phase.owner"
 REASON=green-phase expect "no owner file, outside Herdr: marker is locked" 2 Bash "{\"command\":\"rm .git/green-phase\"}"
+REASON="from their own terminal" expect "without Herdr, the block tells the person to clear the marker themselves" 2 Bash "{\"command\":\"rm .git/green-phase\"}"
+expect_quiet_conductor() {  # without an owner file, the refusal does not talk about a Herdr conductor
+  printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":"rm .git/green-phase"}}' "$repo" \
+    | env -u HERDR_PANE_ID python3 "$hook" >/dev/null 2>"$repo.err"
+  if grep -qi -e conductor -e pane "$repo.err"; then echo "FAIL without Herdr, the refusal mentions a conductor or pane"; fail=1
+  else echo "ok   without Herdr, the refusal does not mention a conductor or pane"; fi
+}
+expect_quiet_conductor
 rm "$repo/.git/green-phase"
 expect "without a marker, creating one is allowed"                       0 Write "{\"file_path\":\"$MARK\",\"content\":\"test/a.test.ts\"}"
 expect "without green-phase, test edits are allowed"  0 Edit  "{\"file_path\":\"$ABS\",\"old_string\":\"a\",\"new_string\":\"b\"}"

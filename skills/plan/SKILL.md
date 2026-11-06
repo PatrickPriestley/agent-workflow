@@ -30,7 +30,8 @@ stage instead, which the owner can override with a recorded reason.
 Work read-only until the plan is accepted: no file edits, no commits. Use the agent's
 read-only mode if it has one, and ask the engineer to switch if the session is not in it:
 Claude Code plan mode (Shift+Tab, or `claude --permission-mode plan`), Codex
-`--sandbox read-only`, Gemini CLI `--approval-mode plan`. Without such a mode, hold
+`--sandbox read-only`, Cursor Ask mode in the editor (or `cursor-agent --mode plan`),
+Gemini CLI `--approval-mode plan`. Without such a mode, hold
 yourself to it. Read the intent, the spec and the code.
 Draft a plan with this shape:
 
@@ -96,8 +97,8 @@ tests) can run with fewer approval prompts; the red/green discipline still appli
 
 Run build, test and lint and paste the literal output; never report done without it.
 Then check the result with fresh eyes: a fresh session, ideally a different model family
-(e.g. the `herd-review` skill, or a subagent where the agent has them), given only the
-plan and the diff, told to run the app or the tests, exercise the change and its two nearest neighbouring
+(e.g. `agent-review code --goal "<the plan's outcome>"`, or a subagent where the agent has
+them), given only the plan and the diff, told to run the app or the tests, exercise the change and its two nearest neighbouring
 flows, and report mismatches against the plan **without fixing anything**. Any mismatch
 goes back to step 5.
 
@@ -117,6 +118,18 @@ of each green step, write it:
 `git diff --name-only HEAD~1 HEAD -- <test paths> > "$(git rev-parse --git-dir)/green-phase"`.
 Delete it once the step is committed. Without it, both scripts do nothing.
 
+Pick by agent:
+
+- **Any agent, Cursor included:** install the git hook only. The agent writes and deletes
+  the marker itself, and the hook refuses any commit that changes a protected test while
+  the marker exists. It catches an accidental test edit, not an agent set on removing it.
+- **Claude Code or Codex, for a stronger guard:** add the agent hook too. It also stops the
+  agent from changing the marker, so the agent writes it at the start of the step and you
+  remove it from your own terminal once the step is committed:
+  `rm "$(git rev-parse --git-dir)/green-phase"`. The agent's refusal says so.
+- **With Herdr:** the conductor pane can own the marker instead (below), so no one has to
+  clear it by hand.
+
 - **Agent hook** (stops the edit before it happens): `scripts/pretooluse-green-phase.py`,
   registered as a `PreToolUse` hook. It blocks Claude Code `Edit`/`Write`/`MultiEdit`/
   `NotebookEdit`, Codex `apply_patch`, and shell commands from either that name a
@@ -134,13 +147,19 @@ Delete it once the step is committed. Without it, both scripts do nothing.
   change, with paths read NUL-separated so unusual names are not quoted past it. It fails
   closed on an empty or unreadable marker or a git error. `git commit --no-verify` skips it.
 
-The marker protects itself: while it exists, only the Herdr pane named in
-`.git/green-phase.owner` may change `green-phase*` or run `herd-sdlc phase`; the hook
-checks its own inherited `HERDR_PANE_ID`, which a command cannot set. With no owner file,
-no agent may change it. Both agents also guard `.git` natively: Claude Code asks for
-approval before writing there, and Codex's `workspace-write` sandbox makes it read-only.
-So the conductor changes the marker through a helper run in a plain shell pane
-(`herdr pane run`), not through its own tools.
+The marker protects itself: with the agent hook installed, no agent may change
+`green-phase*` while it exists, so you clear it from your own terminal. Both agents also
+guard `.git` natively: Claude Code asks for approval before writing there, and Codex's
+`workspace-write` sandbox makes it read-only.
+
+*Herdr only, optional:* if `.git/green-phase.owner` names a Herdr pane, that pane may
+change the marker and run `herd-sdlc phase`; the hook checks its own inherited
+`HERDR_PANE_ID`, which a command cannot set. The conductor changes the marker through a
+helper run in a plain shell pane (`herdr pane run`), not through its own tools. Without
+Herdr, leave the owner file out.
+
+Cursor's own hooks are not covered: the agent hook is untested there, so Cursor relies on
+the git hook.
 
 The shell check is a heuristic, which is why the git hook stays. Tests:
 `scripts/test-pretooluse-green-phase.sh` and `scripts/test-pre-commit-green-phase.sh`.

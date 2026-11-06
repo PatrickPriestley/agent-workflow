@@ -79,9 +79,15 @@ def main():
         marker_hit = marker_hit or bool(PHASE_HELPER.search(command))
 
     if marker_hit and not is_owner:
-        print("green step: the phase marker (.git/green-phase) can only be changed by the"
-              " conductor's pane" + (f" ({owner})" if owner else "") + ". Finish the step"
-              " and let the conductor clear it, or ask the engineer.", file=sys.stderr)
+        if owner:  # a Herdr conductor owns the marker
+            print("green step: the phase marker (.git/green-phase) can only be changed by the"
+                  f" conductor's pane ({owner}). Finish the step and let the conductor clear"
+                  " it, or ask the engineer.", file=sys.stderr)
+        else:
+            print("green step: the phase marker (.git/green-phase) protects the red step's tests,"
+                  " so an agent cannot remove it. Commit the step, then ask the engineer to"
+                  " clear it from their own terminal, outside the agent: rm \"$(git rev-parse"
+                  " --git-dir)/green-phase\"", file=sys.stderr)
         return 2
 
     if hit:
