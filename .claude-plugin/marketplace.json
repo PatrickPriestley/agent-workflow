@@ -1,0 +1,16 @@
+{
+  "name": "agent-workflow",
+  "owner": {
+    "name": "Patrick Priestley"
+  },
+  "metadata": {
+    "description": "The agent-workflow plugin: working-rule skills for a test-first, independently reviewed development loop."
+  },
+  "plugins": [
+    {
+      "name": "agent-workflow",
+      "source": "./",
+      "description": "A lightweight, agent-agnostic development loop: probe, test first, mutation-check, independent headless review, conventional and attribution-free commits."
+    }
+  ]
+}

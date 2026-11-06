@@ -113,6 +113,18 @@ Agents that are not installed are skipped.
 A file in the way is replaced only when it equals the repo copy; anything else stops the
 install and names the file.
 
+### Claude Code plugin
+
+Claude Code users can take the skills as a plugin instead of linking them:
+
+    claude plugin marketplace add PatrickPriestley/agent-workflow
+    claude plugin install agent-workflow@agent-workflow
+
+(`/plugin marketplace add ...` and `/plugin install ...` inside a session do the same.) The
+repository is private, so each teammate needs read access to it on GitHub. The plugin carries
+the six skills only: the rules file, `agent-review`, `commit-gate` and `pr-size` still come
+from `install.sh`. Cursor, Codex, OpenCode and Gemini users use `install.sh` alone.
+
 ## Commit hooks, per repository
 
     commit-gate enable                              # conventional + no-attribution checks

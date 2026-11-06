@@ -2,6 +2,10 @@
   "name": "agent-workflow",
   "version": "0.1.0",
   "description": "A lightweight, agent-agnostic development loop: probe, test first, mutation-check, independent headless review, conventional and attribution-free commits.",
-  "author": { "name": "Patrick Priestley" },
-  "license": "MIT"
+  "author": {
+    "name": "Patrick Priestley"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/PatrickPriestley/agent-workflow",
+  "repository": "https://github.com/PatrickPriestley/agent-workflow"
 }
