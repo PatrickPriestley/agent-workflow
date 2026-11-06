@@ -39,6 +39,24 @@ jobs:
         run: bash pr-agent/workflow.test.sh
       - name: PR-Agent image check
         run: bash pr-agent/verify-image.test.sh
+      - name: pr-size
+        run: bash bin/pr-size.test.sh
+
+  pr-size:
+    name: pr size
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Warns, never fails: some changes cannot be split (see feature-loop). Counts from the
+      # merge base to the PR's own head commit, not GitHub's merge commit.
+      - name: Reviewable lines added
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash bin/pr-size --github "$(git merge-base "$BASE_SHA" "$HEAD_SHA")..$HEAD_SHA"
 
   pr-title:
     name: conventional PR title

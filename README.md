@@ -11,6 +11,8 @@ Cursor, Gemini), plus the two commands that make it hold:
   `gemini -p`, `opencode run`).
 - `bin/commit-gate`: git hooks that refuse a commit when the tests fail, when the subject is
   not a Conventional Commit, or when the message or an added line carries AI attribution.
+- `bin/pr-size`: how many reviewable lines a branch adds, generated files left out, and
+  whether to split it. `agent-review` and CI warn above its stop limit.
 - `skills/intent`, `skills/spec`, `skills/plan`: the formal SDLC for changes that need
   agreement before code exists (see "Which loop to use"), and `skills/incident-to-eval`
   to turn a fixed production failure into a permanent regression case.
@@ -148,6 +150,20 @@ OpenCode Go (`agentreview.opencode.model`, default `opencode-go/kimi-k3.1-pro`).
 are refused. Exit 0 means a complete review, headed `Reviewed by: <kind> <model>`; 3 means
 the reply had no end marker; 4 means every reviewer tried failed or timed out; 5 means a reviewer changed the working tree.
 
+## PR size
+
+    pr-size                          # the branch since main: reviewable lines added, and a verdict
+    pr-size BASE..HEAD               # an explicit range
+    pr-size --fail                   # exit 1 above the stop limit
+    git config prsize.aim 400        # the defaults; prsize.stop 1000
+    git config --add prsize.exclude 'docs/api/**'   # more generated paths to leave out
+
+It counts added lines, leaving out lockfiles, `fixtures/`, `captures/`, `testdata/`,
+`__snapshots__/`, `*.snap` and files marked `linguist-generated`. Above the stop limit it lists
+the added lines per commit, to show where to split; `feature-loop` says how. `agent-review
+code` warns on stderr for such a range, and the `pr size` CI job annotates the pull request.
+Neither blocks anything.
+
 ## PR-Agent
 
 [PR-Agent](https://github.com/The-PR-Agent/pr-agent) can review each pull request on GitHub as
@@ -200,6 +216,7 @@ tracked files because PR-Agent reads the working tree. Each run is kept in `.git
     bash install.test.sh
     bash bin/commit-gate.test.sh
     bash bin/agent-review.test.sh
+    bash bin/pr-size.test.sh
     bash pr-agent/pr-agent.test.sh   # needs python3 3.11 or later
     bash pr-agent/try.test.sh
     bash pr-agent/workflow.test.sh

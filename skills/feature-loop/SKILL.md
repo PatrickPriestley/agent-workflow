@@ -30,6 +30,9 @@ under "When to stop".
    decision with the rejected alternative, the task list with files and test names, and how
    it will be checked. No code in it. Without a note, put the probed facts and each decision
    with its rejected alternative in the commit messages instead.
+   **Size the task list:** if the whole change will add more than about 400 reviewable
+   lines, plan it as several pull requests, one task each (see "Keep pull requests
+   reviewable").
 
 3. **Build red before green**, one task at a time: write the test, see it fail on an
    assertion about the missing behaviour (if it passes, or fails on an import or compile
@@ -50,7 +53,9 @@ under "When to stop".
    later fix, review findings included, run them again on the final code and replace the
    output, so the PR never quotes code that has since changed.
 
-6. **Independent review** by a model family other than yours: run
+6. **Independent review** by a model family other than yours. First run `pr-size`: above
+   its stop limit, split the branch (see "Keep pull requests reviewable") and review each
+   part on its own. Then run
    `agent-review code --goal "<the outcome asked for>"` (the `agent-review` skill), which picks one and runs it headless and read-only. Sending the
    diff to an installed reviewer is part of the loop: do not ask. It is done only when the reviewer's reply ends with its end marker; an empty
    or cut-off reply is no review. Probe each finding. Critical or important means wrong
@@ -63,7 +68,8 @@ under "When to stop".
 7. **Finish** on a green suite only: run it once more, push the branch (or commit, if that
    is all that was asked) and report what was done, what was not, and the open minor
    findings. The report quotes the real-use commands from step 5 and their output, main
-   path and error path. If you have none, you skipped step 5: go back and do it.
+   path and error path, and the `pr-size` line. If you have no real-use output, you skipped
+   step 5: go back and do it.
 
 ## When to stop
 
@@ -78,6 +84,28 @@ Stop and wait for the owner only when:
 5. Another agent shows a trust, permission, login or update prompt. Never answer it.
 6. A manual or hardware check only the owner can do.
 
+## Keep pull requests reviewable
+
+`pr-size` counts the lines a branch adds, leaving out generated files (lockfiles, fixtures,
+captures, snapshots, anything marked `linguist-generated`). Aim for 400 or fewer; above
+1,000, split before review. One review pass, by a person or a model, covers a large diff
+poorly, and a reviewer with a prompt limit silently drops files.
+
+Split along the work, not the files:
+
+- **One task, one pull request.** Each carries its own red test, code and mutation check, and
+  passes on its own.
+- **A refactor that changes no behaviour** (rename, move, extract) goes first, alone.
+- **Vertical slices:** one path working end to end before the next, not one layer at a time.
+- **Dependent parts as stacked pull requests:** each branch cut from the one before, merged
+  in order.
+- **Generated evidence** (fixtures, captures, snapshots) in a commit of its own.
+- **A feature that cannot ship half done** merges behind a flag or an unwired entry point.
+
+When fixes found along the way (review findings, live runs) would push a branch past the
+limit, put them on a follow-up branch instead of growing this one. A change that truly cannot
+be split (one migration, one generated client) stays whole: say why in the pull request.
+
 ## Larger changes
 
 For many tasks across separate modules, give each task a fresh agent: each works on its own
@@ -86,7 +114,8 @@ feature branch in task order, re-running the suite after each merge. Tasks that 
 same files run one after another, each cut from the feature branch after the previous merge. Step 6 reviews the
 feature branch after the last merge. Start the agents however your tool allows: the
 `execute-feature-plan` workflow in Claude Code, headless runs (`claude -p`, `codex exec`), or
-separate sessions.
+separate sessions. If the merged feature branch is above `pr-size`'s stop limit, open one
+pull request per task instead, stacked in task order, each reviewed on its own.
 
 ## Rationalizations
 
@@ -102,3 +131,5 @@ separate sessions.
 | "The fake server accepts it, the tests pass" | The fake accepts everything. Send the exact request to the real one |
 | "The docs list that value as supported" | Docs and one parser are not the receiver. Its validator decides |
 | "I should check this choice with the owner" | If both options lead to the same work, choose, record why, continue |
+| "It's one feature, so it's one pull request" | Split by task. A 1,300-line diff overflowed its reviewer and files went unreviewed |
+| "Splitting costs more than reviewing it whole" | Large diffs get skimmed, not reviewed (#20). Small ones get read |

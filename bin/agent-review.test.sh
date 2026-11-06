@@ -83,6 +83,32 @@ assert_eq "$(git -C "$R" diff "$base" "$head")" "$(cat "$dir/diff.patch")"
 it "the review leaves the working tree clean"
 assert_eq "" "$(git -C "$R" status --porcelain)"
 
+it "a branch above the pr-size stop limit gets a size warning on stderr, and is still reviewed"
+SR=$(repo size_big); git -C "$SR" config prsize.aim 0; git -C "$SR" config prsize.stop 0
+err=$( { run "$SR" claude code >"$TMPROOT/size.out"; } 2>&1 ); rc=$?
+assert_eq 0 "$rc"
+assert_has "agent-review: this range adds 1 reviewable lines, above the 0-line stop" "$err"
+assert_has "agent-review code BASE..HEAD" "$err"
+assert_has "<<AGENT-REVIEW-END>>" "$(cat "$TMPROOT/size.out")"
+grep -q "reviewable lines" "$TMPROOT/size.out" && bad "the size warning reached stdout" || ok
+
+it "a branch within the stop limit gets no size warning"
+SR=$(repo size_small)
+err=$( { run "$SR" claude code >/dev/null; } 2>&1 )
+printf '%s' "$err" | grep -q "reviewable lines" && bad "warned: $err" || ok
+
+it "without pr-size beside it, agent-review still reviews, with no size warning"
+mkdir -p "$TMPROOT/lonely"; cp "$AR" "$TMPROOT/lonely/agent-review"
+SR=$(repo size_lonely); git -C "$SR" config prsize.aim 0; git -C "$SR" config prsize.stop 0
+err=$( { (cd "$SR" && env -i PATH="$FAKE:/usr/bin:/bin" HOME="$TMPROOT/home" CLAUDECODE=1 bash "$TMPROOT/lonely/agent-review" code >/dev/null); } 2>&1 ); rc=$?
+assert_eq 0 "$rc"
+printf '%s' "$err" | grep -q "reviewable lines" && bad "warned without pr-size: $err" || ok
+
+it "an installed agent-review finds pr-size on PATH when it is not beside it"
+mkdir -p "$TMPROOT/onpath"; cp "$here/pr-size" "$TMPROOT/onpath/pr-size"; chmod +x "$TMPROOT/onpath/pr-size"
+err=$( { (cd "$SR" && env -i PATH="$FAKE:$TMPROOT/onpath:/usr/bin:/bin" HOME="$TMPROOT/home" CLAUDECODE=1 bash "$TMPROOT/lonely/agent-review" code >/dev/null); } 2>&1 )
+assert_has "above the 0-line stop" "$err"
+
 it "the prompt asks for feasibility against the real system before anything else"
 out=$(run "$R" claude code 2>&1)
 assert_has "Feasibility first" "$(cat "$LOG")"
@@ -124,6 +150,22 @@ it "a reply without the end marker is not a review"
 out=$(EXTRA_ENV=FAKE_NO_MARKER=1 run "$R" claude code 2>&1); rc=$?
 assert_eq 3 "$rc"
 assert_has "end marker" "$out"
+
+it "the default base prefers origin/main to a stale local main, as pr-size does"
+ST=$(repo stale); O="$TMPROOT/stale-origin.git"; git clone -q --bare "$ST" "$O"
+git -C "$ST" remote add origin "$O"
+git -C "$ST" checkout -q main; printf 'merged by someone else\n' > "$ST/other.txt"
+git -C "$ST" add -A; git -C "$ST" -c user.name=t -c user.email=t@t commit -q -m "feat: other"
+git -C "$ST" push -q origin main; git -C "$ST" reset -q --hard HEAD~1; git -C "$ST" fetch -q origin
+git -C "$ST" checkout -q feature; git -C "$ST" merge -q --no-edit origin/main
+out=$(run "$ST" claude code 2>&1)
+dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
+grep -q "merged by someone else" "$dir/diff.patch" && bad "diffed from the stale local main" || ok
+
+it "a three-dot range is refused, not read as tip to tip"
+out=$(run "$R" claude code main...feature 2>&1); rc=$?
+assert_eq 2 "$rc"
+assert_has "two dots" "$out"
 
 it "a failing reviewer is reported"
 out=$(EXTRA_ENV=FAKE_EXIT=5 run "$R" claude code 2>&1); rc=$?

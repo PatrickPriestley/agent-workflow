@@ -114,18 +114,25 @@ secret_re='(^|/)\.env|\.pem$|\.key$|(^|/)id_[a-z0-9]+$|secret|credential|token'
 
 if [ "$mode" = code ]; then
   if [ -n "$target" ]; then
-    case "$target" in *..*) ;; *) fail "RANGE must look like BASE..HEAD" ;; esac
+    case "$target" in *...*) fail "RANGE takes two dots, BASE..HEAD" ;; *..*) ;; *) fail "RANGE must look like BASE..HEAD" ;; esac
     base="$(git rev-parse --verify --quiet "${target%%..*}^{commit}")" || fail "unknown base in $target"
     head="$(git rev-parse --verify --quiet "${target##*..}^{commit}")" || fail "unknown head in $target"
   else
     head="$(git rev-parse HEAD)"; base=""
-    for cand in origin/HEAD main master origin/main origin/master; do
+    for cand in origin/HEAD origin/main origin/master main master; do  # remote first, as pr-size
       git rev-parse --verify --quiet "$cand^{commit}" >/dev/null || continue
       base="$(git merge-base HEAD "$cand")" && break
     done
     [ -n "$base" ] || fail "cannot find a base branch (main, master or origin/HEAD); pass RANGE"
   fi
   range="$base..$head"
+  # One review pass covers a very large diff poorly (#20): warn on stderr, review anyway.
+  size_cmd="$(dirname "$0")/pr-size"; [ -f "$size_cmd" ] || size_cmd="$(command -v pr-size || true)"
+  if size_line="$(bash "$size_cmd" "$range" 2>/dev/null | grep -m1 -- '-line stop: split')"; then
+    size_n="$(printf '%s' "$size_line" | sed -n 's/^pr-size: \([0-9]*\) reviewable lines.*/\1/p')"
+    size_stop="$(printf '%s' "$size_line" | sed -n 's/.*above the \([0-9]*\)-line stop.*/\1/p')"
+    echo "agent-review: this range adds $size_n reviewable lines, above the $size_stop-line stop. One review pass covers a diff this size poorly: split it by task, or review it in parts with agent-review code BASE..HEAD (pr-size $range lists the commits), with a longer --timeout." >&2
+  fi
   git diff "$base" "$head" > "$dir/diff.patch"
   git log --stat "$range" > "$dir/log.txt"
   git diff HEAD > "$dir/worktree.patch"

@@ -72,6 +72,7 @@ links=(
   "$HOME/.claude/workflows/feature-loop.js|$root/workflows/feature-loop.js"
   "$HOME/.local/bin/agent-review|$root/bin/agent-review"
   "$HOME/.local/bin/commit-gate|$root/bin/commit-gate"
+  "$HOME/.local/bin/pr-size|$root/bin/pr-size"
 )
 # The formal SDLC: intent -> spec -> plan, and incident-to-eval for after a fix ships.
 for s in intent spec plan incident-to-eval; do

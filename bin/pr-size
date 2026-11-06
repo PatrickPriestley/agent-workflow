@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# pr-size: how many reviewable lines a branch adds, and whether to split it.
+#
+#   pr-size [BASE..HEAD] [--aim N] [--stop N] [--fail] [--github]
+#
+# Counts added lines from the merge base with main (or an explicit BASE..HEAD) to HEAD,
+# leaving out generated files: lockfiles, fixtures/, captures/, testdata/, __snapshots__/,
+# *.snap, files marked linguist-generated in .gitattributes, and any glob in
+# `git config prsize.exclude` (multi-valued). A pure rename or a binary file counts nothing.
+#
+# Aim at 400 lines, split above 1,000 (git config prsize.aim and prsize.stop, or --aim and
+# --stop). Above the stop limit it lists added lines per commit, to show where to split.
+# --github also writes a ::warning:: above the aim and a table to $GITHUB_STEP_SUMMARY.
+#
+# Exit: 0 whatever the size; with --fail, 1 above the stop limit; 2 for a usage problem.
+set -uo pipefail
+usage() { echo "usage: pr-size [BASE..HEAD] [--aim N] [--stop N] [--fail] [--github]" >&2; exit 2; }
+fail() { echo "pr-size: $*" >&2; exit 2; }
+
+range=""; aim=""; stop=""; fail_above=false; github=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --aim) [ -n "${2:-}" ] || usage; aim="$2"; shift 2 ;;
+    --stop) [ -n "${2:-}" ] || usage; stop="$2"; shift 2 ;;
+    --fail) fail_above=true; shift ;;
+    --github) github=true; shift ;;
+    -*) usage ;;
+    *) [ -z "$range" ] || usage; range="$1"; shift ;;
+  esac
+done
+
+git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
+cd "$(git rev-parse --show-toplevel)" || exit 2
+[ -n "$aim" ] || aim="$(git config prsize.aim || echo 400)"
+[ -n "$stop" ] || stop="$(git config prsize.stop || echo 1000)"
+case "$aim$stop" in *[!0-9]*) fail "--aim and --stop take whole numbers of lines" ;; esac
+[ "$aim" -le "$stop" ] || fail "the aim ($aim) is above the stop limit ($stop)"
+
+if [ -n "$range" ]; then
+  case "$range" in *...*) fail "RANGE takes two dots, BASE..HEAD; with no RANGE the count starts from the merge base" ;; *..*) ;; *) fail "RANGE must look like BASE..HEAD" ;; esac
+  base="$(git rev-parse --verify --quiet "${range%%..*}^{commit}")" || fail "unknown base in $range"
+  head="$(git rev-parse --verify --quiet "${range##*..}^{commit}")" || fail "unknown head in $range"
+else
+  head="$(git rev-parse HEAD)"; base=""
+  # The remote's branch first: a local main left behind after a merge elsewhere would count
+  # other people's merged work as this branch's.
+  for cand in origin/HEAD origin/main origin/master main master; do
+    git rev-parse --verify --quiet "$cand^{commit}" >/dev/null || continue
+    base="$(git merge-base HEAD "$cand")" && break
+  done
+  [ -n "$base" ] || fail "cannot find a base branch (main, master or origin/HEAD); pass BASE..HEAD"
+fi
+
+# Generated files, excluded by git itself. attr:linguist-generated matches the bare form but
+# not linguist-generated=true (probed, git 2.43), so both are listed.
+excludes=(
+  ':(exclude,attr:linguist-generated)' ':(exclude,attr:linguist-generated=true)'
+  ':(exclude,glob)**/fixtures/**' ':(exclude,glob)**/captures/**' ':(exclude,glob)**/testdata/**'
+  ':(exclude,glob)**/__snapshots__/**' ':(exclude,glob)**/*.snap'
+)
+for f in Cargo.lock package-lock.json yarn.lock pnpm-lock.yaml poetry.lock uv.lock Gemfile.lock go.sum composer.lock; do
+  excludes+=(":(exclude,glob)**/$f")
+done
+while IFS= read -r g; do [ -n "$g" ] && excludes+=(":(exclude,glob)$g"); done < <(git config --get-all prsize.exclude || true)
+
+added() {  # FROM TO [pathspec...] -> sum of added lines; awk reads a binary's "-" as 0
+  git diff --numstat "$1" "$2" -- "${@:3}" | awk -F '\t' '{ n += $1 } END { print n + 0 }'
+}
+reviewable="$(added "$base" "$head" . "${excludes[@]}")"
+generated=$(( $(added "$base" "$head" .) - reviewable ))
+# Excludes apply before rename detection, so a file moved out of an excluded folder counts
+# as reviewable here but as a rename (0) in the full diff: never report less than none.
+[ "$generated" -lt 0 ] && generated=0
+
+short="$(git rev-parse --short "$base")..$(git rev-parse --short "$head")"
+note=""; [ "$generated" -gt 0 ] && note=" ($generated more in generated files, not counted)"
+if [ "$reviewable" -gt "$stop" ]; then verdict="above the $stop-line stop: split it before review, by task (see feature-loop)"
+elif [ "$reviewable" -gt "$aim" ]; then verdict="over the $aim-line aim; it can stay one pull request if it is one task"
+else verdict="within the $aim-line aim"
+fi
+echo "pr-size: $reviewable reviewable lines added in $short$note, $verdict"
+
+if [ "$reviewable" -gt "$stop" ]; then
+  echo "pr-size: added lines per commit, oldest first (review or split along these):"
+  git rev-list --reverse "$base..$head" | while read -r c; do
+    parent="$(git rev-parse --verify --quiet "$c^" || git hash-object -t tree /dev/null)"
+    printf '%7d  %s\n' "$(added "$parent" "$c" . "${excludes[@]}")" "$(git log -1 --format=%s "$c")"
+  done
+fi
+
+if $github; then
+  [ "$reviewable" -gt "$aim" ] && echo "::warning title=PR size::$reviewable reviewable lines added, $verdict"
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+      echo "### PR size"
+      echo
+      echo "| Reviewable lines added | Generated, not counted | Aim | Stop |"
+      echo "|---|---|---|---|"
+      echo "| $reviewable | $generated | $aim | $stop |"
+      echo
+      echo "$verdict"
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
+fi
+
+$fail_above && [ "$reviewable" -gt "$stop" ] && exit 1
+exit 0

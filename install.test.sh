@@ -26,6 +26,7 @@ assert_link "$H/.claude/skills/agent-review" "$H/.agents/skills/agent-review"
 assert_link "$H/.claude/workflows/feature-loop.js" "$here/workflows/feature-loop.js"
 assert_link "$H/.local/bin/agent-review" "$here/bin/agent-review"
 assert_link "$H/.local/bin/commit-gate" "$here/bin/commit-gate"
+assert_link "$H/.local/bin/pr-size" "$here/bin/pr-size"
 for sk in intent spec plan incident-to-eval; do
   assert_link "$H/.agents/skills/$sk" "$here/skills/$sk"
   assert_link "$H/.claude/skills/$sk" "$H/.agents/skills/$sk"
