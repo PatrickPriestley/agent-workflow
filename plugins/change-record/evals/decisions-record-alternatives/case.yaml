@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: decisions-record-alternatives
+description: "A feature with a real design choice: the record's Decisions section should name the alternative that was rejected and why."
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

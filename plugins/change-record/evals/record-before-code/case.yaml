@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: record-before-code
+description: "A routine feature: the agent should write the change record (tier 1, every section) before touching the code, and name it on a Change: line."
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

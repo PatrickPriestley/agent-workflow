@@ -1,0 +1,1 @@
+Fix the typo in README.md. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.

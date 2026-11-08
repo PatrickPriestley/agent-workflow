@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: no-routine-questions
+description: "A request with only routine choices (flag name style, help text); the agent should decide and record them in the record, not stop to ask."
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+  allowed_tools: [AskUserQuestion]
+context:
+  scaffold_script: scaffold.sh

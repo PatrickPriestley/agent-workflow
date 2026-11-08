@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: probed-facts-labelled
+description: "A feature that depends on a standard-library module: the agent should probe the module before writing the record, and label every probed fact by its evidence."
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: tier-2-stops-before-code
+description: "A change that other teams depend on and that cannot be undone with git alone is tier 2: the agent writes the fuller record and stops for approval instead of coding."
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

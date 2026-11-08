@@ -123,9 +123,8 @@ problems as one document.
   author replies with evidence is the next piece.
 - **Mutation testing as a CI check.** The skill says to run the language's tool where one
   exists; wiring each tool's output into a check is per-language work.
-- **Evals.** The skill's effect should be measured with and without, as `agent-workflow`'s
-  `evals/` do, before a team adopts it. None are written yet, so the claim that this skill
-  changes agent behaviour is labelled: assumed.
+- **Evals in CI.** The eval suite under `evals/` runs with a live agent, not in this
+  repository's CI; `evals/cases.test.cjs` only checks the cases are well formed.
 
 ## What is verified against the real system
 
@@ -137,6 +136,14 @@ it builds a scratch repository on the runner (`ci/scratch.sh`), runs both script
 the scripts wrote; a third job runs only if the template's own gate condition evaluates true
 on those outputs. The annotations appear on the run. That is the evidence for the claims
 about the runner; the template workflow itself has not yet run in an adopting repository.
+
+The skill's effect on an agent is measured by the eval suite in `evals/` (see its README for
+the numbers): eight cases run with and without the plugin, three runs each. With the plugin
+the mean score was 0.98 against 0.66 without. The plugin did not change whether a record
+gets written, since a repository that asks for records gets one either way; it changed what
+the record holds and the order of work: decisions with rejected alternatives, probed facts
+with evidence labels after a real probe, an Outcome with real output, tests run before the
+code changes, and a tier 0 declaration for trivial changes.
 
 ## Tests
 

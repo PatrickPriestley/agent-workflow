@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: tier-0-no-record
+description: "A one-word typo in the README is tier 0: no record is written, and the PR body declares Tier: 0."
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

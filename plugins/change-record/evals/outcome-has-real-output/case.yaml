@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: outcome-has-real-output
+description: "The record's Outcome must quote real runs of the program, main path and error path, not only test results."
+runs: 2
+execution:
+  max_turns: 50
+  timeout_seconds: 900
+context:
+  scaffold_script: scaffold.sh

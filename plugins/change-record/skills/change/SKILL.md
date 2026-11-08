@@ -1,6 +1,6 @@
 ---
 name: change
-description: Use for any change to a codebase beyond a typo, comment or formatting fix - adding, changing or removing behaviour, refactors, renames, new integrations - including "quick" requests under time pressure. Use before reading code or editing anything. It sets the tier, keeps one change record, and runs the loop; a repository may add checks that verify the evidence.
+description: Use for any change to a codebase - adding, changing or removing behaviour, refactors, renames, new integrations, and also typo, comment or formatting fixes, which it clears as tier 0 in one line - including "quick" requests under time pressure. Use before reading code or editing anything. It sets the tier, keeps one change record, and runs the loop; a repository may add checks that verify the evidence.
 ---
 
 # Change
@@ -15,18 +15,21 @@ gates under "When to stop".
 
 ## 1. Tier
 
-Answer the six questions in `references/tiers.md`. No observable behaviour change: tier 0,
-stop here and just make the change. Reversible, one PR, the requester decides: tier 1. Hard
+Answer the six questions in `references/tiers.md`. No observable behaviour change: tier 0.
+Stop here, make the change, and put `Tier: 0` in the PR body; nothing else from this skill
+applies. Reversible, one PR, the requester decides: tier 1. Hard
 to undo, crosses a team or system boundary, touches auth, money, personal data or
 infrastructure, needs someone else's agreement, or takes more than one PR: tier 2. Record
 the tier and raise it the moment a later answer flips.
 
-## 2. Record
+## 2. Probe, then record
 
-Create `docs/changes/<YYYY-MM-DD>-<slug>.md` from `references/record-template.md` on the
-feature branch, before code. Fill Goal (the requester's words), Probed facts (each labelled,
-see `references/probing.md`), Decisions (each with the rejected alternative), Tasks (files,
-test, why the test fails today) and Checks. Tier 2 adds Problem, Requirements and Options
+Probe what the change depends on first (`references/probing.md`): run the library, command
+or API in a scratch directory and note what you saw. Then create
+`docs/changes/<YYYY-MM-DD>-<slug>.md` from `references/record-template.md` on the feature
+branch, before code. Fill Goal (the requester's words), Probed facts (what you just probed,
+each labelled), Decisions (each with the rejected alternative), Tasks (files, test, why the
+test fails today) and Checks. Tier 2 adds Problem, Requirements and Options
 and concerns, and stops for approval: see `references/tier-2.md`.
 
 ## 3. Loop
@@ -49,7 +52,8 @@ For each task:
    after that, stop and report what remains rather than reshaping tests to chase a score.
 5. **Use it.** Run the real program as its user would, main path and one error path. Paste
    the commands and output into the record's Outcome.
-6. **Push** the branch and open the PR with `Change: docs/changes/<id>.md` in the body. The
+6. **Push** the branch and open the PR. The first line of the PR body is
+   `Change: docs/changes/<id>.md`, on its own, so a reader or a check finds the record. The
    independent review runs there. Treat each finding as a claim
    (`references/review-findings.md`); re-push until nothing critical or important remains.
 
