@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# red-check: the tests a branch adds or changes must fail on the base commit.
+#
+#   red-check [BASE..HEAD] --run 'CMD {files}' [--match GLOB]... [--link DIR]...
+#             [--red-pattern REGEX] [--require] [--strict] [--github] [--json]
+#
+# For each test file added or modified between the merge base with main (or an explicit
+# BASE..HEAD) and HEAD, it checks out the base commit in a temporary worktree, copies in that
+# one file at the head's version, and runs CMD with {files} replaced by its path. Each file
+# gets one of three verdicts:
+#
+#   red           the run failed and its output carries an assertion marker: the test shows
+#                 the change is needed.
+#   green         the run passed on the base: the test proves nothing about the change. This
+#                 fails the check.
+#   no tests      the runner reports that the file holds no tests (a conftest, a fixture, a
+#                 helper under a test directory): the file is not judged at all.
+#   inconclusive  the run failed without reaching an assertion (an import, compile or
+#                 collection error, a missing module, or no marker this script recognises),
+#                 or the file already failed on the base before the change: the test shows
+#                 nothing either way. Reported as a warning when at least one other file is
+#                 red; with --strict any inconclusive file fails. When every changed file is
+#                 inconclusive, nothing was shown and the check fails whatever the flags: a
+#                 pass would be vacuous (dependencies not installed, a broken command).
+#
+# CMD should run only the named file. A runner that ignores {files} and runs the whole suite
+# makes every verdict depend on the suite's state on the base. A baseline run guards that:
+# a modified file must pass on the base as it was, and for a new file the suite without it
+# must not already fail on an assertion; otherwise the verdict is inconclusive.
+#
+# Markers: a cannot-run marker (ImportError, cannot find module, build failed, SyntaxError,
+# ERROR collecting, failed to load, No such file, ...) makes the verdict inconclusive even
+# when an assertion marker is also present. Otherwise the output must match the assertion
+# pattern (--red-pattern, git config redcheck.redPattern, or the default: AssertionError,
+# "assertion failed", "--- FAIL:", a line starting "FAIL:", "Expected:", "expected ... to/but",
+# "not ok N") to count as red.
+#
+# Test files are those matching --match globs (git pathspec glob syntax; repeatable; replaces
+# the defaults: **/tests/**, **/test/**, **/spec/**, **/test_*.py, **/*_test.py, **/*_test.go,
+# **/*_test.rs, **/*.test.*, **/*.spec.*). --run and --match fall back to `git config
+# redcheck.run` and `redcheck.match` (multi-valued). --link DIR symlinks an untracked directory
+# of the working tree (node_modules, .venv, target) into the base checkout: the runner then
+# shares it, and may write caches or build output into it as it would in a normal run. Copy the
+# directory yourself instead if that matters. Deleted tests are not run. Tracked files, HEAD
+# and the branch are never touched.
+#
+# --json prints one JSON document on stdout instead of lines: check, status (pass, fail, warn
+# for inconclusive files, skip for no test files), base, head, files[] with file, verdict,
+# exit and detail, and summary. --github adds ::error and ::warning annotations; the two
+# cannot be combined, since both write to stdout.
+#
+# Exit: 0 every changed test is red (or none changed); 1 a test is green on the base, or
+# --strict and a test is inconclusive, or --require and no test changed; 2 usage problem.
+set -uo pipefail
+usage() { echo "usage: red-check [BASE..HEAD] --run 'CMD {files}' [--match GLOB]... [--link DIR]... [--red-pattern REGEX] [--require] [--strict] [--github] [--json]" >&2; exit 2; }
+fail() { echo "red-check: $*" >&2; exit 2; }
+
+range=""; run=""; matches=(); links=(); redpat=""; require=false; strict=false; github=false; json=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --run) [ -n "${2:-}" ] || usage; run="$2"; shift 2 ;;
+    --match) [ -n "${2:-}" ] || usage; matches+=("$2"); shift 2 ;;
+    --link) [ -n "${2:-}" ] || usage; links+=("$2"); shift 2 ;;
+    --red-pattern) [ -n "${2:-}" ] || usage; redpat="$2"; shift 2 ;;
+    --require) require=true; shift ;;
+    --strict) strict=true; shift ;;
+    --github) github=true; shift ;;
+    --json) json=true; shift ;;
+    -*) usage ;;
+    *) [ -z "$range" ] || usage; range="$1"; shift ;;
+  esac
+done
+
+$json && $github && fail "--json and --github both want stdout: use --github in CI for annotations, --json for a program to read"
+git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
+root="$(git rev-parse --show-toplevel)"; cd "$root" || exit 2
+[ -n "$run" ] || run="$(git config redcheck.run || true)"
+[ -n "$run" ] || fail "no test command: pass --run 'CMD {files}' or set git config redcheck.run"
+case "$run" in *"{files}"*) ;; *) fail "--run must contain {files}, where the test file goes" ;; esac
+if [ "${#matches[@]}" -eq 0 ]; then
+  while IFS= read -r g; do [ -n "$g" ] && matches+=("$g"); done < <(git config --get-all redcheck.match || true)
+fi
+if [ "${#matches[@]}" -eq 0 ]; then
+  matches=('**/tests/**' '**/test/**' '**/spec/**' '**/test_*.py' '**/*_test.py' '**/*_test.go' '**/*_test.rs' '**/*.test.*' '**/*.spec.*')
+fi
+[ -n "$redpat" ] || redpat="$(git config redcheck.redPattern || true)"
+[ -n "$redpat" ] || redpat='AssertionError|[Aa]ssertion failed|--- FAIL: |^FAIL: |^Expected: |[Ee]xpected .+ (to|but) |^not ok [0-9]'
+# A changed file under a test directory that holds no tests (a conftest, a fixture, a helper):
+# the runner says so and the file gets no verdict, rather than an inconclusive one.
+no_tests='no tests ran|collected 0 items[[:space:]]*$|No tests? found|no test files|No test files found|Your test suite must contain at least one test|0 tests? (collected|run)'
+cannot_run='ImportError|ModuleNotFoundError|[Cc]annot find module|Failed to resolve import|build failed|SyntaxError|error TS[0-9]+|error\[E[0-9]+\]|No such file or directory|command not found|ERROR collecting|failed to load|Unable to import|cannot import name|unresolved import'
+
+if [ -n "$range" ]; then
+  case "$range" in *...*) fail "RANGE takes two dots, BASE..HEAD" ;; *..*) ;; *) fail "RANGE must look like BASE..HEAD" ;; esac
+  base="$(git rev-parse --verify --quiet "${range%%..*}^{commit}")" || fail "unknown base in $range"
+  head="$(git rev-parse --verify --quiet "${range##*..}^{commit}")" || fail "unknown head in $range"
+else
+  head="$(git rev-parse HEAD)"; base=""
+  for cand in origin/HEAD origin/main origin/master main master; do  # the remote first, as pr-size
+    git rev-parse --verify --quiet "$cand^{commit}" >/dev/null || continue
+    base="$(git merge-base HEAD "$cand")" && break
+  done
+  [ -n "$base" ] || fail "cannot find a base branch (main, master or origin/HEAD); pass BASE..HEAD"
+fi
+short="$(git rev-parse --short "$base")..$(git rev-parse --short "$head")"
+
+# ---- output --------------------------------------------------------------------------
+# Human lines go out as they happen unless --json, which collects everything into one document.
+jesc() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")' 2>/dev/null || printf '"%s"' "$(printf '%s' "$1" | sed 's/["\\]/\\&/g' | tr '\n\r\t' '   ')"; }
+entries=()
+# A printed path carries no newlines, which git allows in file names and -z preserves: the
+# Actions runner reads workflow commands from the step's output, so a name containing a
+# newline and "::error::" could forge or suppress annotations (#36 review).
+ann() { printf '%s' "$1" | tr -d '\n\r'; }
+say() { $json || echo "$1"; }          # stdout
+warn() { $json || echo "$1" >&2; }     # stderr
+record() {  # file verdict exit detail
+  entries+=("{\"file\":$(jesc "$1"),\"verdict\":\"$2\",\"exit\":$3,\"detail\":$(jesc "$4")}")
+}
+emit_json() {  # status summary
+  local list="" e
+  for e in ${entries[@]+"${entries[@]}"}; do list="${list:+$list,}$e"; done
+  printf '{"check":"red-check","status":"%s","base":"%s","head":"%s","files":[%s],"summary":%s}\n' \
+    "$1" "$base" "$head" "$list" "$(jesc "$2")"
+}
+done_with() {  # status summary exit-code
+  $json && emit_json "$1" "$2"
+  exit "$3"
+}
+
+pathspec=()
+for g in "${matches[@]}"; do pathspec+=(":(glob)$g"); done
+files=()
+while IFS= read -r -d '' f; do files+=("$f"); done \
+  < <(git diff --name-only --no-renames --diff-filter=AM -z "$base" "$head" -- "${pathspec[@]}")
+if [ "${#files[@]}" -eq 0 ]; then
+  msg="no test files changed in $short"
+  if $require; then
+    warn "red-check: $msg; a change in behaviour needs a test that fails without it"
+    $github && echo "::error::red-check: $msg"
+    done_with fail "$msg; --require set" 1
+  fi
+  say "red-check: $msg"
+  done_with skip "$msg" 0
+fi
+
+# The base commit, checked out beside the repository; removed however this script ends.
+wt="$(mktemp -d "${TMPDIR:-/tmp}/red-check.XXXXXX")" || fail "cannot create a temporary directory"
+cleanup() {
+  cd "$root" 2>/dev/null || return
+  git worktree remove --force "${wt:?}" >/dev/null 2>&1
+  [ -d "${wt:?}" ] && rm -rf "${wt:?}"
+  git worktree prune >/dev/null 2>&1
+}
+trap cleanup EXIT
+rmdir "${wt:?}"  # git worktree add wants the path absent
+git worktree add --detach -q "$wt" "$base" >/dev/null 2>&1 || fail "cannot check out the base commit in a worktree"
+for d in ${links[@]+"${links[@]}"}; do
+  [ -e "$root/$d" ] || fail "--link $d: $root/$d does not exist"
+  # A tracked directory must not be linked: the runs would then read the working tree's
+  # version instead of the base's, and the per-file copy and restore would write through
+  # the link into tracked files.
+  if [ -n "$(git ls-files -- "$d" | head -n1)" ]; then
+    fail "--link $d: $d is tracked; link only untracked directories such as node_modules, .venv or target"
+  fi
+  [ -e "$wt/$d" ] && continue
+  mkdir -p "$(dirname "$wt/$d")" && ln -s "$root/$d" "$wt/$d" || fail "--link $d: cannot link into the base checkout"
+done
+
+green=0; inconclusive=0; red=0; notests=0
+for f in "${files[@]}"; do
+  existed=true; git cat-file -e "$base:$f" 2>/dev/null || existed=false
+  cmd="${run//\{files\}/$(printf '%q' "$f")}"
+  # Baseline: a test file that existed on the base must pass there as it was, or its failure
+  # after the change proves nothing. With a runner that ignores {files} and runs the whole
+  # suite, this also catches a failure anywhere else in the base suite.
+  # Whatever the exit code, a runner that reports no tests in the file means the file holds
+  # none (a conftest, a fixture, a helper): not judged. Cannot-run markers are checked first,
+  # since pytest prints "collected 0 items / 1 error" on a collection error too.
+  is_no_tests() { ! printf '%s\n' "$1" | grep -qE "$cannot_run" && printf '%s\n' "$1" | grep -qE "$no_tests"; }
+  no_tests_verdict() {
+    notests=$((notests+1))
+    say "red-check: no tests: $(ann "$f") (the runner found no tests in it; not judged)"
+    record "$f" no-tests "$1" "the runner found no tests in this file"
+  }
+  # The base version holding no tests says nothing about the head version, which may have
+  # become a real test file: skip only the "already fails on the base" verdict and judge
+  # the head run, whose own no-tests check keeps a helper that stayed a helper unjudged.
+  base_no_tests=false
+  if $existed; then
+    bout="$(cd "$wt" && bash -c "$cmd" 2>&1)"; brc=$?
+    is_no_tests "$bout" && base_no_tests=true
+  fi
+  if $existed && ! $base_no_tests && [ "$brc" -ne 0 ]; then
+    inconclusive=$((inconclusive+1))
+    warn "red-check: inconclusive: $(ann "$f") (already fails on the base before the change, so a failure after it shows nothing)"
+    warn "    fix or isolate the pre-existing failure first; with a runner that runs the whole suite, the failure may be in another file"
+    $github && echo "::warning file=$(ann "$f")::red-check: inconclusive; this test already fails on the base commit before the change"
+    record "$f" inconclusive 0 "already fails on the base before the change"
+    continue
+  fi
+  # A new file has no base version to run, so the baseline runs with the file absent. A
+  # runner that takes the named file then fails for want of it, without assertion markers,
+  # and the baseline says nothing. A runner that ignores {files} runs the suite: assertion
+  # failures there would also appear in the real run and could pass as this file's red.
+  polluted=false
+  if ! $existed; then
+    if ! bout="$(cd "$wt" && bash -c "$cmd" 2>&1)" && printf '%s\n' "$bout" | grep -qE "$redpat"; then polluted=true; fi
+  fi
+  mkdir -p "$wt/$(dirname "$f")"
+  git show "$head:$f" > "$wt/$f" || fail "cannot read $f at the head commit"
+  out="$(cd "$wt" && bash -c "$cmd" 2>&1)"; rc=$?
+  tail5="$(printf '%s\n' "$out" | tail -5)"
+  if is_no_tests "$out"; then
+    no_tests_verdict "$rc"
+  elif [ "$rc" -eq 0 ]; then
+    green=$((green+1))
+    warn "red-check: passes on the base commit: $(ann "$f")"
+    warn "    it exits 0 without the change, so it does not show the change is needed; make it fail first"
+    $json || printf '%s\n' "$tail5" | sed 's/^/    | /' >&2
+    $github && echo "::error file=$(ann "$f")::red-check: this test passes on the base commit; it does not prove the change"
+    record "$f" green "$rc" "passes on the base commit; it does not prove the change"
+  elif printf '%s\n' "$out" | grep -qE "$cannot_run"; then
+    inconclusive=$((inconclusive+1))
+    why="$(printf '%s\n' "$out" | grep -E -m1 "$cannot_run")"
+    warn "red-check: inconclusive: $(ann "$f") (exit $rc; could not run on the base: $(ann "$why"))"
+    warn "    the test did not reach an assertion, so it shows nothing either way; make it fail on the missing behaviour, not on a missing module"
+    $github && echo "::warning file=$(ann "$f")::red-check: inconclusive; the test could not run on the base commit: $(ann "$why")"
+    record "$f" inconclusive "$rc" "could not run on the base: $why"
+  elif $polluted && printf '%s\n' "$out" | grep -qE "$redpat"; then
+    inconclusive=$((inconclusive+1))
+    warn "red-check: inconclusive: $(ann "$f") (the base suite already has failing assertions without this file, so its failure cannot be attributed to it)"
+    warn "    the runner ignores the named file and runs the whole suite; fix the pre-existing failure, or give --run a command that runs only the named file"
+    $github && echo "::warning file=$(ann "$f")::red-check: inconclusive; the base suite already has failing assertions without this file"
+    record "$f" inconclusive "$rc" "the base suite already has failing assertions without this file"
+  elif printf '%s\n' "$out" | grep -qE "$redpat"; then
+    red=$((red+1))
+    say "red-check: red: $(ann "$f") (exit $rc on the base)"
+    record "$f" red "$rc" "fails on the base with an assertion"
+  else
+    inconclusive=$((inconclusive+1))
+    warn "red-check: inconclusive: $(ann "$f") (exit $rc; could not run on the base, or no assertion marker recognised)"
+    warn "    if this runner marks a failed assertion another way, pass --red-pattern REGEX (or git config redcheck.redPattern)"
+    $json || printf '%s\n' "$tail5" | sed 's/^/    | /' >&2
+    $github && echo "::warning file=$(ann "$f")::red-check: inconclusive; no assertion marker recognised (set --red-pattern for this runner)"
+    record "$f" inconclusive "$rc" "no assertion marker recognised in the output"
+  fi
+  # Put the base checkout back as it was for the next file.
+  if $existed; then git show "$base:$f" > "$wt/$f"; else rm -f "${wt:?}/${f:?}"; fi
+done
+
+n=$(( ${#files[@]} - notests ))
+if [ "$n" -eq 0 ]; then
+  # Every changed file under a test directory held no tests: as if no test file changed.
+  msg="no test files changed in $short ($notests file(s) under test directories hold no tests)"
+  if $require; then
+    warn "red-check: $msg; a change in behaviour needs a test that fails without it"
+    $github && echo "::error::red-check: $msg"
+    done_with fail "$msg; --require set" 1
+  fi
+  say "red-check: $msg"
+  done_with skip "$msg" 0
+fi
+if [ "$green" -gt 0 ]; then
+  warn "red-check: $green of $n changed test file(s) pass on the base commit"
+  done_with fail "$green of $n changed test file(s) pass on the base commit" 1
+fi
+if [ "$inconclusive" -gt 0 ]; then
+  if [ "$red" -eq 0 ]; then
+    # Every file was inconclusive: no test ran to an assertion, so nothing was shown. A pass
+    # here would be vacuous (dependencies not installed, a broken command, a failing base).
+    warn "red-check: no changed test was shown to fail on the base: all $n inconclusive"
+    warn "    make at least one test fail on an assertion about the missing behaviour, or check that the command can run here"
+    $github && echo "::error::red-check: no changed test was shown to fail on the base; all $n inconclusive"
+    done_with fail "no changed test was shown to fail on the base: all $n inconclusive" 1
+  fi
+  if $strict; then
+    warn "red-check: $inconclusive of $n changed test file(s) inconclusive; --strict set"
+    done_with fail "$inconclusive of $n changed test file(s) inconclusive; --strict set" 1
+  fi
+  say "red-check: $red of $n changed test file(s) red on the base commit, $inconclusive inconclusive"
+  done_with warn "$red of $n red on the base, $inconclusive inconclusive" 0
+fi
+say "red-check: every changed test file ($n) fails on the base commit with an assertion"
+done_with pass "every changed test file ($n) is red on the base commit" 0

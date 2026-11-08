@@ -127,6 +127,16 @@ repository is private, so each teammate needs read access to it on GitHub. The p
 the six skills only: the rules file, `agent-review`, `commit-gate` and `pr-size` still come
 from `install.sh`. Cursor, Codex, OpenCode and Gemini users use `install.sh` alone.
 
+### change-record, a second plugin
+
+`plugins/change-record/` is a separate plugin that leaves this one as it is: one change
+record per change instead of a note or an intent, spec and plan; a tier by risk instead of
+file count; and two optional checks, `red-check` (every changed test fails on the base commit)
+and `record-check` (the record exists, and tier 2 is approved before code), which a repository
+may run locally or in CI. The design is in
+`docs/design/2026-11-07-one-record-sdlc.md`; the plugin's own README says how to install it
+(`claude plugin install change-record@agent-workflow`).
+
 ## Commit hooks, per repository
 
     commit-gate enable                              # conventional + no-attribution checks

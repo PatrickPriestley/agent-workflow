@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# record-check: a pull request names a valid change record, or declares itself tier 0.
+#
+#   record-check [BASE..HEAD] [--body FILE] [--github]
+#
+# The record is the one a `Change: docs/changes/<id>.md` line in the PR body (--body FILE)
+# names, else the first record path mentioned in the body at a path boundary, else the one
+# record file added or changed in the range (README.md and TEMPLATE.md never count).
+# A body line `Tier: 0` passes with no record. The record is read at the head commit; its
+# frontmatter must carry id (equal to the file name), tier (0, 1 or 2) and status (open,
+# approved, done or abandoned); it must have the sections Goal, Probed facts, Decisions,
+# Tasks, Checks and Outcome, and for tier 2 also Problem, Requirements and "Options and
+# concerns". A done record has a filled Outcome.
+#
+# Tier 2 is approved before code: a PR that changes only the record (mode approval) must set
+# status: approved (or done, once the base already holds it approved; or abandoned); a PR that changes
+# other files (mode code) must find the record on the base commit at tier 2 with status
+# approved or done, so a record cannot be raised to tier 2 in the same PR as the code, nor
+# born done. A code PR may not lower the tier the base recorded either. A record path with a
+# newline is refused, since it could forge a line in GITHUB_OUTPUT.
+#
+# Prints `record-check: ok tier=N record=PATH mode=approval|code`; --github also appends
+# tier, record and mode to $GITHUB_OUTPUT and writes ::error annotations. --json prints one
+# JSON document instead: check, status (pass or fail), tier, record, mode, base, head and
+# problems[]. Exit: 0 pass, 1 fail, 2 usage problem.
+set -uo pipefail
+usage() { echo "usage: record-check [BASE..HEAD] [--body FILE] [--github] [--json]" >&2; exit 2; }
+fail() { echo "record-check: $*" >&2; exit 2; }
+problems=()
+problem() { problems+=("$1"); }
+
+range=""; bodyfile=""; github=false; json=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --body) [ -n "${2:-}" ] || usage; bodyfile="$2"; shift 2 ;;
+    --github) github=true; shift ;;
+    --json) json=true; shift ;;
+    -*) usage ;;
+    *) [ -z "$range" ] || usage; range="$1"; shift ;;
+  esac
+done
+$json && $github && fail "--json and --github both want stdout: use --github in CI for annotations, --json for a program to read"
+git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
+cd "$(git rev-parse --show-toplevel)" || exit 2
+body=""
+if [ -n "$bodyfile" ]; then [ -f "$bodyfile" ] || fail "--body $bodyfile: no such file"; body="$(cat "$bodyfile")"; fi
+
+if [ -n "$range" ]; then
+  case "$range" in *...*) fail "RANGE takes two dots, BASE..HEAD" ;; *..*) ;; *) fail "RANGE must look like BASE..HEAD" ;; esac
+  base="$(git rev-parse --verify --quiet "${range%%..*}^{commit}")" || fail "unknown base in $range"
+  head="$(git rev-parse --verify --quiet "${range##*..}^{commit}")" || fail "unknown head in $range"
+else
+  head="$(git rev-parse HEAD)"; base=""
+  for cand in origin/HEAD origin/main origin/master main master; do
+    git rev-parse --verify --quiet "$cand^{commit}" >/dev/null || continue
+    base="$(git merge-base HEAD "$cand")" && break
+  done
+  [ -n "$base" ] || fail "cannot find a base branch (main, master or origin/HEAD); pass BASE..HEAD"
+fi
+
+mode=code  # code: the PR changes files other than the record; approval: only the record
+tier=""; record=""
+jesc() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")' 2>/dev/null || printf '"%s"' "$(printf '%s' "$1" | sed 's/["\\]/\\&/g' | tr '\n\r\t' '   ')"; }
+emit_json() {  # status -> one JSON document on stdout
+  local list="" p
+  for p in ${problems[@]+"${problems[@]}"}; do list="${list:+$list,}$(jesc "$p")"; done
+  local t; case "$tier" in 0|1|2) t="$tier" ;; "") t=null ;; *) t="$(jesc "$tier")" ;; esac  # a bad tier is still valid JSON
+  printf '{"check":"record-check","status":"%s","tier":%s,"record":%s,"mode":"%s","base":"%s","head":"%s","problems":[%s]}\n' \
+    "$1" "$t" "$(jesc "$record")" "$mode" "$base" "$head" "$list"
+}
+finish() {  # tier record -> print, write outputs, exit 0
+  tier="$1"; record="$2"
+  if $json; then emit_json pass; else echo "record-check: ok tier=$1 record=$2 mode=$mode"; fi
+  if $github && [ -n "${GITHUB_OUTPUT:-}" ]; then printf 'tier=%s\nrecord=%s\nmode=%s\n' "$1" "$(ann "$2")" "$mode" >> "$GITHUB_OUTPUT"; fi
+  exit 0
+}
+ann() { printf '%s' "$1" | tr -d '\n\r'; }  # a workflow command must stay on one line
+report() {  # -> print every problem, exit 1
+  for p in "${problems[@]}"; do
+    $json || echo "record-check: $p" >&2
+    $github && echo "::error::record-check: $(ann "$p")"
+  done
+  $json && emit_json fail
+  exit 1
+}
+
+# ---- which record --------------------------------------------------------------------
+is_record_path() { case "$1" in docs/changes/README.md|docs/changes/TEMPLATE.md) return 1 ;; docs/changes/*.md) return 0 ;; *) return 1 ;; esac; }
+record=""
+# A `Change: docs/changes/<id>.md` line names the record outright: the first record path on a
+# line that starts with "Change:", however markdown wraps either (bold, backticks, a link).
+# Without one, the first mention of a record path counts, but only at a path boundary: not
+# inside a longer path or a URL (apidocs/changes/x.md, https://host/docs/changes/x.md).
+# Any slug except whitespace, slashes and the markdown punctuation that can follow a path.
+path_re='docs/changes/[^][:space:]/`*()<>"'"'"'[]+\.md'   # ] first: a backslash is literal in a bracket expression
+while IFS= read -r p; do is_record_path "$p" && { record="$p"; break; }; done \
+  < <(printf '%s\n' "$body" | grep -E '^[[:space:]]*[*_`]*[Cc]hange[*_`]*[[:space:]]*:' | grep -oE "$path_re" || true)
+if [ -z "$record" ]; then
+  while IFS= read -r p; do is_record_path "$p" && { record="$p"; break; }; done \
+    < <(printf '%s\n' "$body" | grep -oE "(^|[^[:alnum:]_./-])$path_re" | sed -E 's#^[^d]*##' || true)
+fi
+tier0_declared=false
+printf '%s\n' "$body" | grep -qiE '^[[:space:]]*\**tier\**[[:space:]]*:[[:space:]]*\**0\**[[:space:]]*$' && tier0_declared=true
+if [ -z "$record" ]; then
+  changed=()
+  # -z: git would otherwise C-quote a non-ASCII name under core.quotePath, and the quotes
+  # would hide it from is_record_path.
+  while IFS= read -r -d '' p; do is_record_path "$p" && changed+=("$p"); done \
+    < <(git diff --name-only --no-renames --diff-filter=AM -z "$base" "$head" -- 'docs/changes/*.md')
+  if [ "${#changed[@]}" -gt 1 ]; then problem "several change records changed (${changed[*]}); name the one this PR is for in its body"; report; fi
+  [ "${#changed[@]}" -eq 1 ] && record="${changed[0]}"
+fi
+if [ -z "$record" ]; then
+  $tier0_declared && finish 0 ""
+  problem "no change record: name docs/changes/<id>.md in the PR body (or change exactly one), or declare 'Tier: 0' for a change with no behaviour change"
+  report
+fi
+case "$record" in *$'\n'*|*$'\r'*)
+  # A newline in the path would let a file name forge a key=value line in GITHUB_OUTPUT.
+  problem "$(ann "$record"): the record path contains a newline; rename the file"; report ;;
+esac
+content="$(git show "$head:$record" 2>/dev/null)" || { problem "$record is named in the PR body but not in the head commit"; report; }
+
+# ---- frontmatter ---------------------------------------------------------------------
+# fm: the lines between the opening --- and the next ---; rest: everything after.
+fm=""; rest="$content"
+if [ "$(printf '%s\n' "$content" | head -n1)" = "---" ]; then
+  fm="$(printf '%s\n' "$content" | awk 'NR==1 {next} /^---[[:space:]]*$/ {exit} {print}')"
+  rest="$(printf '%s\n' "$content" | awk 'NR==1 && /^---/ {infm=1; next} infm && /^---[[:space:]]*$/ {infm=0; next} !infm {print}')"
+else
+  problem "$record has no frontmatter (the file must start with ---)"
+fi
+field() { printf '%s\n' "$fm" | sed -n "s/^$1:[[:space:]]*//p" | head -n1 | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//'; }
+id="$(field id)"; tier="$(field tier)"; status="$(field status)"
+want_id="$(basename "$record" .md)"
+[ -n "$tier" ] || problem "$record: frontmatter has no tier (0, 1 or 2)"
+case "$tier" in ""|0|1|2) ;; *) problem "$record: tier must be 0, 1 or 2, not '$tier'" ;; esac
+case "$status" in open|approved|done|abandoned) ;; *) problem "$record: status must be open, approved, done or abandoned, not '${status:-missing}'" ;; esac
+[ "$id" = "$want_id" ] || problem "$record: id must match the file name ('$want_id', not '${id:-missing}')"
+
+# ---- sections ------------------------------------------------------------------------
+has_section() { printf '%s\n' "$rest" | grep -qE "^## $1[[:space:]]*$"; }
+required=("Goal" "Probed facts" "Decisions" "Tasks" "Checks" "Outcome")
+[ "$tier" = 2 ] && required+=("Problem" "Requirements" "Options and concerns")
+for s in "${required[@]}"; do has_section "$s" || problem "$record: missing section: $s"; done
+if [ "$status" = done ] && has_section Outcome; then
+  outcome="$(printf '%s\n' "$rest" | awk '/^## Outcome[[:space:]]*$/ {on=1; next} /^## / {on=0} on' | grep -cvE '^[[:space:]]*$')"
+  [ "$outcome" -gt 0 ] || problem "$record: status is done but Outcome is empty; say what shipped and paste the real-use output"
+fi
+[ "${#problems[@]}" -eq 0 ] || report
+
+# ---- the record on the base, and the PR's mode -----------------------------------------
+# The base's frontmatter decides what this PR may do: a code PR may not lower the tier the
+# base recorded, and tier 2 code needs the base to hold the record at tier 2, approved.
+base_fm="$(git show "$base:$record" 2>/dev/null | awk 'NR==1 && /^---/ {infm=1; next} infm && /^---[[:space:]]*$/ {exit} infm {print}')"
+base_field() { printf '%s\n' "$base_fm" | sed -n "s/^$1:[[:space:]]*//p" | head -n1 | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//'; }
+base_tier="$(base_field tier)"; base_status="$(base_field status)"
+others="$(git diff --name-only --no-renames "$base" "$head" -- . ":(exclude)$record" | head -n1)"
+[ -n "$others" ] || mode=approval
+
+if [ "$mode" = code ]; then
+  case "$base_tier" in 0|1|2)
+    if [ "$tier" -lt "$base_tier" ]; then
+      problem "$record: tier lowered from $base_tier to $tier in a PR that also changes code; lower it in a record-only PR, so the change of tier is reviewed on its own"; report
+    fi ;;
+  esac
+  if [ "$tier" = 2 ]; then
+    case "$base_tier:$base_status" in 2:approved|2:done) ;;
+      *) problem "$record: a tier 2 record must be approved before code: on the base commit ($(git rev-parse --short "$base")) it is $( [ -n "$base_fm" ] && echo "tier ${base_tier:-unset}, status ${base_status:-unset}" || echo absent ); merge the approval PR first"; report ;;
+    esac
+  fi
+elif [ "$tier" = 2 ]; then
+  case "$status" in
+    approved) $json || echo "record-check: approval PR for $record (only the record changes)" ;;
+    done)  # closing a record is fine once it was approved; a record cannot be born done
+      case "$base_tier:$base_status" in 2:approved|2:done) ;;
+        *) problem "$record: a tier 2 record is approved before it is done: on the base commit it is $( [ -n "$base_fm" ] && echo "tier ${base_tier:-unset}, status ${base_status:-unset}" || echo absent ); set status: approved and merge that first"; report ;;
+      esac ;;
+    abandoned) $json || echo "record-check: $record is abandoned in a PR of its own (only the record changes)" ;;
+    *) problem "$record: the approval PR must set status: approved; a tier 2 record is approved before code"; report ;;
+  esac
+fi
+finish "$tier" "$record"

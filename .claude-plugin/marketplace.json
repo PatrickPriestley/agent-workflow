@@ -11,6 +11,11 @@
       "name": "agent-workflow",
       "source": "./",
       "description": "A lightweight, agent-agnostic development loop: probe, test first, mutation-check, independent headless review, conventional and attribution-free commits."
+    },
+    {
+      "name": "change-record",
+      "source": "./plugins/change-record",
+      "description": "One change record per change, a tier by risk instead of file count, and CI checks for evidence: red-check (changed tests fail on the base) and record-check (the record exists and tier 2 is approved before code)."
     }
   ]
 }

@@ -1,0 +1,11 @@
+{
+  "name": "change-record",
+  "version": "0.1.0",
+  "description": "One change record per change, a tier by risk instead of file count, and evidence CI can check: tests that fail on the base commit, a record that exists and is approved before tier 2 code.",
+  "author": {
+    "name": "Patrick Priestley"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/PatrickPriestley/agent-workflow/tree/main/plugins/change-record",
+  "repository": "https://github.com/PatrickPriestley/agent-workflow"
+}

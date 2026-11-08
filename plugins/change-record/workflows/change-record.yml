@@ -1,0 +1,82 @@
+# Copy to .github/workflows/change-record.yml in a repository that uses change records, and
+# copy plugins/change-record/bin/red-check and bin/record-check from the agent-workflow
+# repository to .github/scripts/change-record/ in the same repository. The scripts are plain
+# bash, read-only on the tree, and run from this repository's own checkout: nothing is fetched
+# from another repository at run time, so a change elsewhere cannot run code in this CI. To
+# update them, copy the two files again and review the diff like any other change.
+#
+# Two checks on every pull request:
+#   record   the PR names a valid change record, or declares Tier: 0; tier 2 code needs the
+#            record approved on the base. Exposes the tier and mode to later jobs.
+#   red      every test file the PR adds or changes fails on the base commit with an
+#            assertion. Skipped for tier 0 and for a tier 2 approval PR (only the record
+#            changes). Set TEST_CMD to how this repository runs named test files; {files} is
+#            replaced with one file at a time.
+#
+# `edited` is included because record-check reads the PR body: fixing a record reference, or
+# replacing a `Tier: 0` declaration with one, must rerun both checks without a new commit.
+name: change-record
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+env:
+  SCRIPTS: .github/scripts/change-record
+  TEST_CMD: 'python3 -m pytest -q {files}'   # edit: how this repository runs named test files
+  # RED_MATCH: 'tests/**'                     # optional: override the default test-file globs
+  # RED_LINK: 'node_modules'                  # optional: an untracked dir the tests need
+
+jobs:
+  record:
+    name: change record
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.check.outputs.tier }}
+      record: ${{ steps.check.outputs.record }}
+      mode: ${{ steps.check.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: record-check
+        id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/body.md"
+          bash "$SCRIPTS/record-check" \
+            "$(git merge-base "$BASE_SHA" "$HEAD_SHA")..$HEAD_SHA" \
+            --body "$RUNNER_TEMP/body.md" --github
+
+  red:
+    name: tests fail on the base
+    needs: record
+    # A tier 2 approval PR changes only the record, so there are no tests to judge.
+    if: needs.record.outputs.tier != '0' && needs.record.outputs.mode != 'approval'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Install this repository's test dependencies here, as the test job does. Without them
+      # every changed test is inconclusive and the step fails, which is the right outcome.
+      - name: red-check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # --require: a change above tier 0 needs a changed test. --strict: a test that could not
+          # run on the base (inconclusive) fails, not only one that passes there; drop it to let
+          # inconclusive files through as warnings when at least one file is red. A run where
+          # every file is inconclusive fails either way: nothing was shown.
+          args=(--run "$TEST_CMD" --require --strict --github)
+          [ -n "${RED_MATCH:-}" ] && args+=(--match "$RED_MATCH")
+          [ -n "${RED_LINK:-}" ] && args+=(--link "$RED_LINK")
+          bash "$SCRIPTS/red-check" \
+            "$(git merge-base "$BASE_SHA" "$HEAD_SHA")..$HEAD_SHA" "${args[@]}"

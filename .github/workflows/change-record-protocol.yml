@@ -1,0 +1,87 @@
+name: change-record protocol
+
+# The change-record plugin's two checks speak to GitHub Actions through workflow commands
+# (::error, ::warning) and the GITHUB_OUTPUT file, and its template workflow gates a job on
+# those outputs. The suites in plugins/change-record/bin/*.test.sh exercise that only against
+# a stand-in file. This workflow is the probe against the real system: it builds a scratch
+# repository on the runner, runs both scripts with --github, and a second job asserts that
+# the job outputs carry what the scripts wrote. The red-check annotations appear on the run.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: run both checks on a real runner
+    runs-on: ubuntu-latest
+    outputs:
+      code_tier: ${{ steps.code.outputs.tier }}
+      code_record: ${{ steps.code.outputs.record }}
+      code_mode: ${{ steps.code.outputs.mode }}
+      approval_tier: ${{ steps.approval.outputs.tier }}
+      approval_mode: ${{ steps.approval.outputs.mode }}
+      tier0_tier: ${{ steps.tier0.outputs.tier }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the scratch repository
+        run: bash plugins/change-record/ci/scratch.sh "$RUNNER_TEMP/scratch"
+      - name: record-check, a tier 1 code PR
+        id: code
+        working-directory: ${{ runner.temp }}/scratch
+        run: bash "$GITHUB_WORKSPACE/plugins/change-record/bin/record-check" main..code --github
+      - name: record-check, a tier 2 approval PR
+        id: approval
+        working-directory: ${{ runner.temp }}/scratch
+        run: bash "$GITHUB_WORKSPACE/plugins/change-record/bin/record-check" main..approval --github
+      - name: record-check, a Tier 0 body
+        id: tier0
+        working-directory: ${{ runner.temp }}/scratch
+        run: |
+          printf 'Fix a typo.\n\nTier: 0\n' > "$RUNNER_TEMP/body.md"
+          bash "$GITHUB_WORKSPACE/plugins/change-record/bin/record-check" main..tier0 --body "$RUNNER_TEMP/body.md" --github
+      - name: red-check, one red, one green, one that cannot run (expect exit 1 and annotations)
+        working-directory: ${{ runner.temp }}/scratch
+        run: |
+          if bash "$GITHUB_WORKSPACE/plugins/change-record/bin/red-check" main..code --run 'bash run-tests.sh {files}' --github; then
+            echo "::error::red-check passed on a branch with a test that is green on the base"; exit 1
+          fi
+          echo "red-check exited non-zero as expected; the ::error and ::warning lines above are the probe"
+
+  assert:
+    name: job outputs carry tier, record and mode
+    needs: probe
+    runs-on: ubuntu-latest
+    env:
+      CODE_TIER: ${{ needs.probe.outputs.code_tier }}
+      CODE_RECORD: ${{ needs.probe.outputs.code_record }}
+      CODE_MODE: ${{ needs.probe.outputs.code_mode }}
+      APPROVAL_TIER: ${{ needs.probe.outputs.approval_tier }}
+      APPROVAL_MODE: ${{ needs.probe.outputs.approval_mode }}
+      TIER0_TIER: ${{ needs.probe.outputs.tier0_tier }}
+    steps:
+      - name: The values the template workflow gates on arrived intact
+        run: |
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "ok   $1 = $2"; else echo "::error::$1 is '$2', expected '$3'"; fail=1; fi; }
+          check code_tier "$CODE_TIER" 1
+          check code_record "$CODE_RECORD" docs/changes/2026-11-08-code.md
+          check code_mode "$CODE_MODE" code
+          check approval_tier "$APPROVAL_TIER" 2
+          check approval_mode "$APPROVAL_MODE" approval
+          check tier0_tier "$TIER0_TIER" 0
+          exit $fail
+
+  # The template's own gate, evaluated by the runner on the probe's outputs: this job must run
+  # for the code PR's values and would be skipped for the approval PR's or tier 0's.
+  gate:
+    name: the red job's condition runs for a tier 1 code PR
+    needs: probe
+    if: needs.probe.outputs.code_tier != '0' && needs.probe.outputs.code_mode != 'approval'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "the condition the template uses evaluated true for tier=${{ needs.probe.outputs.code_tier }} mode=${{ needs.probe.outputs.code_mode }}"
