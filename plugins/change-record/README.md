@@ -68,6 +68,7 @@ uses `pr-size` for sizing when it is installed and says so when it is not.
 
     red-check [BASE..HEAD] --run 'CMD {files}' [--match GLOB]... [--link DIR]... [--red-pattern REGEX] [--require] [--strict] [--github] [--json]
     record-check [BASE..HEAD] [--body FILE] [--github] [--json]
+    dispatch RECORD [--task NAME] [--dry-run] [--no-push] [--fresh] [--base REF] [--remote NAME] [--agent CMD] [--red-run CMD] [--red-match GLOB]... [--worktrees DIR]
 
 `red-check` checks out the base commit in a temporary worktree, copies in each changed test
 file at the head's version one at a time, runs the command, and gives each file one of three
@@ -115,6 +116,37 @@ passes with no record. It prints `tier=N record=PATH mode=approval|code`, and wi
 approval PR, which has no tests to judge. `--json` prints status, tier, record, mode and the
 problems as one document.
 
+`dispatch` is for a record whose frontmatter lists its tasks (`plugin:` and `tasks:` with
+`name`, `branch` and `after`, as the template shows): it hands each task to a fresh agent
+session that gets the record and not the conversation that wrote it. It reads the record on
+the base branch (`origin/main` after a fetch) and refuses one that is not there, not approved
+(tier 2) or open (tier 1), already done or abandoned, without tasks, without a `plugin:`
+line when the default agent command is to be used, with a task name that is not a plain slug
+(it names a worktree directory under `<worktrees>/<id>/`), or with an `after:` that names no
+task or a later one. Then, task by task in order: a task
+whose branch is already on the remote is in flight and skipped; a task whose `after` task is
+not yet `done: true` in the record on the base stops the run; otherwise it cuts a worktree on
+the task's branch from the base, writes a brief from the record (title, Goal, Probed facts,
+Decisions, the task's own numbered item, Checks, and the fixed instructions: use this record,
+do not change its tier or status, commit but do not push, end with the PR description whose
+first line is the `Change:` line), and runs `claude -p --permission-mode acceptEdits
+--allowedTools Bash --output-format json --plugin-dir <plugin>` in the worktree with the brief
+on stdin (nobody is there to answer a prompt, and with edits alone every test run and commit
+is denied; the summary line reports any command that was still denied). It keeps
+the agent's JSON and PR description beside the worktree, commits `done: true` under the task
+in the record (so the record on the base says so once the branch merges, which squash merges
+would otherwise hide), runs `record-check` and, given a run command, `red-check`, and pushes
+the branch only when both pass, and fails the task loudly when the marker cannot be written
+(an agent that renamed the task) rather than pushing without it. The worktree stays for
+inspection either way, and a later run leaves a kept worktree, or a local task branch with
+commits beyond the base, alone unless `--fresh` says to discard it and start that task again
+from the base. A task with no numbered item of its own under Tasks fails before any agent
+runs, since the brief would otherwise carry every task. Opening the PR
+is left to whoever runs it, with the saved description. `--agent CMD` replaces the agent
+command, which is how its tests drive a fake agent. The agent runs on your credential with
+edit permission and shell access in that worktree, the same trust as running the skill
+yourself with those tools allowed.
+
 ## What is not here yet
 
 - **The independent review as a CI check** of its own. Use `agent-review` locally before the
@@ -149,6 +181,7 @@ code changes, and a tier 0 declaration for trivial changes.
 
     bash plugins/change-record/bin/red-check.test.sh
     bash plugins/change-record/bin/record-check.test.sh
+    bash plugins/change-record/bin/dispatch.test.sh
 
 Both build real git repositories in a scratch directory and need bash, git and python3 (the
 `--json` assertions parse the documents with it; the scripts themselves fall back to a shell

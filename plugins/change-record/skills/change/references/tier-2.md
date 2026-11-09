@@ -43,7 +43,14 @@ the context. Update the record from the answers.
 ## Building
 
 Branch from the updated default branch. Each task from the record runs as tier 1 (the loop
-in the skill), one PR per task, each PR body carrying `Change: docs/changes/<id>.md`.
+in the skill), one PR per task, each PR body carrying `Change: docs/changes/<id>.md`. To
+have each task built by a fresh agent session that sees the record and not this conversation,
+list the tasks in the record's frontmatter (`plugin:`, `tasks:` with `name`, `branch`,
+`after`; see the template) before approval, then run `${CLAUDE_PLUGIN_ROOT}/bin/dispatch
+docs/changes/<id>.md` after the approval PR merges: it refuses a record that is not approved
+on the base branch, cuts a worktree per task, runs the agent with the plugin loaded, checks
+the result with `record-check` and `red-check`, and pushes the branch for the PR. Run it again
+after each PR merges to start the next task.
 The reviewer refuses a code PR whose record is not yet approved on the base commit, and so
 does `record-check` where a repository runs it. When the
 build departs from the record, update Decisions in the same commit as the departing code;

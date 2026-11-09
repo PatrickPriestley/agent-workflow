@@ -14,6 +14,11 @@ tier: 1                         # 0 trivial, 1 routine, 2 agreed
 status: open                    # open -> approved (tier 2) -> done | abandoned
 requester: <name, or the issue link>
 approvers: []                   # tier 2: who agreed, and when
+plugin: plugins/change-record   # optional, for dispatch: the plugin each task's agent loads
+tasks:                          # optional, for dispatch: one entry per numbered item in Tasks
+  - name: first-task            #   branch defaults to <id>/<name>
+  - name: second-task
+    after: first-task           #   runs once first-task is done on the base branch
 ---
 # <title: the outcome, in one sentence>
 
@@ -67,6 +72,10 @@ The candidate designs with trade-offs and the recommended one. Each concern as
   the change working.
 - **Outcome** is written at the end and is the only prose evidence the process keeps. Paste
   real output, main path and one error path, from the final code.
+- **plugin and tasks** in the frontmatter are read by `${CLAUDE_PLUGIN_ROOT}/bin/dispatch`,
+  which hands each task to a fresh agent session in its own worktree with that plugin loaded,
+  in order, each behind its `after` gate. The tasks map by position to the numbered items
+  under Tasks; leave both keys out when the tasks will be built by hand.
 
 ## Commits
 

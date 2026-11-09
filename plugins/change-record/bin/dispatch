@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# dispatch: hand each task of a change record to a fresh agent session in its own worktree.
+#
+#   dispatch RECORD [--task NAME] [--dry-run] [--no-push] [--fresh] [--base REF] [--remote NAME]
+#            [--agent 'CMD'] [--red-run 'CMD {files}'] [--red-match GLOB]... [--worktrees DIR]
+#
+# RECORD is docs/changes/<id>.md. It is read at the base (default <remote>/main, after a
+# fetch): a tier 2 record must be approved there, a tier 1 record open; done, abandoned and
+# absent records are refused, and so is a record whose frontmatter lists no tasks, or names
+# no plugin when the default agent command is used:
+#
+#   plugin: plugins/change-record      # loaded into each session with --plugin-dir
+#   tasks:
+#     - name: checks                   # required; the nth task is the nth item under ## Tasks
+#       branch: outcome-evals/checks   # default <id>/<name>
+#     - name: harness
+#       after: checks                  # runs once the record on the base says checks is done
+#
+# Each task in order: skipped if its branch is already on the remote (in flight); the run
+# stops at a task whose `after` task is not `done: true` in the record on the base; otherwise
+# a worktree on the branch is cut from the base, a brief is written from the record (title,
+# Goal, Probed facts, Decisions, the task's item, Checks, and the instructions: use the
+# record, do not change its tier or status, commit but do not push, end with the PR body whose
+# first line is the Change: line) and the agent runs in the worktree with the brief on stdin:
+# by default `claude -p --permission-mode acceptEdits --allowedTools Bash --output-format json
+# --plugin-dir <plugin>` (edits accepted and shell commands allowed, since nobody is there to
+# answer a prompt: with acceptEdits alone every test run and git commit is denied), or
+# --agent CMD. Worktrees live at <worktrees>/<id>/<name> (task names must be plain slugs, since
+# they name directories; an after: must name an earlier task). The agent's JSON goes to
+# <worktrees>/<id>/<name>.agent.json and its
+# `result` to <name>.pr-body.md, with the Change: line put first when the agent left it out.
+# Then dispatch commits `done: true` under the task in the
+# record (so the base reads it once the branch merges), runs record-check and, when a run
+# command is given (--red-run, or git config redcheck.run), red-check, and pushes the branch
+# when both pass. The worktree stays in place either way, and a later run does not touch a
+# kept worktree, or a local task branch with commits beyond the base, unless --fresh says to
+# discard it and start the task again from the base. A task with no numbered item of its own
+# under ## Tasks fails before any agent runs, rather than being briefed with every task.
+# --task NAME runs one task, still behind its gate. Exit: 0 every task run passed, 1 a task
+# failed, 2 refused or usage.
+set -uo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+usage() { echo "usage: dispatch RECORD [--task NAME] [--dry-run] [--no-push] [--fresh] [--base REF] [--remote NAME] [--agent CMD] [--red-run CMD] [--red-match GLOB]... [--worktrees DIR]" >&2; exit 2; }
+refuse() { echo "dispatch: $*" >&2; exit 2; }
+
+record=""; only=""; dry=false; push=true; fresh=false; base=""; remote=origin; agent=""; redrun=""; redmatch=(); wtroot=""
+caller_pwd="$PWD"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --task) [ -n "${2:-}" ] || usage; only="$2"; shift 2 ;;
+    --dry-run) dry=true; shift ;;
+    --no-push) push=false; shift ;;
+    --fresh) fresh=true; shift ;;
+    --base) [ -n "${2:-}" ] || usage; base="$2"; shift 2 ;;
+    --remote) [ -n "${2:-}" ] || usage; remote="$2"; shift 2 ;;
+    --agent) [ -n "${2:-}" ] || usage; agent="$2"; shift 2 ;;
+    --red-run) [ -n "${2:-}" ] || usage; redrun="$2"; shift 2 ;;
+    --red-match) [ -n "${2:-}" ] || usage; redmatch+=("$2"); shift 2 ;;
+    --worktrees) [ -n "${2:-}" ] || usage; wtroot="$2"; shift 2 ;;
+    -*) usage ;;
+    *) [ -z "$record" ] || usage; record="$1"; shift ;;
+  esac
+done
+[ -n "$record" ] || usage
+command -v python3 >/dev/null 2>&1 || refuse "python3 is needed to read the agent's JSON"
+git rev-parse --git-dir >/dev/null 2>&1 || refuse "not inside a git repository"
+root="$(git rev-parse --show-toplevel)"; cd "$root" || exit 2
+[ -n "$base" ] || base="$remote/main"
+git fetch -q --prune "$remote" 2>/dev/null || refuse "cannot fetch $remote"
+git rev-parse --verify --quiet "$base^{commit}" >/dev/null || refuse "unknown base $base"
+[ -n "$wtroot" ] || wtroot="${TMPDIR:-/tmp}/dispatch/$(basename "$root")"
+# the checks run after a cd into the worktree, so the root must be absolute; a relative path
+# is taken from where dispatch was called, not from the repository root
+case "$wtroot" in /*) ;; *) wtroot="$caller_pwd/$wtroot" ;; esac
+[ -n "$redrun" ] || redrun="$(git config --get redcheck.run || true)"
+
+# ---- the record at the base -----------------------------------------------------------
+content="$(git show "$base:$record" 2>/dev/null)" || refuse "$record is not on $base; a record is dispatched from the base branch, so merge it there first"
+fm="$(printf '%s\n' "$content" | awk 'NR==1 && /^---/ {infm=1; next} infm && /^---[[:space:]]*$/ {exit} infm {print}')"
+rest="$(printf '%s\n' "$content" | awk 'NR==1 && /^---/ {infm=1; next} infm && /^---[[:space:]]*$/ {infm=0; next} !infm {print}')"
+field() { printf '%s\n' "$fm" | sed -n "s/^$1:[[:space:]]*//p" | head -n1 | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//'; }
+id="$(field id)"; tier="$(field tier)"; status="$(field status)"; plugin="$(field plugin)"
+[ "$id" = "$(basename "$record" .md)" ] || refuse "$record: frontmatter id '$id' does not match the file name"
+slug() { case "$1" in ""|.*|*/*|*[![:alnum:]._-]*) return 1 ;; *) return 0 ;; esac; }
+slug "$id" || refuse "$record: id '$id' must be a plain slug (letters, digits, dot, dash, underscore; not starting with a dot), since it names a directory"
+case "$tier:$status" in
+  2:approved|1:open|1:approved) ;;
+  2:*) refuse "$record is tier 2 with status '$status' on $base; a tier 2 record is dispatched once it is approved there (status: approved), and not once it is done or abandoned" ;;
+  1:*) refuse "$record is tier 1 with status '$status' on $base; it is dispatched while open, not once done or abandoned" ;;
+  *) refuse "$record: tier '$tier' is not dispatched; only tier 1 and tier 2 records carry tasks" ;;
+esac
+# tasks: one line per task, the fields name, branch, after and done separated by \037 (a
+# unit separator, which `read` does not collapse the way it collapses tabs)
+US=$'\037'
+tasks="$(printf '%s\n' "$fm" | awk '
+  { sub(/[[:space:]]+#.*$/, "") }
+  /^tasks:[[:space:]]*$/ {on=1; next}
+  on && /^[^[:space:]]/ {on=0}
+  on && /^[[:space:]]+-[[:space:]]+name:/ { flush(); sub(/^[[:space:]]+-[[:space:]]+name:[[:space:]]*/, ""); name=$0; next }
+  on && /^[[:space:]]+[a-z]+:/ { key=$1; sub(/:$/, "", key); sub(/^[[:space:]]+[a-z]+:[[:space:]]*/, ""); v[key]=$0; next }
+  function flush() { if (name != "") printf "%s\037%s\037%s\037%s\n", name, v["branch"], v["after"], v["done"]; name=""; delete v }
+  END { flush() }')"
+[ -n "$tasks" ] || refuse "$record has no tasks in its frontmatter; add a tasks: list (name, branch, after) under the id, tier and status lines"
+# every line under tasks: must be an entry ("- name: <value>") or one of its fields (branch,
+# after, done, each with a value), or an entry could vanish and shift the ones after it onto
+# the wrong numbered items; the first line outside that grammar is quoted
+bad_line="$(printf '%s\n' "$fm" | awk '
+  { sub(/[[:space:]]+#.*$/, "") }
+  /^tasks:[[:space:]]*$/ {on=1; next}
+  on && /^[^[:space:]]/ {on=0}
+  on && /^[[:space:]]*$/ {next}
+  on && /^[[:space:]]+-[[:space:]]+name:[[:space:]]*[^[:space:]]/ {seen=1; next}
+  on && seen && /^[[:space:]]+(branch|after|done):[[:space:]]*[^[:space:]]/ {next}
+  on {print; exit}')"
+[ -z "$bad_line" ] || refuse "$record: this line under tasks: is not an entry or one of its fields: '$bad_line'; every entry starts with '- name: <slug>' and may carry branch:, after: and done: lines, since the entries map to the numbered items under Tasks by position"
+[ -n "$agent" ] || [ -n "$plugin" ] || refuse "$record has no plugin: line in its frontmatter, so the default agent command has no plugin to load; add plugin: <path> (for example plugins/change-record) or pass --agent CMD"
+task_field() {  # NAME FIELD-INDEX
+  printf '%s\n' "$tasks" | awk -F'\037' -v n="$1" -v i="$2" '$1==n {print $i; exit}'
+}
+is_done() { [ "$(task_field "$1" 4)" = true ]; }
+# task names are directory names, so they must be plain slugs; and every after: must name a
+# task listed earlier, or the run would stop at the dependent before ever reaching what it
+# waits for (a gate that could never open)
+names="$(printf '%s\n' "$tasks" | cut -d"$US" -f1)"
+seen=""; branches=""
+while IFS="$US" read -r t_name t_branch t_after _; do
+  slug "$t_name" || refuse "$record: task name '$t_name' must be a plain slug (letters, digits, dot, dash, underscore; no slash, space or leading dot), since it names a worktree directory"
+  printf '%s\n' "$seen" | grep -qxF -- "$t_name" && refuse "$record: the task name '$t_name' appears twice; names must be unique, since each names a branch and a worktree"
+  [ -n "$t_branch" ] || t_branch="$id/$t_name"
+  case "$t_branch" in "$base"|"${base#"$remote/"}") refuse "$record: task $t_name would use branch '$t_branch', which is the base branch; a task branch is cut from the base and merged back into it, so it cannot be the base" ;; esac
+  printf '%s\n' "$branches" | grep -qxF -- "$t_branch" && refuse "$record: task $t_name would use branch '$t_branch', which an earlier task already uses; every task needs its own branch, since the in-flight skip and the --fresh cleanup key on it"
+  branches="$branches$t_branch
+"
+  if [ -n "$t_after" ] && ! printf '%s\n' "$seen" | grep -qxF -- "$t_after"; then
+    if printf '%s\n' "$names" | grep -qxF -- "$t_after"; then
+      refuse "$record: task $t_name waits on '$t_after', which is listed after it; tasks run in list order, so list $t_after first"
+    else
+      refuse "$record: task $t_name waits on '$t_after', which is not a task in the record (its tasks are: $(printf '%s' "$names" | tr '\n' ' ')); fix the after: line"
+    fi
+  fi
+  seen="$seen$t_name
+"
+done <<< "$tasks"
+heads="$(git ls-remote --heads "$remote" 2>/dev/null | sed 's/^[0-9a-f]*[[:space:]]*refs\/heads\///')"
+on_remote() { printf '%s\n' "$heads" | grep -qxF -- "$1"; }
+
+# ---- the brief --------------------------------------------------------------------------
+section() { printf '%s\n' "$rest" | awk -v h="## $1" '$0==h {on=1; next} /^## / {on=0} on'; }
+task_item() {  # N: the nth numbered item under ## Tasks, with its continuation lines
+  section Tasks | awk -v n="$1" '/^[0-9]+\. / {k++} k==n {print} k>n {exit}'
+}
+brief() {  # NAME BRANCH ITEM
+  local item="$3"
+  cat <<BRIEF
+# Task $1 of change $id
+
+You are implementing one task of the change record \`$record\`, in a git worktree on branch
+\`$2\`, cut from \`$base\`. The record exists already and is the contract for this work: read it
+first, use the \`change\` skill for the loop, and do not create another record or change this
+one's tier or status. Build only the task below, as tier 1 work: the test first, seen failing on
+an assertion, then the code, then the whole suite green; update the record's Tasks, Decisions
+or Outcome in the same commits when the work departs from or completes what they say. Commit
+on this branch; do not push and do not open a pull request, the dispatcher does that. Finish
+by writing the pull request description you would open, with this as its first line, alone:
+
+Change: $record
+
+$(printf '%s\n' "$rest" | sed -n '1,/^## /p' | sed '$d' | sed 's/^# /## Record: /')
+## Goal
+$(section Goal)
+## Probed facts
+$(section "Probed facts")
+## Decisions
+$(section Decisions)
+## Your task
+$item
+## Checks
+$(section Checks)
+BRIEF
+}
+
+# ---- one task ---------------------------------------------------------------------------
+default_agent() { printf 'claude -p --permission-mode acceptEdits --allowedTools Bash --output-format json --plugin-dir %q' "$root/$plugin"; }
+mark_done() {  # NAME FILE: set done: true under that task in the frontmatter
+  awk -v n="$1" '
+    BEGIN {infm=0}
+    NR==1 && /^---/ {infm=1}
+    infm && /^tasks:[[:space:]]*(#.*)?$/ {on=1; print; next}
+    infm && on && /^[[:space:]]+-[[:space:]]+name:/ { if (cur && !marked) print "    done: true"; v=$0; sub(/^[[:space:]]+-[[:space:]]+name:[[:space:]]*/, "", v); sub(/[[:space:]]+#.*$/, "", v); cur=(v==n); marked=0 }
+    infm && on && cur && /^[[:space:]]+done:/ { print "    done: true"; marked=1; next }
+    infm && on && /^[^[:space:]]/ { if (cur && !marked) print "    done: true"; on=0; cur=0 }
+    NR>1 && infm && /^---[[:space:]]*$/ { if (on && cur && !marked) print "    done: true"; infm=0; on=0 }
+    {print}' "$2" > "$2.tmp" && mv "$2.tmp" "$2"
+  # the marker must now be there: a task the agent renamed or removed cannot be marked
+  awk -v n="$1" '
+    NR==1 && /^---/ {infm=1} NR>1 && infm && /^---[[:space:]]*$/ {exit}
+    infm && /^tasks:[[:space:]]*(#.*)?$/ {on=1; next}
+    infm && on && /^[^[:space:]]/ {on=0}
+    on && /^[[:space:]]+-[[:space:]]+name:/ { v=$0; sub(/^[[:space:]]+-[[:space:]]+name:[[:space:]]*/, "", v); sub(/[[:space:]]+#.*$/, "", v); cur=(v==n) }
+    on && cur && /^[[:space:]]+done:[[:space:]]*true/ {found=1}
+    END {exit !found}' "$2"
+}
+failed=0
+run_task() {  # NAME BRANCH N
+  local name="$1" branch="$2" n="$3" dir="$wtroot/$id/$1" cmd rc rcs reds="skipped" pushed=no turns cost item ahead
+  item="$(task_item "$n")"
+  if [ -z "$item" ]; then
+    echo "dispatch: $name: fail, no numbered item $n under ## Tasks in $record for task $name; the frontmatter tasks map to the numbered items by position, so number the items or fix the list"; failed=1; return
+  fi
+  mkdir -p "$wtroot/$id"
+  if [ -e "$dir" ]; then
+    if $fresh; then git worktree remove --force "$dir" 2>/dev/null || rm -rf "$dir"
+    else echo "dispatch: $name: fail, an earlier attempt is kept at $dir (with its branch $branch); inspect or finish it by hand, or pass --fresh to discard it and start the task again from $base"; failed=1; return; fi
+  fi
+  git worktree prune 2>/dev/null
+  if git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+    ahead="$(git rev-list --count "$base..refs/heads/$branch")"
+    if [ "$ahead" -gt 0 ] && ! $fresh; then
+      echo "dispatch: $name: fail, the local branch $branch already carries $ahead commit(s) beyond $base and is not on $remote (an earlier attempt whose worktree is gone); inspect it, or pass --fresh to discard it and start the task again"; failed=1; return
+    fi
+    git branch -D "$branch" >/dev/null 2>&1 || true
+  fi
+  git worktree add -q -B "$branch" "$dir" "$base" || { echo "dispatch: $name: cannot make a worktree at $dir" >&2; failed=1; return; }
+  brief "$name" "$branch" "$item" > "$dir.brief.md"
+  cmd="${agent:-$(default_agent)}"
+  echo "dispatch: $name: running the agent in $dir on $branch"
+  (cd "$dir" && eval "$cmd") < "$dir.brief.md" > "$dir.agent.json" 2> "$dir.agent.err"; rc=$?
+  python3 - "$dir.agent.json" "$dir.pr-body.md" <<'PY' || { echo "dispatch: $name: the agent's output in $dir.agent.json is not the JSON claude -p prints (exit $rc; stderr in $dir.agent.err)" >&2; failed=1; return; }
+import json, sys
+d = json.load(open(sys.argv[1]))
+open(sys.argv[2], "w").write(str(d.get("result", "")).rstrip("\n") + "\n")
+den = d.get("permission_denials") or []
+print(f"turns={d.get('num_turns', '?')} cost={d.get('total_cost_usd', '?')} error={str(d.get('is_error', False)).lower()} denied={len(den)}")
+for x in den[:5]:
+    print("  denied: " + str(x.get("tool_name", "?")) + " " + str(x.get("tool_input", ""))[:120])
+PY
+  read -r turns cost _ < <(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("num_turns","?"), d.get("total_cost_usd","?"))' "$dir.agent.json")
+  if [ "$(head -n1 "$dir.pr-body.md")" != "Change: $record" ]; then
+    { printf 'Change: %s\n\n' "$record"; cat "$dir.pr-body.md"; } > "$dir.pr-body.tmp" && mv "$dir.pr-body.tmp" "$dir.pr-body.md"
+    echo "dispatch: $name: the agent's PR description did not start with the Change: line; added it"
+  fi
+  if [ "$(git -C "$dir" rev-list --count "$base..HEAD")" -eq 0 ]; then
+    echo "dispatch: $name: fail, the agent made no commits (turns=$turns cost=$cost; brief in $dir.brief.md, output in $dir.agent.json, worktree kept at $dir)"; failed=1; return
+  fi
+  if ! mark_done "$name" "$dir/$record"; then
+    echo "dispatch: $name: fail, could not set done: true under task $name in $record on the branch; the agent may have renamed or removed it (worktree kept at $dir)"; failed=1; return
+  fi
+  git -C "$dir" add -- "$record" && git -C "$dir" commit -q -m "docs(change): $id, task $name dispatched" -- "$record" \
+    || { echo "dispatch: $name: fail, could not commit the done marker in $dir"; failed=1; return; }
+  if (cd "$dir" && bash "$here/record-check" "$base..HEAD" --body "$dir.pr-body.md" > "$dir.record-check.log" 2>&1); then rcs=ok; else rcs=fail; fi
+  if [ -n "$redrun" ]; then
+    local args=("$base..HEAD" --run "$redrun"); local g; for g in ${redmatch[@]+"${redmatch[@]}"}; do args+=(--match "$g"); done
+    if (cd "$dir" && bash "$here/red-check" "${args[@]}" > "$dir.red-check.log" 2>&1); then reds=ok; else reds=fail; fi
+  fi
+  if [ "$rcs" = ok ] && [ "$reds" != fail ]; then
+    if $push; then git -C "$dir" push -q -u "$remote" "$branch" >/dev/null 2>&1 && pushed=yes || { pushed=no; failed=1; }; fi
+  else
+    failed=1
+  fi
+  echo "dispatch: $name: branch=$branch commits=$(git -C "$dir" rev-list --count "$base..HEAD") turns=$turns cost=$cost record-check=$rcs red-check=$reds pushed=$pushed body=$dir.pr-body.md"
+  [ "$rcs" = ok ] || sed 's/^/  record-check: /' "$dir.record-check.log"
+  [ "$reds" = fail ] && sed 's/^/  red-check: /' "$dir.red-check.log" | tail -n 20
+  [ "$pushed" = yes ] || [ "$push" = false ] || echo "dispatch: $name: not pushed; the worktree is kept at $dir"
+}
+
+# ---- the plan ---------------------------------------------------------------------------
+n=0; found=0
+while IFS="$US" read -r name branch after done_; do
+  n=$((n+1)); [ -n "$branch" ] || branch="$id/$name"
+  if [ -n "$only" ] && [ "$name" != "$only" ]; then continue; fi
+  found=1
+  if $dry; then
+    printf 'dispatch: %d. %s branch=%s%s%s\n' "$n" "$name" "$branch" "${after:+ after $after}" "$( [ "$done_" = true ] && echo ' (done on the base)' )"
+    continue
+  fi
+  if [ "$done_" = true ]; then echo "dispatch: $name: done on $base, skipped"; continue; fi
+  if on_remote "$branch"; then echo "dispatch: $name: already dispatched, $branch is on $remote and not yet merged"; continue; fi
+  if [ -n "$after" ] && ! is_done "$after"; then
+    [ -n "$only" ] && refuse "$name waits for $after, which is not done in $record on $base (its branch has not merged); run it after that merge"
+    echo "dispatch: $name: waiting for $after to merge into $base"; break
+  fi
+  run_task "$name" "$branch" "$n"
+done <<< "$tasks"
+[ -z "$only" ] || [ "$found" -eq 1 ] || refuse "no task named $only in $record; its tasks are: $(printf '%s\n' "$tasks" | cut -d"$US" -f1 | tr '\n' ' ')"
+if $dry; then echo "dispatch: dry run; agent: ${agent:-$(default_agent)}"; exit 0; fi
+[ "$failed" -eq 0 ] || exit 1
+exit 0
