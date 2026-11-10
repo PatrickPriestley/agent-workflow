@@ -153,10 +153,13 @@ child's transcript entry names its parent.
 
     transcripts archive [--transcript PATH]
     transcripts import [--claude-home DIR] [--repo URL]... [--evals]
+    transcripts push [--session ID]... [--background]
+    transcripts materialize DIR [--session ID]... [--repo-dir DIR]
+    transcripts redact < lines
 
 `transcripts` keeps agent session transcripts in a local archive so they can be graded later
-(record `docs/changes/2026-11-09-skill-transcripts.md`; sending to a shared store and grading
-are later tasks of it). This repository's `.claude/settings.json` runs `transcripts archive`
+and sends them to a shared store (record `docs/changes/2026-11-09-skill-transcripts.md`;
+grading is a later task of it). This repository's `.claude/settings.json` runs `transcripts archive`
 on `Stop` and `SessionEnd`, in this checkout and in every worktree `dispatch` cuts. It is
 opt-in: nothing happens unless `AGENT_TRANSCRIPTS` names an archive directory, for example
 in your shell profile or in `.claude/settings.local.json`:
@@ -184,6 +187,32 @@ deletes them after `cleanupPeriodDays`, 30 by default) whose working directory i
 of this repository, or of each `--repo URL`; `--evals` adds eval-runner sessions. Running it
 again adds only what is new. Imported sessions have no `dispatch` parent and no commit, since
 no stop was seen.
+
+**The store.** The owner's Supabase project holds `sessions` (index rows), `chunks` and
+`scores`; `store/schema.sql` creates them, and `store/probe` checks against the real project
+that the hooks' key can insert and nothing else (no select, update or delete; a duplicate is
+refused with 409 and changes nothing). Set `AGENT_TRANSCRIPTS_URL` to the project's URL beside
+`AGENT_TRANSCRIPTS`, and every stop also starts `transcripts push --background`, detached from
+the hook so the session never waits: it sends what the store does not have, stops after
+`AGENT_TRANSCRIPTS_PUSH_LIMIT` seconds (60), logs to `<archive>/push.log`, and leaves the rest
+for the next stop. Before anything leaves the machine, every string in every line is redacted:
+email addresses, GitHub, Anthropic, AWS, Supabase, Slack and `sk-` keys, JWTs, bearer and basic
+tokens, URL passwords and private key blocks become `<redacted:kind>`; the local archive keeps
+the original. `transcripts redact` shows what would be sent. Each stream goes as gzip chunks
+keyed by a hash chain over the redacted bytes, so two machines sending the same session store
+each chunk once, and a rewritten transcript or a new redaction version starts a new generation;
+the session's index entry follows as a new row version, never an update.
+
+Keys: on a laptop, put the publishable (insert-only) key in
+`~/.config/agent-transcripts/insert-key`, mode 0600 (refused otherwise). In a cloud environment
+leave the file out: allow the project's host and save the key as a network secret for the
+`apikey` header, and the proxy adds it. The secret key is the read key: keep it only on your own
+machine, in `~/.config/agent-transcripts/read-key` (0600), for `materialize`, which rebuilds a
+folder in Claude Code's layout (`projects/<repository>/<id>.jsonl` and subagents, each file's
+time from its last timestamp, `sessions/<id>.json`, and `skills/<plugin:skill>/SKILL.md` at the
+blob each session recorded, read from the checkout you run it in). It checks every chunk
+against its chain id. For Skill Doctor, point `--claude-home` at that folder and `--skills-dir`
+at its `skills/`.
 
 ## What is not here yet
 
@@ -221,6 +250,7 @@ code changes, and a tier 0 declaration for trivial changes.
     bash plugins/change-record/bin/record-check.test.sh
     bash plugins/change-record/bin/dispatch.test.sh
     bash plugins/change-record/bin/transcripts.test.sh
+    bash plugins/change-record/bin/transcripts-store.test.sh
 
 They build real git repositories in a scratch directory and need bash, git and python3 (the
 `--json` assertions parse the documents with it; the scripts themselves fall back to a shell

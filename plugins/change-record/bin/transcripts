@@ -3,6 +3,9 @@
 
   transcripts archive [--transcript PATH]
   transcripts import [--claude-home DIR] [--repo URL]... [--evals]
+  transcripts push [--session ID]... [--background]
+  transcripts materialize DIR [--session ID]... [--repo-dir DIR]
+  transcripts redact < lines > redacted-lines
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
 transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
@@ -34,18 +37,47 @@ tool or read as a SKILL.md, with the git blob hash of its file when first seen),
 (the one both agree on, else the only one there is, else none), parent_session (from
 AGENT_TRANSCRIPTS_PARENT, which dispatch sets for its children, at the first stop only), streams
 (per transcript: generation, parts, lines, bytes, sha256 of what is archived), sent (filled when
-a store is added) and redaction_version (none: the local archive is not redacted).
+push) and redaction_version (the version of the redaction last applied to what was sent;
+none until a push: the local archive is never redacted).
+
+push sends to the store at AGENT_TRANSCRIPTS_URL (the Supabase project's URL; https only, but
+for 127.0.0.1) what the archive has that the store does not, redacted (REDACTION, below), with
+the hooks' insert-only key: the 0600 file <config>/agent-transcripts/insert-key when there is
+one, else no key, for a cloud proxy that injects it. Each stream goes as gzip chunks of at most
+CHUNK_BYTES, keyed by a hash chain (chunk_id = sha256(start_id ":" sha256(bytes)), from
+sha256(sessionId "/" stream)), then the session's redacted index entry as a new row version.
+It only inserts: a 409 duplicate means already stored. A stream the archive rewrote, or a new
+redaction version, starts a new generation from the chain's root. With AGENT_TRANSCRIPTS_URL set,
+the archive hook starts `push --background` detached, which stops after
+AGENT_TRANSCRIPTS_PUSH_LIMIT seconds (default 60) and writes to <archive>/push.log; what it did
+not send goes at the next stop.
+
+materialize rebuilds from the store, with the read key in <config>/agent-transcripts/read-key
+(the owner's machine only), a folder in Claude Code's layout: projects/<repository>/<id>.jsonl
+and <id>/subagents/<agent>.jsonl, each file's time set from its last timestamp, sessions/<id>.json
+(the index entry), and skills/<plugin:skill>/SKILL.md from the blob each session recorded, read
+from the git repository at --repo-dir (default the current directory). It checks every chunk
+against its chain id and writes no session whose chain does not match.
+
+redact applies the redaction to lines on stdin.
 """
+import base64
 import glob
+import gzip
 import hashlib
 import json
 import os
 import re
 import secrets
+import signal
+import stat
 import subprocess
 import sys
 import time
-from urllib.parse import urlsplit
+import urllib.error
+import urllib.request
+from datetime import datetime
+from urllib.parse import quote, urlsplit
 
 SCHEMA = 1
 STALE_LOCK = 60  # seconds; the hooks time out after 10
@@ -392,7 +424,7 @@ def cmd_archive(args):
         ar = archive_dir()
         if ar is None:
             return 0
-        cwd = None
+        cwd = hook = None
         if transcript is None:
             raw = sys.stdin.read()
             try:
@@ -401,7 +433,11 @@ def cmd_archive(args):
             except (ValueError, KeyError, TypeError) as e:
                 say(f"the hook input is not JSON with a transcript_path ({e}); nothing archived")
                 return 0
-        archive_session(ar, os.path.abspath(os.path.expanduser(transcript)), cwd)
+        try:
+            archive_session(ar, os.path.abspath(os.path.expanduser(transcript)), cwd)
+        finally:
+            if hook is not None and os.environ.get("AGENT_TRANSCRIPTS_URL"):
+                start_background_push(ar)
     except Busy as e:
         say(f"{e}; the lines are kept for the next stop")
     except Exception as e:  # never fail the session
@@ -458,12 +494,433 @@ def cmd_import(args):
     return 1 if failed else 0
 
 
+# ---- the store: redaction, push, materialize ----
+
+REDACTION = 1  # bump when the patterns change: every stream is then sent again as a new generation
+CHUNK_BYTES = 2_000_000  # redacted bytes per chunk before gzip; the real project took a 4 MB body
+PUSH_LIMIT = 60  # seconds a background push may run
+
+_R = lambda p, f=0: re.compile(p, f)  # noqa: E731
+PATTERNS = [  # (pattern, replacement), in order; applied to every decoded JSON string
+    (_R(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)", re.S), "<redacted:private-key>"),
+    (_R(r"(://[^/\s:@]+:)[^/\s@]+@"), r"\1<redacted:password>@"),
+    (_R(r"\bsk-ant-[A-Za-z0-9_-]{10,}"), "<redacted:anthropic-key>"),
+    (_R(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), "<redacted:github-token>"),
+    (_R(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), "<redacted:aws-key>"),
+    (_R(r"(?i)(aws_secret_access_key\W{0,3}\s*[=:]\s*\W?)[A-Za-z0-9/+=]{40}"), r"\1<redacted:aws-secret>"),
+    (_R(r"\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{10,}"), "<redacted:supabase-key>"),
+    (_R(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"), "<redacted:slack-token>"),
+    (_R(r"\bsk-[A-Za-z0-9_-]{20,}"), "<redacted:api-key>"),
+    (_R(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"), "<redacted:jwt>"),
+    (_R(r"(?i)\b(bearer|token|basic)(\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1\2<redacted:token>"),
+    (_R(r"[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"), "<redacted:email>"),
+]
+
+
+def redact_text(t):
+    for pat, rep in PATTERNS:
+        t = pat.sub(rep, t)
+    return t
+
+
+def redact_obj(o):
+    if isinstance(o, str):
+        return redact_text(o)
+    if isinstance(o, list):
+        return [redact_obj(x) for x in o]
+    if isinstance(o, dict):
+        return {redact_text(k): redact_obj(v) for k, v in o.items()}
+    return o
+
+
+def redact_line(raw):
+    """One transcript line, redacted. Strings are redacted after JSON decoding, so an escape
+    such as \\n can never be cut in half; a line with nothing to redact keeps its exact bytes."""
+    end = b"\n" if raw.endswith(b"\n") else b""
+    body = raw[:-1] if end else raw
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return redact_text(body.decode("utf-8", "replace")).encode() + end
+    new = redact_obj(obj)
+    if new == obj:
+        return raw
+    try:
+        return json.dumps(new, ensure_ascii=False, separators=(",", ":")).encode() + end
+    except UnicodeEncodeError:  # a lone surrogate: escape it rather than write bad UTF-8
+        return json.dumps(new, separators=(",", ":")).encode() + end
+
+
+def conf_dir():
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "agent-transcripts")
+
+
+def key_file(name, required):
+    p = os.path.join(conf_dir(), name)
+    try:
+        st = os.stat(p)
+    except FileNotFoundError:
+        if required:
+            raise StoreError(f"materialize needs the store's read key in {p} (mode 0600)")
+        return None
+    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise StoreError(f"{p} can be read by other users; chmod 600 it")
+    return open(p).read().strip() or None
+
+
+class StoreError(Exception):
+    pass
+
+
+class TimeLimit(Exception):
+    pass
+
+
+def store_url():
+    url = (os.environ.get("AGENT_TRANSCRIPTS_URL") or "").rstrip("/")
+    if not url:
+        return None
+    u = urlsplit(url)
+    if u.scheme != "https" and not (u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")):
+        raise StoreError(f"AGENT_TRANSCRIPTS_URL={url} is not https; transcripts are only sent encrypted")
+    return url
+
+
+def request(url, key, method, path, body=None):
+    req = urllib.request.Request(url + path, method=method,
+                                 data=None if body is None else json.dumps(body, separators=(",", ":")).encode())
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Prefer", "return=minimal")
+    if key:
+        req.add_header("apikey", key)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except (urllib.error.URLError, OSError) as e:
+        raise StoreError(f"cannot reach {url} ({getattr(e, 'reason', e)})")
+
+
+def insert(url, key, table, row):
+    status, body = request(url, key, "POST", "/rest/v1/" + table, row)
+    if status in (200, 201, 204) or (status == 409 and b"23505" in body):
+        return status != 409  # a 409 duplicate is a row the store already has
+    raise StoreError(f"{table} insert answered {status}: {body[:200].decode('utf-8', 'replace')}")
+
+
+def sender_id():
+    m = machine()
+    if m["cloud_container"]:
+        return "cloud:" + m["cloud_container"]
+    return m["id"] or "unknown"
+
+
+def chain_root(sid, stream):
+    return hashlib.sha256(f"{sid}/{stream}".encode()).hexdigest()
+
+
+def chunk_id(start, raw):
+    return hashlib.sha256(f"{start}:{hashlib.sha256(raw).hexdigest()}".encode()).hexdigest()
+
+
+def update_sent(ar, sid, sent):
+    """Write the sent state into the session's index entry, under the archive's session lock."""
+    for _ in range(50):
+        try:
+            with Lock(os.path.join(ar, "locks", sid)):
+                ep = os.path.join(ar, "sessions", sid + ".json")
+                entry = json.load(open(ep))
+                entry["sent"] = sent
+                entry["redaction_version"] = sent["redaction"]
+                write_atomic(ep, (json.dumps(entry, indent=2) + "\n").encode())
+                return entry
+        except Busy:
+            time.sleep(0.1)
+    raise Busy(f"the archive kept {sid} locked; its sent state is written at the next push")
+
+
+def push_session(ar, url, key, sid, sender):
+    """Send one session's unsent parts and, if it changed, its index entry; returns (chunks, rows)."""
+    entry = json.load(open(os.path.join(ar, "sessions", sid + ".json")))
+    sent = json.loads(json.dumps(entry.get("sent") or {}))
+    sent.setdefault("streams", {})
+    fresh = sent.get("redaction") not in (None, REDACTION)
+    sent["redaction"] = REDACTION
+    chunks = 0
+    for name, st in sorted(entry["streams"].items()):
+        s = sent["streams"].get(name)
+        if s is None or fresh or s["archive_generation"] != st["generation"]:
+            s = {"archive_generation": st["generation"], "parts": 0, "generation": (s["generation"] + 1 if s else 1),
+                 "chunks": 0, "lines": 0, "bytes": 0, "tip": chain_root(sid, name)}
+            sent["streams"][name] = s
+        for n in range(s["parts"] + 1, st["parts"] + 1):
+            p = os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], n))
+            data = b"".join(redact_line(x) for x in open(p, "rb").read().splitlines(keepends=True))
+            pieces, cur = [], b""
+            for x in data.splitlines(keepends=True):
+                if cur and len(cur) + len(x) > CHUNK_BYTES:
+                    pieces.append(cur)
+                    cur = b""
+                cur += x
+            pieces += [cur] if cur else []
+            for raw in pieces:
+                cid = chunk_id(s["tip"], raw)
+                chunks += insert(url, key, "chunks", {
+                    "session_id": sid, "stream": name, "chunk_id": cid, "start_id": s["tip"], "sender": sender,
+                    "generation": s["generation"], "number": s["chunks"] + 1, "lines": raw.count(b"\n"),
+                    "bytes": len(raw), "redaction": REDACTION,
+                    "data": base64.b64encode(gzip.compress(raw, mtime=0)).decode()})
+                s.update(tip=cid, chunks=s["chunks"] + 1, lines=s["lines"] + raw.count(b"\n"), bytes=s["bytes"] + len(raw))
+            s["parts"] = n
+            sent["row_pending"] = True  # the index row must follow, even if the push stops here
+            update_sent(ar, sid, sent)  # each whole part, so a stopped push resumes after it
+    if sent.get("version") and not sent.get("row_pending"):
+        return chunks, 0
+    row_entry = dict(entry, sent={"redaction": REDACTION, "streams": sent["streams"]}, redaction_version=REDACTION)
+    row_entry = redact_obj(row_entry)
+    version = sent.get("version", 0) + 1
+    row_entry["sent"]["version"] = version
+    row_id = hashlib.sha256(json.dumps([sender, row_entry], sort_keys=True).encode()).hexdigest()
+    insert(url, key, "sessions", {"session_id": sid, "row_id": row_id, "sender": sender, "version": version,
+                                  "entry": row_entry})
+    sent.update(version=version, row_pending=False)
+    update_sent(ar, sid, sent)
+    return chunks, 1
+
+
+def unsent(ar, sid):
+    try:
+        e = json.load(open(os.path.join(ar, "sessions", sid + ".json")))
+    except (OSError, ValueError):
+        return False
+    s = e.get("sent") or {}
+    if s.get("redaction") != REDACTION or not s.get("version") or s.get("row_pending"):
+        return True
+    for name, st in e.get("streams", {}).items():
+        x = s.get("streams", {}).get(name)
+        if not x or x["archive_generation"] != st["generation"] or x["parts"] != st["parts"]:
+            return True
+    return False  # an index change without new lines goes with the next lines
+
+
+def _time_limit(*a):
+    raise TimeLimit("the push reached its time limit")
+
+
+def cmd_push(args):
+    background, only, i = False, [], 0
+    while i < len(args):
+        if args[i] == "--background":
+            background, i = True, i + 1
+        elif args[i] == "--session" and i + 1 < len(args):
+            only.append(args[i + 1])
+            i += 2
+        else:
+            say("usage: transcripts push [--session ID]... [--background]")
+            return 2
+    tell = (lambda m: say(time.strftime("%Y-%m-%dT%H:%M:%S ") + m)) if background else say
+    try:
+        ar = archive_dir()
+        url = store_url()
+    except (PermissionError, StoreError) as e:
+        tell(str(e))
+        return 0 if background else 2
+    if ar is None or url is None:
+        tell("push needs AGENT_TRANSCRIPTS (the archive) and AGENT_TRANSCRIPTS_URL (the store) set")
+        return 0 if background else 2
+    if background:
+        try:
+            limit = int(os.environ.get("AGENT_TRANSCRIPTS_PUSH_LIMIT") or PUSH_LIMIT)
+        except ValueError:
+            limit = PUSH_LIMIT
+        signal.signal(signal.SIGALRM, _time_limit)
+        signal.alarm(max(1, limit))
+    chunks = rows = sessions = 0
+    try:
+        key = key_file("insert-key", required=False)
+        sender = sender_id()
+        with Lock(os.path.join(ar, "locks", "push")):
+            for _ in range(3):  # lines archived while this push ran go in the next pass
+                todo = [os.path.basename(p)[:-5] for p in sorted(glob.glob(os.path.join(ar, "sessions", "*.json")))]
+                todo = [x for x in todo if (not only or x in only) and unsent(ar, x)]
+                if not todo:
+                    break
+                for sid in todo:
+                    c, r = push_session(ar, url, key, sid, sender)
+                    chunks, rows, sessions = chunks + c, rows + r, sessions + 1
+    except (StoreError, Busy, TimeLimit, OSError, ValueError, KeyError) as e:
+        tell(f"push stopped: {e}; what was not sent goes at the next stop (sent {chunks} chunks before)")
+        return 0 if background else 1
+    finally:
+        if background:
+            signal.alarm(0)
+    tell(f"pushed {chunks} new chunks and {rows} index rows for {sessions} sessions to {url}")
+    return 0
+
+
+def start_background_push(ar):
+    """Start `push --background` detached from the hook: its own session, no pipes to the hook."""
+    try:
+        log = os.path.join(ar, "push.log")
+        if os.path.isfile(log) and os.path.getsize(log) > 1_000_000:
+            os.replace(log, log + ".1")
+        with open(log, "ab") as f:
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "push", "--background"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=f,
+                             start_new_session=True, close_fds=True)
+    except OSError as e:
+        say(f"cannot start the background push ({e}); the lines go at the next stop")
+
+
+def read_rows(url, key, path):
+    rows, off = [], 0
+    while True:
+        status, body = request(url, key, "GET", f"{path}&limit=200&offset={off}")
+        if status != 200:
+            raise StoreError(f"GET {path} answered {status}: {body[:200].decode('utf-8', 'replace')}")
+        page = json.loads(body)
+        rows += page
+        if len(page) < 200:
+            return rows
+        off += 200
+
+
+def last_ts(data):
+    best = None
+    for raw in data.splitlines():
+        m = re.search(rb'"timestamp":"([^"]+)"', raw)
+        if m and (best is None or m.group(1) > best):
+            best = m.group(1)
+    if not best:
+        return None
+    try:
+        return datetime.fromisoformat(best.decode().replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+# no segment may be `.` or `..`, the first after `subagents/` included; no skill part may start with a dot
+STREAM = re.compile(r"^(?:main|subagents/(?!(?:.*/)?\.\.?(?:/|$))[A-Za-z0-9._/-]+)$")
+SKILL_NAME = re.compile(r"^(?!\.)[A-Za-z0-9._-]+(?::(?!\.)[A-Za-z0-9._-]+)?$")
+
+
+def git_blob(repo_dir, blob):
+    try:
+        r = subprocess.run(["git", "-C", repo_dir, "cat-file", "blob", blob], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def cmd_materialize(args):
+    out, only, repo_dir, i = None, [], os.getcwd(), 0
+    while i < len(args):
+        if args[i] in ("--session", "--repo-dir") and i + 1 < len(args):
+            if args[i] == "--session":
+                only.append(args[i + 1])
+            else:
+                repo_dir = args[i + 1]
+            i += 2
+        elif out is None and not args[i].startswith("--"):
+            out, i = os.path.abspath(args[i]), i + 1
+        else:
+            out = None
+            break
+    if out is None:
+        say("usage: transcripts materialize DIR [--session ID]... [--repo-dir DIR]")
+        return 2
+    tree = inside_work_tree(out)
+    if tree:
+        say(f"{out} is inside the working tree of {tree}; materialize outside any repository")
+        return 2
+    try:
+        url = store_url()
+        if url is None:
+            raise StoreError("materialize needs AGENT_TRANSCRIPTS_URL, the store's URL")
+        key = key_file("read-key", required=True)
+    except StoreError as e:
+        say(str(e))
+        return 2
+    failed = done = 0
+    try:
+        q = "/rest/v1/sessions?select=session_id,sender,version,entry&order=session_id,row_id"
+        if only:
+            q += "&session_id=in.(" + ",".join(quote(x, safe="") for x in only) + ")"
+        best = {}
+        for r in read_rows(url, key, q):
+            e = r.get("entry") or {}
+            rank = (e.get("last_timestamp") or "", sum(s.get("bytes", 0) for s in (e.get("sent") or {}).get("streams", {}).values()),
+                    r.get("version") or 0)
+            if r["session_id"] not in best or rank > best[r["session_id"]][0]:
+                best[r["session_id"]] = (rank, e)
+        skills = {}
+        for sid, (_, e) in sorted(best.items()):
+            try:
+                if not re.match(r"^[A-Za-z0-9._-]+$", sid) or sid.startswith("."):
+                    raise StoreError(f"session id {sid!r} is not a plain name")
+                proj = re.sub(r"[^A-Za-z0-9]", "-", e.get("repository") or "unknown")
+                files = []
+                for name, s in sorted((e.get("sent") or {}).get("streams", {}).items()):
+                    if not STREAM.match(name):
+                        raise StoreError(f"stream {name!r} is not a transcript name")
+                    rows = read_rows(url, key, f"/rest/v1/chunks?select=chunk_id,start_id,data&session_id=eq.{quote(sid, safe='')}"
+                                     f"&stream=eq.{quote(name, safe='')}&order=chunk_id")
+                    have = {r["chunk_id"]: r for r in rows}
+                    cur, root, pieces = s["tip"], chain_root(sid, name), []
+                    while cur != root:
+                        r = have.get(cur)
+                        if r is None or len(pieces) > len(have):
+                            raise StoreError(f"{sid} {name}: chunk {cur[:12]} is missing")
+                        raw = gzip.decompress(base64.b64decode(r["data"]))
+                        if chunk_id(r["start_id"], raw) != cur:
+                            raise StoreError(f"{sid} {name}: chunk {cur[:12]} does not match its chain id")
+                        pieces.append(raw)
+                        cur = r["start_id"]
+                    data = b"".join(reversed(pieces))
+                    rel = f"{sid}.jsonl" if name == "main" else f"{sid}/{name}.jsonl"
+                    files.append((os.path.join(out, "projects", proj, rel), data))
+                for p, data in files:
+                    write_atomic(p, data)
+                    t = last_ts(data)
+                    if t:
+                        os.utime(p, (t, t))
+                write_atomic(os.path.join(out, "sessions", sid + ".json"), (json.dumps(e, indent=2) + "\n").encode())
+                for sk in e.get("skills") or []:
+                    if sk.get("blob") and SKILL_NAME.match(sk.get("name") or ""):
+                        t = e.get("last_timestamp") or ""
+                        if sk["name"] not in skills or t > skills[sk["name"]][0]:
+                            skills[sk["name"]] = (t, sk["blob"])
+                done += 1
+            except (StoreError, ValueError, KeyError, OSError) as x:
+                say(str(x) + "; session not written")
+                failed += 1
+        for name, (_, blob) in sorted(skills.items()):
+            text = git_blob(repo_dir, blob) if re.match(r"^[0-9a-f]{40}$", blob) else None
+            if text is None:
+                say(f"skill {name}: blob {blob[:12]} is not in {repo_dir}; skipped")
+                continue
+            write_atomic(os.path.join(out, "skills", name, "SKILL.md"), text)
+    except StoreError as x:
+        say(str(x))
+        return 1
+    print(f"transcripts: materialized {done} sessions into {out}" + (f", {failed} failed" if failed else ""))
+    return 1 if failed else 0
+
 def main(argv):
     os.umask(0o077)  # the archive is as private as Claude Code's own transcripts: owner only
     if argv[:1] == ["archive"]:
         return cmd_archive(argv[1:])
     if argv[:1] == ["import"]:
         return cmd_import(argv[1:])
+    if argv[:1] == ["push"]:
+        return cmd_push(argv[1:])
+    if argv[:1] == ["materialize"]:
+        return cmd_materialize(argv[1:])
+    if argv[:1] == ["redact"]:
+        for raw in sys.stdin.buffer:
+            sys.stdout.buffer.write(redact_line(raw))
+        return 0
     print(__doc__.strip().split("\n\n")[0], file=sys.stderr)
     return 2
 

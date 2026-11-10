@@ -10,6 +10,7 @@ tasks:
     done: true
   - name: store
     after: capture
+    done: true
   - name: grade
     after: store
   - name: report
@@ -70,9 +71,28 @@ Identity, across sessions and machines:
 - Exact source (the `claude-artifacts` tools, 2026-11-10): the artifact database is written
   only through Claude's own tools (`db_write`, at most 50 documents per call, rate-limited), so a
   shell hook cannot write to it.
-- Assumed: Supabase serves its Postgres tables over HTTPS, and row-level security can give one
-  key insert-only access to them. To be checked at the start of task 2, before any schema is
-  written.
+- Verified against the real system (task 2, 2026-11-10): the owner's Supabase project answers
+  PostgREST over HTTPS with the publishable key the cloud proxy injects, whether the request
+  carries no `apikey` header or a placeholder one (`GET` and `POST /rest/v1/chunks` before the
+  schema existed: 404 `PGRST205`, "Could not find the table 'public.chunks'", not 401); the
+  schema root `GET /rest/v1/` answers 401 "Secret API key required". Python's `urllib` reaches
+  it through the proxy with no extra setup.
+- Verified against the real system (task 2, 2026-11-10, `store/probe` after the owner applied
+  `store/schema.sql`): with the publishable key the proxy injects, an insert into `chunks` or
+  `sessions` answers 201; the same key again, with other bytes, answers 409 `23505` "duplicate
+  key value violates unique constraint"; select, an insert with `return=representation`,
+  update, delete and any access to `scores` answer 401 `42501` "permission denied". So the key
+  is held to insert-only by the grants alone, and a duplicate cannot change a stored row.
+- Verified against the real system (same probe): `Prefer: resolution=ignore-duplicates` answers
+  401 `42501` with the hint "GRANT SELECT ON public.chunks TO anon": PostgREST sends `ON CONFLICT
+  DO NOTHING`, which needs SELECT. So senders insert one row per request and count a 409 as
+  already stored, rather than grant SELECT.
+- Verified against the real system: a 4 MB request body is accepted (201).
+- Verified against the real system (task 2): a hook under `claude -p` gets that process's own
+  proxy (`HTTPS_PROXY=http://127.0.0.1:35135` in the hook, `:34313` in the parent session's
+  shell), which closes when the process exits, so the background push started by a `-p`
+  session's last stop got "Connection refused". The next stop of any session using the same
+  archive sends those lines (Outcome).
 - Exact source (`dispatch`): the agent's JSON, saved beside each worktree as
   `<name>.agent.json`, carries the child session's `session_id`.
 
@@ -299,6 +319,37 @@ Priestley, 2026-11-10.
   the archive is open to its owner only, as Claude Code keeps `~/.claude/projects` (0700
   folders, 0600 files). Rejected: the user's umask, under which a common 022 makes unredacted
   transcripts readable by every local user.
+- (Task 2.) Senders insert one row per request and count a 409 duplicate as stored. Rejected:
+  `Prefer: resolution=ignore-duplicates`, which needs SELECT (probed), and granting SELECT on
+  the key columns, which would let the hooks' key list sessions.
+- (Task 2.) A chunk's key is a hash chain, `sha256(start ":" sha256(redacted bytes))` from
+  `sha256(sessionId "/" stream)`; `generation` and `number` are the sender's, kept as columns.
+  Two senders store a shared chunk once, different chunkings never collide, nobody can claim a
+  key ahead of the bytes, and `materialize` checks every chunk. Rejected: keys by session,
+  generation and number, under which two machines chunking one session differently would
+  silently drop each other's bytes on a duplicate.
+- (Task 2.) An index row is a new version keyed by the hash of its content, with the sending
+  machine (`sender`: the machine id, or `cloud:<container>`); `materialize` takes, per session,
+  the row with the latest transcript timestamp, then the most bytes, then the highest version.
+  Rejected: updating one row per session, which the insert-only key cannot do.
+- (Task 2.) Redaction (version 1) runs on each JSON string after decoding, and a line with
+  nothing to redact keeps its exact bytes; it replaces every email-shaped string, not only the
+  owner's, plus GitHub, Anthropic, AWS, Supabase, Slack and `sk-` keys, JWTs, bearer and basic
+  tokens, URL passwords and private key blocks. Rejected: regexes over the raw line, which can
+  cut a JSON escape such as `\n` and break the line, and a list of the owner's addresses, which
+  would put them in the repository. A new version resends every stream as a new generation.
+- (Task 2.) The insert key comes from `~/.config/agent-transcripts/insert-key` (refused unless
+  0600), or from nowhere in the cloud, where the proxy injects it; the read key only from
+  `read-key` beside it. Rejected: an environment variable, which every child process inherits
+  and settings files keep in plain text. `AGENT_TRANSCRIPTS_URL` must be https (or 127.0.0.1).
+- (Task 2.) The hook starts `push --background` detached (its own session, no pipes back to
+  the hook) with a 60 s limit, and every push sends every session in the archive with unsent
+  lines, so lines a stop could not send, including a `claude -p` session's last ones whose proxy
+  is gone, go at the next stop of any session on that archive. Rejected: a foreground push at
+  `SessionEnd`, which would delay every `dispatch` child's exit by the store's latency.
+- (Task 2.) The cloud environment `agent-workflow` sets `AGENT_TRANSCRIPTS=~/agent-transcripts`
+  and `AGENT_TRANSCRIPTS_URL`; its network allows the project's host and its proxy injects the
+  publishable key (set up before task 2).
 
 ## Tasks
 
@@ -402,3 +453,100 @@ session in a scratch directory):
     transcripts: imported 3, unchanged 0, skipped 1 (not in scope); archive .../scratchpad/imp
     $ AGENT_TRANSCRIPTS=$S/imp plugins/change-record/bin/transcripts import
     transcripts: imported 0, unchanged 3, skipped 1 (not in scope); archive .../scratchpad/imp
+
+### Task 2: store (branch `2026-11-09-skill-transcripts/store`)
+
+Shipped: `store/schema.sql` (applied by the owner on 2026-11-10), `store/probe`,
+`transcripts push`, `materialize` and `redact`, the background push from the archive hook,
+`store/stand-in.py` and `bin/transcripts-store.test.sh` (82 assertions: R4, R5, R7, the hook's
+time limit and error paths; four added in review for a stream or skill name whose first segment
+is `.` or `..`, which the guards let through and `materialize` wrote one folder up) in `.github/workflows/test.yml`, a README section, and the cloud
+environment's two variables. The suite failed first on its assertions (43 of 69, the usage text
+where push and materialize should answer). Every guard was broken by hand and a test failed
+(18 mutations); the one survivor, the index row's digest check, was redundant and hid a gap
+(a refused index row waited for new lines), which got a test, red first, and a fix.
+
+Not shipped: `materialize` against the real store, which needs the read key on the owner's
+machine (run `store/probe` there too, with `read-key` in place, to read the probe chunk back);
+it is tested against the stand-in only, and that the secret key is accepted in the `apikey`
+header alone is assumed. `tool-results/` files are still not archived or sent. A `claude -p`
+session's own last lines are sent at the next stop of a session on the same archive, not at its
+own (Probed facts).
+
+Real use, in this cloud container, against the real project. The insert-only probe:
+
+    $ AGENT_TRANSCRIPTS_URL=https://your-project-ref.supabase.co plugins/change-record/store/probe
+    ok   insert a chunk: HTTP 201
+    ok   insert an index row: HTTP 201
+    ok   a duplicate chunk, other bytes: refused as a duplicate: HTTP 409 {"code":"23505",...
+    ok   a duplicate index row: refused as a duplicate: HTTP 409 {"code":"23505",...
+    ok   ignore-duplicates: refused, since ON CONFLICT needs SELECT: HTTP 401 {"code":"42501",...
+    ok   select chunks: refused: HTTP 401 {"code":"42501",...
+    ok   select sessions: refused: HTTP 401 {"code":"42501",...
+    ok   insert with return=representation: refused: HTTP 401 {"code":"42501",...
+    ok   update a chunk: refused: HTTP 401 {"code":"42501",...
+    ok   delete a chunk: refused: HTTP 401 {"code":"42501",...
+    ok   update an index row: refused: HTTP 401 {"code":"42501",...
+    ok   delete an index row: refused: HTTP 401 {"code":"42501",...
+    ok   insert a score: refused: HTTP 401 {"code":"42501",...
+    ok   select scores: refused: HTTP 401 {"code":"42501",...
+    note: no read key here, so the probe chunk was not read back
+    probe session probe-74e1e907cd2eb8c5: 14 passed, 0 failed
+
+This session's own transcript (1.3 MB, 274 lines), archived and pushed through a local
+forwarder that logs each request body before relaying it to the project, then pushed again:
+
+    $ AGENT_TRANSCRIPTS=$S/real/archive transcripts archive --transcript ~/.claude/projects/-home-user-agent-workflow/659da00f-....jsonl
+    exit 0
+    $ AGENT_TRANSCRIPTS=$S/real/archive AGENT_TRANSCRIPTS_URL=$FWD transcripts push
+    transcripts: pushed 1 new chunks and 1 index rows for 1 sessions to http://127.0.0.1:38051
+    real	0m1.952s
+    $ (again)
+    transcripts: pushed 0 new chunks and 0 index rows for 0 sessions to http://127.0.0.1:38051
+    requests: 2 methods: ['POST'] answers: [201] apikey header sent by push: False
+
+The bytes sent, decoded from the forwarder's log, against the unredacted archive:
+
+    pattern         in local archive   in bytes sent
+    email                         22               0
+    github-token                   7               3   (all three: the pattern's own source, `github_pat_[`)
+    anthropic-key                  4               0
+    aws-key                        4               0
+    supabase-key                   4               0
+    every sent line is JSON: True
+
+Two senders at once (two archives of the same session, machine ids `realuse-machine-A` and
+`-B`), against the real project:
+
+    A: transcripts: pushed 0 new chunks and 1 index rows for 1 sessions to http://127.0.0.1:38051
+    A: exit 0
+    B: transcripts: pushed 1 new chunks and 1 index rows for 1 sessions to http://127.0.0.1:38051
+    B: exit 0
+    POST /rest/v1/chunks   bfc44c23c68c -> 201
+    POST /rest/v1/chunks   bfc44c23c68c -> 409 {"code":"23505",...   (the second copy, counted as stored)
+    POST /rest/v1/sessions 6562aa05ac24 -> 201
+    POST /rest/v1/sessions 047d9bc8fb0c -> 201
+
+Error path, the hook command as configured, with the store unreachable, then the next stop:
+
+    hook command: "$CLAUDE_PROJECT_DIR"/plugins/change-record/bin/transcripts archive || true
+    $ (Stop, AGENT_TRANSCRIPTS_URL=http://127.0.0.1:9)
+    exit 0 in 0.09 s
+    push.log: push stopped: cannot reach http://127.0.0.1:9 ([Errno 111] Connection refused); what was not sent goes at the next stop (sent 0 chunks before)
+    $ (next Stop, store reachable)
+    exit 0 in 0.09 s
+    push.log: pushed 1 new chunks and 1 index rows for 1 sessions to http://127.0.0.1:38051
+      POST /rest/v1/chunks generation 1 number 2 lines 26 -> 201
+      POST /rest/v1/sessions -> 201
+
+Main path, a `claude -p` session in this repository with the hook sending straight to the
+project; its own background pushes found its proxy gone, and this session's next stop sent it:
+
+    $ AGENT_TRANSCRIPTS=$S/cp/archive AGENT_TRANSCRIPTS_URL=https://your-project-ref.supabase.co claude -p --output-format json "Reply with the word ok."
+    rc=0  real 0m4.878s  result= ok is_error= False session 883c53c9-01a5-4ca6-b96c-d0c7d43dec50
+    push.log: push stopped: cannot reach https://your-project-ref.supabase.co ([Errno 111] Connection refused); ... (Stop and SessionEnd)
+    $ (this session's next Stop, same archive)
+    exit 0 in 0.1 s
+    push.log: pushed 3 new chunks and 2 index rows for 2 sessions to https://your-project-ref.supabase.co
+    659da00f cloud sent version 1 main lines 319 of 319 redaction 1
+    883c53c9 cloud sent version 1 main lines 24 of 24 redaction 1

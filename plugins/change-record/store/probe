@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""probe: check, against the real store, that the hooks' key can insert and do nothing else.
+
+  AGENT_TRANSCRIPTS_URL=https://<project>.supabase.co plugins/change-record/store/probe
+
+It sends with the hooks' key: the 0600 file ${XDG_CONFIG_HOME:-~/.config}/agent-transcripts/insert-key
+when there is one, else no key at all (in a cloud environment whose proxy injects it). It
+inserts one probe chunk and one probe index row under a new session id `probe-<random>`, then
+checks that:
+
+  1. the insert is accepted;
+  2. the same key sent again, even with other bytes, is refused as a duplicate (409, code
+     23505) and changes nothing: `push` counts that answer as already stored;
+  3. `Prefer: resolution=ignore-duplicates` is refused (it is ON CONFLICT DO NOTHING, which
+     needs SELECT), which is why `push` does not use it;
+  4. select, select through an insert's `return=representation`, update and delete are all
+     refused, and so is any access to `scores`.
+
+With a read key in ${XDG_CONFIG_HOME:-~/.config}/agent-transcripts/read-key (the owner's
+machine only) it also reads the probe chunk back and checks it still holds the first bytes.
+The probe rows stay in the store (this key cannot delete them); their session ids start with
+`probe-`. Exit 0 when every check passes, 1 otherwise.
+"""
+import json
+import os
+import secrets
+import stat
+import sys
+import urllib.error
+import urllib.request
+
+CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "agent-transcripts")
+
+
+def key(name):
+    p = os.path.join(CONF, name)
+    try:
+        st = os.stat(p)
+    except FileNotFoundError:
+        return None
+    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        sys.exit(f"probe: {p} is readable by others; chmod 600 it")
+    return open(p).read().strip() or None
+
+
+def call(method, path, body=None, prefer=None, k=None):
+    req = urllib.request.Request(os.environ["AGENT_TRANSCRIPTS_URL"].rstrip("/") + path, method=method,
+                                 data=None if body is None else json.dumps(body).encode())
+    req.add_header("Content-Type", "application/json")
+    if k:
+        req.add_header("apikey", k)
+    if prefer:
+        req.add_header("Prefer", prefer)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+
+
+def main():
+    if not os.environ.get("AGENT_TRANSCRIPTS_URL"):
+        sys.exit("probe: set AGENT_TRANSCRIPTS_URL to the project's URL")
+    ins, read = key("insert-key"), key("read-key")
+    sid = "probe-" + secrets.token_hex(8)
+    chunk = {"session_id": sid, "stream": "main", "chunk_id": secrets.token_hex(32), "start_id": "0" * 64,
+             "sender": "probe", "generation": 1, "number": 1, "lines": 1, "bytes": 5, "redaction": 1,
+             "data": "first"}
+    row = {"session_id": sid, "row_id": secrets.token_hex(32), "sender": "probe", "version": 1,
+           "entry": {"probe": True}}
+    other = dict(chunk, data="other")
+    q = f"?session_id=eq.{sid}"
+    checks = [
+        ("insert a chunk", lambda s: s == 201, call("POST", "/rest/v1/chunks", chunk, "return=minimal", ins)),
+        ("insert an index row", lambda s: s == 201, call("POST", "/rest/v1/sessions", row, "return=minimal", ins)),
+        ("a duplicate chunk, other bytes: refused as a duplicate", lambda s: s == 409,
+         call("POST", "/rest/v1/chunks", other, "return=minimal", ins)),
+        ("a duplicate index row: refused as a duplicate", lambda s: s == 409,
+         call("POST", "/rest/v1/sessions", row, "return=minimal", ins)),
+        ("ignore-duplicates: refused, since ON CONFLICT needs SELECT", lambda s: s in (401, 403),
+         call("POST", "/rest/v1/chunks", other, "resolution=ignore-duplicates,return=minimal", ins)),
+        ("select chunks: refused", lambda s: s in (401, 403), call("GET", "/rest/v1/chunks" + q + "&select=data", k=ins)),
+        ("select sessions: refused", lambda s: s in (401, 403), call("GET", "/rest/v1/sessions" + q + "&select=entry", k=ins)),
+        ("insert with return=representation: refused", lambda s: s in (401, 403),
+         call("POST", "/rest/v1/chunks", dict(chunk, chunk_id=secrets.token_hex(32)), "return=representation", ins)),
+        ("update a chunk: refused", lambda s: s in (401, 403),
+         call("PATCH", "/rest/v1/chunks" + q, {"data": "changed"}, "return=minimal", ins)),
+        ("delete a chunk: refused", lambda s: s in (401, 403), call("DELETE", "/rest/v1/chunks" + q, k=ins)),
+        ("update an index row: refused", lambda s: s in (401, 403),
+         call("PATCH", "/rest/v1/sessions" + q, {"version": 9}, "return=minimal", ins)),
+        ("delete an index row: refused", lambda s: s in (401, 403), call("DELETE", "/rest/v1/sessions" + q, k=ins)),
+        ("insert a score: refused", lambda s: s in (401, 403),
+         call("POST", "/rest/v1/scores", {"session_id": sid, "step": "x", "skill": "x", "grader": "probe",
+                                          "verdict": "pass"}, "return=minimal", ins)),
+        ("select scores: refused", lambda s: s in (401, 403), call("GET", "/rest/v1/scores?select=*", k=ins)),
+    ]
+    if read:
+        checks.append(("read key: the probe chunk still holds its first bytes",
+                       lambda s: s == 200, call("GET", "/rest/v1/chunks" + q + "&select=data", k=read)))
+    failed = 0
+    for name, good, (status, body) in checks:
+        if name.startswith("read key") and status == 200 and json.loads(body) != [{"data": "first"}]:
+            status = f"200 but {body}"
+            good = lambda s: False  # noqa: E731
+        verdict = "ok  " if good(status) else "FAIL"
+        failed += verdict == "FAIL"
+        print(f"{verdict} {name}: HTTP {status} {body[:160].strip()}")
+    if not read:
+        print("note: no read key here, so the probe chunk was not read back")
+    print(f"probe session {sid}: {len(checks) - failed} passed, {failed} failed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
