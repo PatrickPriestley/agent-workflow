@@ -29,6 +29,8 @@
 # they name directories; an after: must name an earlier task). The agent's JSON goes to
 # <worktrees>/<id>/<name>.agent.json and its
 # `result` to <name>.pr-body.md, with the Change: line put first when the agent left it out.
+# The agent runs with AGENT_TRANSCRIPTS_PARENT set to CLAUDE_CODE_SESSION_ID, the session
+# running dispatch (unset when there is none), so `transcripts archive` ties each child to it.
 # Then dispatch commits `done: true` under the task in the
 # record (so the base reads it once the branch merges), runs record-check and, when a run
 # command is given (--red-run, or git config redcheck.run), red-check, and pushes the branch
@@ -224,7 +226,10 @@ run_task() {  # NAME BRANCH N
   brief "$name" "$branch" "$item" > "$dir.brief.md"
   cmd="${agent:-$(default_agent)}"
   echo "dispatch: $name: running the agent in $dir on $branch"
-  (cd "$dir" && eval "$cmd") < "$dir.brief.md" > "$dir.agent.json" 2> "$dir.agent.err"; rc=$?
+  # transcripts: the child's index entry names this session as its parent; with no session id
+  # here, a value inherited from elsewhere is not passed on
+  (cd "$dir" && if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then export AGENT_TRANSCRIPTS_PARENT="$CLAUDE_CODE_SESSION_ID"; else unset AGENT_TRANSCRIPTS_PARENT; fi
+   eval "$cmd") < "$dir.brief.md" > "$dir.agent.json" 2> "$dir.agent.err"; rc=$?
   python3 - "$dir.agent.json" "$dir.pr-body.md" <<'PY' || { echo "dispatch: $name: the agent's output in $dir.agent.json is not the JSON claude -p prints (exit $rc; stderr in $dir.agent.err)" >&2; failed=1; return; }
 import json, sys
 d = json.load(open(sys.argv[1]))

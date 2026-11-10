@@ -7,6 +7,7 @@ approvers: [Patrick Priestley, 2026-11-10]
 plugin: plugins/change-record
 tasks:
   - name: capture
+    done: true
   - name: store
     after: capture
   - name: grade
@@ -37,8 +38,10 @@ Capture:
   (12 MB), the two real `dispatch` sessions and 156 eval-runner sessions (23 MB); all are lost
   when the container is reclaimed. A copy was sent to the owner on 2026-11-09. The repository
   is private and has no `.claude/settings.json` today.
-- Assumed: Claude Code deletes local transcripts older than `cleanupPeriodDays` (30 by
-  default). To be checked in task 1.
+- Exact source (the Claude Code 2.1.321 binary's settings schema, checked in task 1): "Number
+  of days to retain chat transcripts before automatic cleanup (default: 30). Minimum 1", and
+  "Cleanup deletes data only on this computer". A container records its last cleanup in
+  `~/.claude/.last-cleanup`.
 
 Identity, across sessions and machines:
 
@@ -52,8 +55,15 @@ Identity, across sessions and machines:
   `origin` is `https://github.com/PatrickPriestley/agent-workflow`, while its path is
   `/home/user/agent-workflow`, which differs from a laptop's checkout of the same repository.
 - Verified against the real system: the compaction appended a `compact_boundary` record and
-  kept every earlier line in the file. Assumed: transcripts are only ever appended to, never
-  rewritten. To be checked in task 1, since chunked upload depends on it.
+  kept every earlier line in the file. Verified against the real system (Claude Code 2.1.321,
+  task 1): a `claude -p` session, then `--resume` with a prompt, `--resume` with `/compact`, and
+  `--resume` again kept one file and one `session_id`, and each snapshot (22, 30, 48, 63 lines)
+  was a byte prefix of the next.
+- Verified against the real system (task 1): a cloud session's environment carries
+  `CLAUDE_CODE_SESSION_ID`, equal to its transcript's file name and `sessionId`, and `claude -p`
+  here records `entrypoint` `remote`. Exact source (the binary): subagent transcripts live at
+  `<project dir>/<sessionId>/subagents/[<subdir>/]agent-<id>.jsonl`, and a command hook takes
+  `timeout` (seconds) and `async`.
 - Exact source: git does not store file modification times, and Skill Doctor's collector
   filters transcripts by modification time, so files taken from a git store need their times
   set from their own timestamps before Skill Doctor reads them.
@@ -263,6 +273,32 @@ Priestley, 2026-11-10.
   flags. Reporting its plugin-name gap upstream is left to the owner.
 - All of it lives in the `change-record` plugin (`bin/transcripts`), leaving the
   `agent-workflow` plugin as it is.
+- (Task 1.) The local archive is parts plus index files: `parts/<sessionId>/<stream>/g<G>-<N>.jsonl`
+  for each run's new complete lines, `sessions/<sessionId>.json`, and a `locks/<sessionId>`
+  directory per run, taken over after 60 s. Only complete lines are taken, so a line still
+  being written waits; a transcript that stops extending what was archived starts a new
+  generation with a full copy. Rejected: copying the whole file at each stop, which is what E
+  rejects for the store, and appending to one archive file, which a crash mid-write corrupts.
+- (Task 1.) The hooks are synchronous with a 10 s timeout and `|| true`, not `async`: archiving
+  is a local copy of the new bytes, about 50 ms, and an async `Stop` hook could still be running
+  when `SessionEnd` starts. The background send of the Decision above belongs to task 2.
+- (Task 1.) A record is tied to a session only from the session's own acts: a Write or Edit of
+  `docs/changes/*.md`, or a `Change:` line in its own text, never in a prompt or a tool result
+  (a `dispatch` brief carries a literal `Change:` line). When the written and the named records
+  disagree, or there are several, the entry has none. Rejected: the first record mentioned,
+  which ties a session that read another record to it.
+- (Task 1.) Source is eval (cwd under `/claude-eval-`) before dispatch (a parent set) before
+  cloud (`CLAUDE_CODE_REMOTE` or entrypoint `remote`) before local; the parent is taken at the
+  first stop only and never equal to the session itself, and `dispatch` unsets it when it has
+  no session id of its own, so a stale value is not passed on. A skill counts as invoked through
+  the Skill tool or a Read of its `SKILL.md`, since a session without the plugin installed
+  reads the file instead.
+- (Task 1.) The archive refuses a directory inside any git working tree (R5's local half,
+  taken early because task 1 is where the archive is first written).
+- (Task 1, review.) `transcripts` runs under umask 077, so every folder and file it creates in
+  the archive is open to its owner only, as Claude Code keeps `~/.claude/projects` (0700
+  folders, 0600 files). Rejected: the user's umask, under which a common 022 makes unredacted
+  transcripts readable by every local user.
 
 ## Tasks
 
@@ -305,3 +341,64 @@ overwrite each other's chunks or index rows, whether the hooks' key can read or 
 never-run command, and whether a session can be tied to the wrong record or parent.
 
 ## Outcome
+
+### Task 1: capture (branch `2026-11-09-skill-transcripts/capture`)
+
+Shipped: `plugins/change-record/bin/transcripts` (`archive`, `import`), the opt-in hooks in
+`.claude/settings.json`, `AGENT_TRANSCRIPTS_PARENT` in `dispatch`, `bin/transcripts.test.sh`
+(78 assertions: R1, R2, R3, R6 and the hook config, four added in review for a transcript cut
+below one line and for the archive's permissions) and two new `dispatch` assertions, a README
+section, and the suite in `.github/workflows/test.yml`. The tests failed first on their
+assertions (62 of 69, exit 127 with no parts and no entry; and `[stale]` where the parent id
+was expected). Every guard was broken by hand and a test failed; the two first survivors (a
+quoted `Change:` line in a user text block, an eval run inside a checkout) got fixtures.
+
+Not shipped (later tasks): sending to the database, redaction, `materialize`, grading. The
+`tool-results/` files beside a transcript (large outputs the model saw a preview of) are not
+archived. Imported sessions carry no parent and no commit. Not run for real: a `dispatch`
+child with the hook, since that costs a full agent run; the variable is covered by the test.
+
+Real use, in this cloud container. Main path, a `claude -p` session in this repository with
+the hook in place:
+
+    $ AGENT_TRANSCRIPTS=$S/archive claude -p --output-format json "Reply with the word ok."
+    rc=0  sid=e5ca3179-0aab-45c0-aedb-f6baa498e4a9
+    $ find $S/archive -type f
+    archive/sessions/e5ca3179-0aab-45c0-aedb-f6baa498e4a9.json
+    archive/parts/e5ca3179-0aab-45c0-aedb-f6baa498e4a9/main/g1-000001.jsonl   (Stop)
+    archive/parts/e5ca3179-0aab-45c0-aedb-f6baa498e4a9/main/g1-000002.jsonl   (SessionEnd)
+    $ cat archive/parts/e5ca3179-.../main/g1-*.jsonl | cmp - ~/.claude/projects/-home-user-agent-workflow/e5ca3179-....jsonl
+    parts rejoin to the transcript
+    $ cat archive/sessions/e5ca3179-0aab-45c0-aedb-f6baa498e4a9.json   (abridged)
+    "source": "cloud",
+    "machine": {"id": null, "cloud_container": "container_014ftvxVWFTziN4BpstuEiWF", "cloud_session": "cse_01QoTuvL7MqCiwcVSuPYChLw"},
+    "repository": "github.com/patrickpriestley/agent-workflow",
+    "first_stop": {"branch": "2026-11-09-skill-transcripts/capture", "commit": "f914002dc75c65074674ee17fb6a385a6a913b73"},
+    "first_timestamp": "2026-11-10T01:55:17.886Z", "last_timestamp": "2026-11-10T01:55:22.474Z",
+    "streams": {"main": {"generation": 1, "parts": 2, "lines": 24, "bytes": 138909, "sha256": "1219f1ce..."}}
+
+Error path, an unwritable archive: the session is unaffected, and the hook command as
+configured, run by hand to see its stderr, exits 0 and the next stop archives the session:
+
+    $ printf x > $S/afile; AGENT_TRANSCRIPTS=$S/afile/archive claude -p --output-format json "Reply with the word ok."
+    rc=0  result= ok is_error= False session c3668692-2106-41a7-a9cb-c81c307f606a
+    hook command: "$CLAUDE_PROJECT_DIR"/plugins/change-record/bin/transcripts archive || true
+    $ (unwritable archive)
+    transcripts: [Errno 20] Not a directory: '.../scratchpad/afile/archive'; nothing archived this time, the lines are kept for the next stop
+    exit 0
+    $ (next stop, archive writable)
+    exit 0
+    g1-000001.jsonl
+    $ (no archive set)
+    exit 0
+    $ (this session, 4b2c2a9a)
+    real	0m0.048s
+    cloud github.com/patrickpriestley/agent-workflow 2026-11-10T01:43:56.203Z 2026-11-10T01:55:53.234Z 179
+
+Import, twice, on this container's `~/.claude/projects` (three sessions here, one probe
+session in a scratch directory):
+
+    $ AGENT_TRANSCRIPTS=$S/imp plugins/change-record/bin/transcripts import
+    transcripts: imported 3, unchanged 0, skipped 1 (not in scope); archive .../scratchpad/imp
+    $ AGENT_TRANSCRIPTS=$S/imp plugins/change-record/bin/transcripts import
+    transcripts: imported 0, unchanged 3, skipped 1 (not in scope); archive .../scratchpad/imp

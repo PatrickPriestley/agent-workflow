@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""transcripts: keep agent session transcripts in a local archive, one index entry per session.
+
+  transcripts archive [--transcript PATH]
+  transcripts import [--claude-home DIR] [--repo URL]... [--evals]
+
+archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
+transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
+complete lines, and those of the session's subagent transcripts, to the archive named by
+AGENT_TRANSCRIPTS as numbered parts, then writes the session's index entry. With
+AGENT_TRANSCRIPTS unset it does nothing. It never fails a session: every problem is a message
+on stderr and exit 0, and the lines not archived are archived at the next stop.
+
+import archives the sessions already under <claude-home>/projects (default ~/.claude) whose
+working directory is a checkout of a repository in scope: the current directory's repository,
+or each --repo URL. --evals also takes eval-runner sessions. Running it again adds only what is
+new. It needs AGENT_TRANSCRIPTS set.
+
+The archive:
+  sessions/<sessionId>.json                    the index entry (schema 1, below)
+  parts/<sessionId>/main/g<G>-<NNNNNN>.jsonl   the transcript's lines, part by part
+  parts/<sessionId>/subagents/<agent>/...      each subagent transcript, the same way
+  locks/<sessionId>/                           held while one run archives the session
+
+A session is keyed by its transcript's sessionId. A transcript that is no longer an extension of
+what was archived (Claude Code only appends, so this should not happen) starts generation G+1
+with a full copy. Index entry fields: source (local, cloud, dispatch, eval), machine (a random
+id kept in ${XDG_CONFIG_HOME:-~/.config}/agent-transcripts/machine-id; in the cloud the
+container id and the cloud session id instead), repository (the normalised origin URL),
+first_stop and last_stop (branch and commit; import knows only the branch), first_timestamp and
+last_timestamp (from the transcript's own lines), skills (each skill invoked through the Skill
+tool or read as a SKILL.md, with the git blob hash of its file when first seen), records
+(written by Write or Edit, and named on a Change: line in the session's own text) and record
+(the one both agree on, else the only one there is, else none), parent_session (from
+AGENT_TRANSCRIPTS_PARENT, which dispatch sets for its children, at the first stop only), streams
+(per transcript: generation, parts, lines, bytes, sha256 of what is archived), sent (filled when
+a store is added) and redaction_version (none: the local archive is not redacted).
+"""
+import glob
+import hashlib
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+import time
+from urllib.parse import urlsplit
+
+SCHEMA = 1
+STALE_LOCK = 60  # seconds; the hooks time out after 10
+HOME = os.path.expanduser("~")
+
+
+class Busy(Exception):
+    pass
+
+
+def say(msg):
+    print("transcripts: " + msg, file=sys.stderr)
+
+
+def git(cwd, *args):
+    if not cwd or not os.path.isdir(cwd):
+        return None
+    try:
+        r = subprocess.run(["git", "-C", cwd] + list(args), capture_output=True, text=True, timeout=5,
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def normalise_url(url):
+    """host/owner/name, lower case, whatever the scheme, credentials, port or .git suffix."""
+    if not url:
+        return None
+    url = url.strip()
+    m = re.match(r"^(?:[^@/]+@)?([^:/]+):(?!//)(.+)$", url)  # scp-like: git@host:owner/name
+    if m and "://" not in url:
+        host, path = m.group(1), m.group(2)
+    elif "://" in url:
+        u = urlsplit(url)
+        host, path = (u.hostname or ""), u.path
+        if host in ("127.0.0.1", "localhost") and path.startswith("/git/"):
+            host, path = "github.com", path[len("/git"):]  # the cloud's local git proxy
+    else:
+        return os.path.abspath(url).lower()
+    path = path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    return (host + "/" + path.strip("/")).lower()
+
+
+def repository(cwd):
+    return normalise_url(git(cwd, "remote", "get-url", "origin"))
+
+
+def machine():
+    if os.environ.get("CLAUDE_CODE_REMOTE") == "true":
+        return {"id": None, "cloud_container": os.environ.get("CLAUDE_CODE_CONTAINER_ID") or None,
+                "cloud_session": os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID") or None}
+    d = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "agent-transcripts")
+    p = os.path.join(d, "machine-id")
+    mid = None
+    try:
+        with open(p) as f:
+            mid = f.read().strip() or None
+    except OSError:
+        try:
+            os.makedirs(d, exist_ok=True)
+            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(secrets.token_hex(16) + "\n")
+        except FileExistsError:
+            pass
+        except OSError as e:
+            say(f"cannot write the machine id at {p} ({e}); the entry has none")
+        try:
+            with open(p) as f:
+                mid = f.read().strip() or None
+        except OSError:
+            pass
+    return {"id": mid, "cloud_container": None, "cloud_session": None}
+
+
+def is_eval(cwd):
+    return bool(cwd) and "/claude-eval-" in cwd
+
+
+def inside_work_tree(path):
+    p = os.path.abspath(path)
+    while True:
+        if os.path.exists(os.path.join(p, ".git")):
+            return p
+        up = os.path.dirname(p)
+        if up == p:
+            return None
+        p = up
+
+
+def write_atomic(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def blob_hash(path):
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        return None
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def find_skill_file(name, root):
+    plugin, _, skill = name.rpartition(":")
+    cands = []
+    if plugin:
+        if root:
+            cands.append(os.path.join(root, "plugins", plugin, "skills", skill, "SKILL.md"))
+        found = [p for p in glob.glob(os.path.join(HOME, ".claude", "plugins", "**", "skills", skill, "SKILL.md"),
+                                      recursive=True) if f"/{plugin}/" in p]
+        cands += sorted(found, key=lambda p: -os.path.getmtime(p))
+    else:
+        if root:
+            cands.append(os.path.join(root, ".claude", "skills", skill, "SKILL.md"))
+        cands.append(os.path.join(HOME, ".claude", "skills", skill, "SKILL.md"))
+    return next((c for c in cands if os.path.isfile(c)), None)
+
+
+def show_path(path, root):
+    if root and os.path.abspath(path).startswith(root.rstrip("/") + "/"):
+        return os.path.relpath(path, root)
+    return "~" + path[len(HOME):] if path.startswith(HOME + "/") else path
+
+
+RECORD = re.compile(r"(?:^|/)(docs/changes/(?!README\.md$)[^/\s]+\.md)$")
+CHANGE_LINE = re.compile(r"^Change: (docs/changes/[^/\s]+\.md)[ \t]*$", re.M)
+SKILL_FILE = re.compile(r"(?:/plugins/([^/]+))?/skills/([^/]+)/SKILL\.md$")
+
+
+def scan(lines, entry, cwd, root):
+    """Fold timestamps, skills and records from new transcript lines into the entry."""
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        ts = d.get("timestamp")
+        if isinstance(ts, str) and ts:
+            if not entry["first_timestamp"] or ts < entry["first_timestamp"]:
+                entry["first_timestamp"] = ts
+            if not entry["last_timestamp"] or ts > entry["last_timestamp"]:
+                entry["last_timestamp"] = ts
+        if d.get("type") != "assistant":
+            continue  # tool results and user text can quote anything; only the session's own acts count
+        content = (d.get("message") or {}).get("content")
+        for b in content if isinstance(content, list) else []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text":
+                for m in CHANGE_LINE.finditer(b.get("text") or ""):
+                    add(entry["records"]["change_line"], m.group(1))
+            if b.get("type") != "tool_use" or not isinstance(b.get("input"), dict):
+                continue
+            name, inp = b.get("name"), b["input"]
+            fp = inp.get("file_path") or inp.get("notebook_path") or ""
+            if name == "Skill" and isinstance(inp.get("skill"), str):
+                skill(entry, inp["skill"], "Skill", find_skill_file(inp["skill"], root), root)
+            elif name == "Read" and SKILL_FILE.search(fp):
+                m = SKILL_FILE.search(fp)
+                full = fp if os.path.isabs(fp) else os.path.join(cwd or "", fp)
+                skill(entry, (m.group(1) + ":" if m.group(1) else "") + m.group(2), "Read", full, root)
+            elif name in ("Write", "Edit", "MultiEdit", "NotebookEdit") and RECORD.search(fp):
+                add(entry["records"]["written"], RECORD.search(fp).group(1))
+
+
+def add(lst, v):
+    if v not in lst:
+        lst.append(v)
+
+
+def skill(entry, name, how, path, root):
+    if any(s["name"] == name for s in entry["skills"]):
+        return
+    found = path if path and os.path.isfile(path) else None
+    entry["skills"].append({"name": name, "how": how, "file": show_path(found, root) if found else None,
+                            "blob": blob_hash(found) if found else None})
+
+
+def choose_record(r):
+    both = [x for x in r["written"] if x in r["change_line"]]
+    if len(both) == 1:
+        return both[0]
+    if both or (r["written"] and r["change_line"]):
+        return None  # they disagree, or name several: better no record than the wrong one
+    one = r["written"] or r["change_line"]
+    return one[0] if len(one) == 1 else None
+
+
+def head_fields(path):
+    sid = cwd = branch = None
+    entrypoint = None
+    try:
+        with open(path, "rb") as f:
+            for i, raw in enumerate(f):
+                if i > 200 or (sid and cwd):
+                    break
+                try:
+                    d = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(d, dict):
+                    sid = sid or d.get("sessionId")
+                    cwd = cwd or d.get("cwd")
+                    branch = branch or d.get("gitBranch")
+                    entrypoint = entrypoint or d.get("entrypoint")
+    except OSError:
+        pass
+    return sid, cwd, branch, entrypoint
+
+
+def last_branch(data):
+    for raw in reversed(data.splitlines()[-200:]):
+        m = re.search(rb'"gitBranch":"([^"]*)"', raw)
+        if m:
+            return m.group(1).decode("utf-8", "replace")
+    return None
+
+
+class Lock:
+    def __init__(self, path):
+        self.path = path
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        try:
+            os.mkdir(self.path)
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(self.path) < STALE_LOCK:
+                    raise Busy(f"another run is archiving this session ({self.path})")
+                os.rmdir(self.path)
+                os.mkdir(self.path)
+            except FileNotFoundError:
+                os.mkdir(self.path)
+        return self
+
+    def __exit__(self, *a):
+        try:
+            os.rmdir(self.path)
+        except OSError:
+            pass
+
+
+def archive_session(ar, path, hook_cwd=None, imported=False):
+    """Archive one transcript and its subagents; returns the number of new parts written."""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"no transcript at {path}")
+    sid, line_cwd, first_branch, entrypoint = head_fields(path)
+    sid = sid or os.path.basename(path)[:-len(".jsonl")]
+    if not re.match(r"^[A-Za-z0-9._-]+$", sid) or sid.startswith("."):
+        raise ValueError(f"session id {sid!r} in {path} is not a plain name")
+    cwd = hook_cwd or line_cwd or os.getcwd()
+    root = git(cwd, "rev-parse", "--show-toplevel")
+    with Lock(os.path.join(ar, "locks", sid)):
+        ep = os.path.join(ar, "sessions", sid + ".json")
+        try:
+            entry = json.load(open(ep))
+        except FileNotFoundError:
+            entry = None
+        if entry is None:
+            parent = None if imported else (os.environ.get("AGENT_TRANSCRIPTS_PARENT") or None)
+            if parent == sid:
+                parent = None
+            m = machine()
+            cloud = os.environ.get("CLAUDE_CODE_REMOTE") == "true" or entrypoint == "remote"
+            entry = {
+                "schema": SCHEMA, "session_id": sid,
+                "source": "eval" if is_eval(cwd) else "dispatch" if parent else "cloud" if cloud else "local",
+                "machine": m, "repository": None, "first_stop": None, "last_stop": None,
+                "first_timestamp": None, "last_timestamp": None, "skills": [],
+                "records": {"written": [], "change_line": []}, "record": None,
+                "parent_session": parent, "streams": {}, "sent": {}, "redaction_version": None,
+            }
+        entry["repository"] = entry["repository"] or repository(cwd)
+
+        streams = [("main", path)]
+        sub = os.path.join(path[:-len(".jsonl")], "subagents")
+        for p in sorted(glob.glob(os.path.join(sub, "**", "agent-*.jsonl"), recursive=True)):
+            streams.append(("subagents/" + os.path.relpath(p, sub)[:-len(".jsonl")], p))
+        new_parts = 0
+        main_data = b""
+        for name, p in streams:
+            data = open(p, "rb").read()
+            if name == "main":
+                main_data = data
+            cut = data[:data.rfind(b"\n") + 1]  # a line still being written waits for the next stop
+            st = entry["streams"].get(name) or {"generation": 1, "parts": 0, "lines": 0, "bytes": 0,
+                                                "sha256": hashlib.sha256(b"").hexdigest()}
+            if len(cut) < st["bytes"] or hashlib.sha256(cut[:st["bytes"]]).hexdigest() != st["sha256"]:
+                say(f"{p} is not an extension of what was archived; archiving it whole as generation {st['generation'] + 1}")
+                st = {"generation": st["generation"] + 1, "parts": 0, "lines": 0, "bytes": 0,
+                      "sha256": hashlib.sha256(b"").hexdigest()}
+            new = cut[st["bytes"]:]
+            if new:
+                n = st["parts"] + 1
+                write_atomic(os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], n)), new)
+                lines = new.splitlines()
+                scan(lines, entry, cwd, root)
+                st.update(parts=n, lines=st["lines"] + len(lines), bytes=len(cut), sha256=hashlib.sha256(cut).hexdigest())
+                new_parts += 1
+            entry["streams"][name] = st
+        if imported:
+            stop = {"branch": last_branch(main_data) or first_branch, "commit": None}
+            first = {"branch": first_branch, "commit": None}
+        else:
+            stop = {"branch": git(cwd, "rev-parse", "--abbrev-ref", "HEAD"), "commit": git(cwd, "rev-parse", "HEAD")}
+            first = stop
+        entry["first_stop"] = entry["first_stop"] or first
+        entry["last_stop"] = stop
+        entry["record"] = choose_record(entry["records"])
+        write_atomic(ep, (json.dumps(entry, indent=2) + "\n").encode())
+    return new_parts
+
+
+def archive_dir():
+    ar = os.environ.get("AGENT_TRANSCRIPTS") or ""
+    if not ar:
+        return None
+    ar = os.path.abspath(os.path.expanduser(ar))
+    tree = inside_work_tree(ar)
+    if tree:
+        raise PermissionError(f"AGENT_TRANSCRIPTS={ar} is inside the working tree of {tree}; "
+                              "put the archive outside any repository so transcripts are never committed")
+    return ar
+
+
+def cmd_archive(args):
+    transcript = None
+    if args[:1] == ["--transcript"] and len(args) == 2:
+        transcript = args[1]
+    elif args:
+        say("usage: transcripts archive [--transcript PATH]")
+        return 0
+    try:
+        ar = archive_dir()
+        if ar is None:
+            return 0
+        cwd = None
+        if transcript is None:
+            raw = sys.stdin.read()
+            try:
+                hook = json.loads(raw)
+                transcript, cwd = hook["transcript_path"], hook.get("cwd")
+            except (ValueError, KeyError, TypeError) as e:
+                say(f"the hook input is not JSON with a transcript_path ({e}); nothing archived")
+                return 0
+        archive_session(ar, os.path.abspath(os.path.expanduser(transcript)), cwd)
+    except Busy as e:
+        say(f"{e}; the lines are kept for the next stop")
+    except Exception as e:  # never fail the session
+        say(f"{e}; nothing archived this time, the lines are kept for the next stop")
+    return 0
+
+
+def cmd_import(args):
+    home, repos, evals = os.path.join(HOME, ".claude"), [], False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--claude-home", "--repo") and i + 1 < len(args):
+            if a == "--claude-home":
+                home = args[i + 1]
+            else:
+                repos.append(normalise_url(args[i + 1]))
+            i += 2
+        elif a == "--evals":
+            evals, i = True, i + 1
+        else:
+            say("usage: transcripts import [--claude-home DIR] [--repo URL]... [--evals]")
+            return 2
+    try:
+        ar = archive_dir()
+    except PermissionError as e:
+        say(str(e))
+        return 2
+    if ar is None:
+        say("AGENT_TRANSCRIPTS is not set; set it to the archive directory to import into")
+        return 2
+    if not repos:
+        here = repository(os.getcwd())
+        if not here:
+            say("the current directory has no origin remote; run import in a checkout or pass --repo URL")
+            return 2
+        repos = [here]
+    imported = unchanged = skipped = failed = 0
+    for path in sorted(glob.glob(os.path.join(home, "projects", "*", "*.jsonl"))):
+        _, cwd, _, _ = head_fields(path)
+        if not (evals and is_eval(cwd)) and (is_eval(cwd) or repository(cwd) not in repos):
+            skipped += 1
+            continue
+        try:
+            if archive_session(ar, path, cwd, imported=True):
+                imported += 1
+            else:
+                unchanged += 1
+        except Exception as e:
+            say(f"{path}: {e}")
+            failed += 1
+    print(f"transcripts: imported {imported}, unchanged {unchanged}, skipped {skipped} (not in scope)"
+          + (f", failed {failed}" if failed else "") + f"; archive {ar}")
+    return 1 if failed else 0
+
+
+def main(argv):
+    os.umask(0o077)  # the archive is as private as Claude Code's own transcripts: owner only
+    if argv[:1] == ["archive"]:
+        return cmd_archive(argv[1:])
+    if argv[:1] == ["import"]:
+        return cmd_import(argv[1:])
+    print(__doc__.strip().split("\n\n")[0], file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

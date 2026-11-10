@@ -404,4 +404,17 @@ repo onbasefull; record docs/changes/2026-11-08-t.md 2 approved "$ONBASEFULL"; c
 out="$(dispatch docs/changes/2026-11-08-t.md --dry-run)"; rc=$?
 assert_eq 2 "$rc"
 
+# Transcripts: each child is told which session dispatched it, and a stale value is not passed on.
+it "the agent runs with AGENT_TRANSCRIPTS_PARENT set to the dispatching session's id, or unset without one"
+printf '#!/usr/bin/env bash\nprintf "[%%s]" "${AGENT_TRANSCRIPTS_PARENT-unset}" >> "%s/parent-seen"\nexec "%s/agent.sh"\n' "$TMPROOT" "$TMPROOT" > "$TMPROOT/parent.sh"; chmod +x "$TMPROOT/parent.sh"
+ONE=$'tasks:\n  - name: alpha\n'
+repo parent; record docs/changes/2026-11-08-t.md 2 approved "$ONE"; commit_main "docs(change): t"
+rm -f "$TMPROOT/parent-seen"
+out="$(CLAUDE_CODE_SESSION_ID=sess-dispatcher AGENT_TRANSCRIPTS_PARENT=stale dispatch docs/changes/2026-11-08-t.md --no-push --agent "$TMPROOT/parent.sh")"; rc=$?
+assert_eq 0 "$rc"; assert_eq "[sess-dispatcher]" "$(cat "$TMPROOT/parent-seen" 2>&1)"
+repo parent2; record docs/changes/2026-11-08-t.md 2 approved "$ONE"; commit_main "docs(change): t"
+rm -f "$TMPROOT/parent-seen"
+out="$(env -u CLAUDE_CODE_SESSION_ID AGENT_TRANSCRIPTS_PARENT=stale bash "$D" docs/changes/2026-11-08-t.md --no-push --agent "$TMPROOT/parent.sh" --worktrees "$WT" 2>&1)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "[unset]" "$(cat "$TMPROOT/parent-seen" 2>&1)"
+
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

@@ -145,7 +145,45 @@ runs, since the brief would otherwise carry every task. Opening the PR
 is left to whoever runs it, with the saved description. `--agent CMD` replaces the agent
 command, which is how its tests drive a fake agent. The agent runs on your credential with
 edit permission and shell access in that worktree, the same trust as running the skill
-yourself with those tools allowed.
+yourself with those tools allowed. Each agent runs with `AGENT_TRANSCRIPTS_PARENT` set to the
+session running `dispatch` (`CLAUDE_CODE_SESSION_ID`), or unset when there is none, so the
+child's transcript entry names its parent.
+
+### Transcripts
+
+    transcripts archive [--transcript PATH]
+    transcripts import [--claude-home DIR] [--repo URL]... [--evals]
+
+`transcripts` keeps agent session transcripts in a local archive so they can be graded later
+(record `docs/changes/2026-11-09-skill-transcripts.md`; sending to a shared store and grading
+are later tasks of it). This repository's `.claude/settings.json` runs `transcripts archive`
+on `Stop` and `SessionEnd`, in this checkout and in every worktree `dispatch` cuts. It is
+opt-in: nothing happens unless `AGENT_TRANSCRIPTS` names an archive directory, for example
+in your shell profile or in `.claude/settings.local.json`:
+
+    { "env": { "AGENT_TRANSCRIPTS": "/Users/you/agent-transcripts" } }
+
+The archive must be outside every git working tree (it is refused otherwise, so transcripts
+are never committed); it is not redacted, so `transcripts` creates it open to you only
+(umask 077), as Claude Code keeps its own transcripts. At each stop the hook adds the
+transcript's new complete lines, and those of the session's subagents, as numbered parts under
+`parts/<sessionId>/`, and writes `sessions/<sessionId>.json`: source (local, cloud, dispatch,
+eval), machine (a random id kept in `~/.config/agent-transcripts/machine-id`; in the cloud the
+container and cloud session ids), repository (the origin URL, normalised, so a laptop and a
+cloud checkout agree), branch and commit at the first and last stop, the first and last
+timestamp in the transcript, the skills invoked with each skill file's git blob hash, the
+record the session wrote or named on its `Change:` line (none when they disagree), the
+parent session for a `dispatch` child, and per transcript the lines, bytes and sha256
+archived. The script's header lists every field. The hook never fails or holds up a session:
+any problem is a line on stderr and exit 0 (Claude Code does not show it under `claude -p`;
+run the command by hand to see it), it runs in about 50 ms on a 180-line transcript and times
+out after 10 s, and what it could not archive is archived at the next stop.
+
+`transcripts import` registers the sessions already under `~/.claude/projects` (Claude Code
+deletes them after `cleanupPeriodDays`, 30 by default) whose working directory is a checkout
+of this repository, or of each `--repo URL`; `--evals` adds eval-runner sessions. Running it
+again adds only what is new. Imported sessions have no `dispatch` parent and no commit, since
+no stop was seen.
 
 ## What is not here yet
 
@@ -182,8 +220,9 @@ code changes, and a tier 0 declaration for trivial changes.
     bash plugins/change-record/bin/red-check.test.sh
     bash plugins/change-record/bin/record-check.test.sh
     bash plugins/change-record/bin/dispatch.test.sh
+    bash plugins/change-record/bin/transcripts.test.sh
 
-Both build real git repositories in a scratch directory and need bash, git and python3 (the
+They build real git repositories in a scratch directory and need bash, git and python3 (the
 `--json` assertions parse the documents with it; the scripts themselves fall back to a shell
-encoder when python3 is absent). Every guard in both scripts was mutation-checked: each was
+encoder when python3 is absent). Every guard in these scripts was mutation-checked: each was
 broken in turn and a test failed.
