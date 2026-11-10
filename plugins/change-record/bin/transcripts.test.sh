@@ -16,7 +16,7 @@ lacks() { printf '%s' "$1" | grep -qF -- "$2" && bad "unexpected [$2] in: $(prin
 json() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"d": d}))' "$@" 2>&1; }
 
 # Isolate the machine: no cloud variables, a config dir holding a known machine id.
-unset CLAUDE_CODE_REMOTE CLAUDE_CODE_REMOTE_SESSION_ID CLAUDE_CODE_CONTAINER_ID AGENT_TRANSCRIPTS AGENT_TRANSCRIPTS_PARENT
+unset CLAUDE_CODE_REMOTE CLAUDE_CODE_REMOTE_SESSION_ID CLAUDE_CODE_CONTAINER_ID AGENT_TRANSCRIPTS AGENT_TRANSCRIPTS_PARENT AGENT_TRANSCRIPTS_URL
 export XDG_CONFIG_HOME="$TMPROOT/config"
 mkdir -p "$XDG_CONFIG_HOME/agent-transcripts"; printf 'machine-0001\n' > "$XDG_CONFIG_HOME/agent-transcripts/machine-id"
 

@@ -158,10 +158,13 @@ child's transcript entry names its parent.
     transcripts redact < lines
     transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store]
     transcripts grade --transcript FILE [--cwd DIR]
+    transcripts judge [DIR] [--session ID]... [--repo-dir DIR] [--judge claude|opencode] [--limit N] [--store] [--verbose]
+    transcripts judge --transcript FILE --record FILE [--judge claude|opencode]
+    transcripts report [DIR] [--store]
 
 `transcripts` keeps agent session transcripts in a local archive, sends them to a shared store
 and grades them against the `change` skill's steps (record
-`docs/changes/2026-11-09-skill-transcripts.md`; the judge and the report are a later task of it). This repository's `.claude/settings.json` runs `transcripts archive`
+`docs/changes/2026-11-09-skill-transcripts.md`). This repository's `.claude/settings.json` runs `transcripts archive`
 on `Stop` and `SessionEnd`, in this checkout and in every worktree `dispatch` cuts. It is
 opt-in: nothing happens unless `AGENT_TRANSCRIPTS` names an archive directory, for example
 in your shell profile or in `.claude/settings.local.json`:
@@ -241,6 +244,38 @@ current directory by default), which must hold the session's commits. Rows go to
 with the read key. `--transcript FILE` grades one file without commits and prints the rows,
 as `evals/cases.test.cjs` does to run the eval graders' fixtures through the same code.
 
+**The judge.** Two steps no regex settles are judged by a model, after `grade`: whether the
+record's Decisions name a rejected alternative (`decisions-alternative`) and whether its
+Outcome quotes real output (`outcome-real-output`). `transcripts judge` asks a fresh Claude
+Haiku session each question three times (`claude -p --model haiku --output-format json --tools
+"" --no-session-persistence --setting-sources ""`, in an empty scratch directory with no
+`AGENT_TRANSCRIPTS`, so the judge's own session is neither saved nor captured), only for
+sessions that wrote code and have a record, at most `--limit` (20) per run, newest first. The
+judge sees the record's section, and for the Outcome the commands the session ran, redacted as
+`push` redacts. An answer is a vote only when it is one JSON object, `{"verdict": "pass" or
+"fail", "reason": "..."}`, alone or in one code fence; a refusal, an error, an answer from a
+model that is not Haiku, or anything else is kept with its text and not counted. Two counted
+votes that agree make the verdict; otherwise it is `undecided` and no score row is written. An
+empty section fails, and the Outcome of a record that is not done is not applicable, without
+asking. Every prompt, answer and verdict is kept in `<DIR>/judges/<sessionId>.claude.json`, the
+score rows in `<DIR>/scores/<sessionId>.judge.json` (grader `judge/1:haiku`); `--store` also
+inserts the rows into `scores` and each answer into `judge_votes`, with the read key.
+`--verbose` prints each prompt and vote. `--transcript FILE --record FILE` judges one record and
+prints everything, writing nothing.
+
+**The agreement check.** `transcripts judge --judge opencode` asks `opencode-go/kimi-k3.1-pro`
+the same prompts through `opencode run`, with an agent that may use no tool and project config
+disabled (as `agent-review` runs it), for up to 10 sessions the Haiku judge judged on the same
+record. It writes `<DIR>/judges/<sessionId>.opencode.json` and no score rows. It needs
+`opencode` installed and logged in to OpenCode Go.
+
+**The report.** `transcripts report` prints, in Markdown, every step's pass rate per skill
+version (the skill's git blob, so two versions are never counted together), oldest first, a
+table of each step's rate across versions, the agreement between the two judges (or that the
+check has not run yet), and proposed skill edits, from failed sessions only, each citing the
+session and step. It reads `<DIR>/scores/` and `<DIR>/judges/`; `--store` adds the store's
+`scores`, `judge_votes` and `sessions` rows, with the read key.
+
 ## What is not here yet
 
 - **The independent review as a CI check** of its own. Use `agent-review` locally before the
@@ -279,6 +314,7 @@ code changes, and a tier 0 declaration for trivial changes.
     bash plugins/change-record/bin/transcripts.test.sh
     bash plugins/change-record/bin/transcripts-store.test.sh
     bash plugins/change-record/bin/transcripts-grade.test.sh
+    bash plugins/change-record/bin/transcripts-judge.test.sh   # TRANSCRIPTS_LIVE_JUDGE=1 also runs the real Haiku judge
     node --test plugins/change-record/evals/cases.test.cjs
 
 They build real git repositories in a scratch directory and need bash, git and python3 (the

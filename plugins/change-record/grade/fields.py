@@ -591,3 +591,17 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
                 outcome_lines=n)
 
     return record, [(s,) + out[s] for s in STEPS]
+
+
+def code_written(lines, root=None):
+    """Whether the session wrote code, by the same rules as the graders (for the judge, C3)."""
+    calls, _, first_cwd = read(lines)
+    root = os.path.normpath(root or first_cwd or "/")
+    return any(kind(w) == "code" for c in calls for w in writes(c, root) if w)
+
+
+def commands_run(lines):
+    """The first line of each shell command that ran, in order (for the judge's Outcome question)."""
+    calls, _, _ = read(lines)
+    return [str(c.input.get("command") or "").strip().splitlines()[0][:200] for c in calls
+            if c.name == "Bash" and c.ran and str(c.input.get("command") or "").strip()]

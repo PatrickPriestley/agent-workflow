@@ -6,7 +6,8 @@
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
 an insert into chunks or sessions is 201, a duplicate primary key is 409 23505, and
-ignore-duplicates, return=representation, select, update, delete and any access to scores are
+ignore-duplicates, return=representation, select, update, delete and any access to scores or
+judge_votes are
 401 42501. With READKEY, GET reads rows with `col=eq.value` filters, `select`, `order`,
 `limit` and `offset`. Every request is appended to LOGFILE as one JSON line: method, path,
 apikey, prefer and body. POST /__admin/tamper with {"chunk_id": ...} changes a stored chunk's
@@ -25,8 +26,9 @@ OPTS = dict(zip(sys.argv[4::2], sys.argv[5::2]))
 HANG = float(OPTS.get("--hang", 0))
 REFUSE = OPTS.get("--refuse")
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
-        "scores": ("session_id", "step", "grader", "graded_at")}
-TABLES = {"chunks": [], "sessions": [], "scores": []}
+        "scores": ("session_id", "step", "grader", "graded_at"),
+        "judge_votes": ("session_id", "question", "judge", "vote", "judged_at")}
+TABLES = {"chunks": [], "sessions": [], "scores": [], "judge_votes": []}
 LOCK = threading.Lock()
 DENIED = {"code": "42501", "details": None, "hint": None, "message": "permission denied"}
 
@@ -68,7 +70,7 @@ class H(BaseHTTPRequestHandler):
         if self.command == "POST" and table == REFUSE:
             return self.answer(503, {"message": "the stand-in refuses this table"})
         if self.command == "POST":
-            if (not reader and (table == "scores" or "ignore-duplicates" in prefer
+            if (not reader and (table in ("scores", "judge_votes") or "ignore-duplicates" in prefer
                                 or "return=representation" in prefer)):
                 return self.answer(401, DENIED)
             try:

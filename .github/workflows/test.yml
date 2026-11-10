@@ -42,7 +42,7 @@ jobs:
       - name: pr-size
         run: bash bin/pr-size.test.sh
       - name: change-record plugin
-        run: bash plugins/change-record/bin/red-check.test.sh && bash plugins/change-record/bin/record-check.test.sh && bash plugins/change-record/bin/dispatch.test.sh && bash plugins/change-record/bin/transcripts.test.sh && bash plugins/change-record/bin/transcripts-store.test.sh && bash plugins/change-record/bin/transcripts-grade.test.sh && node --test plugins/change-record/evals/cases.test.cjs
+        run: bash plugins/change-record/bin/red-check.test.sh && bash plugins/change-record/bin/record-check.test.sh && bash plugins/change-record/bin/dispatch.test.sh && bash plugins/change-record/bin/transcripts.test.sh && bash plugins/change-record/bin/transcripts-store.test.sh && bash plugins/change-record/bin/transcripts-grade.test.sh && bash plugins/change-record/bin/transcripts-judge.test.sh && node --test plugins/change-record/evals/cases.test.cjs
 
   pr-size:
     name: pr size

@@ -1,0 +1,38 @@
+[
+  {
+    "session_id": "b4000000-0000-0000-0000-000000000004",
+    "step": "tier-declared",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "tier 1"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "b4000000-0000-0000-0000-000000000004",
+    "step": "red-first",
+    "verdict": "fail",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "no test run that ran failed before the code"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "b4000000-0000-0000-0000-000000000004",
+    "step": "change-line",
+    "verdict": "not_applicable",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the session opened no pull request and wrote no description"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  }
+]

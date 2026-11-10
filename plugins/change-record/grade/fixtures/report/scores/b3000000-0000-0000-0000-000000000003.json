@@ -1,0 +1,50 @@
+[
+  {
+    "session_id": "b3000000-0000-0000-0000-000000000003",
+    "step": "tier-declared",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "tier 2"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "b3000000-0000-0000-0000-000000000003",
+    "step": "red-first",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "a test run failed before the code (t2)"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "b3000000-0000-0000-0000-000000000003",
+    "step": "red-first",
+    "verdict": "fail",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "no test ran before the code"
+    },
+    "graded_at": "2026-11-10T19:00:00+00:00"
+  },
+  {
+    "session_id": "b3000000-0000-0000-0000-000000000003",
+    "step": "change-line",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the PR description opens with the Change: line"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  }
+]

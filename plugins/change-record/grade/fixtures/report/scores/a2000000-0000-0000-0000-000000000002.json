@@ -1,0 +1,38 @@
+[
+  {
+    "session_id": "a2000000-0000-0000-0000-000000000002",
+    "step": "tier-declared",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "1111111111111111111111111111111111111111",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "tier 1"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "a2000000-0000-0000-0000-000000000002",
+    "step": "red-first",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "1111111111111111111111111111111111111111",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "a test run failed before the code (t1)"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "a2000000-0000-0000-0000-000000000002",
+    "step": "change-line",
+    "verdict": "fail",
+    "skill": "change-record:change",
+    "skill_blob": "1111111111111111111111111111111111111111",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the PR description opens with 'Summary'"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  }
+]

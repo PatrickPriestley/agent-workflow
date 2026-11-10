@@ -1,0 +1,50 @@
+[
+  {
+    "session_id": "a1000000-0000-0000-0000-000000000001",
+    "step": "tier-declared",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "1111111111111111111111111111111111111111",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "tier 1"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "a1000000-0000-0000-0000-000000000001",
+    "step": "red-first",
+    "verdict": "fail",
+    "skill": "change-record:change",
+    "skill_blob": "1111111111111111111111111111111111111111",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "no test ran before the code"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "a1000000-0000-0000-0000-000000000001",
+    "step": "change-line",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "1111111111111111111111111111111111111111",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the PR description opens with the Change: line"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "a1000000-0000-0000-0000-000000000001",
+    "step": "outcome-filled",
+    "verdict": "not_applicable",
+    "skill": "change-record:change",
+    "skill_blob": "1111111111111111111111111111111111111111",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the record is approved and no task was marked done"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  }
+]

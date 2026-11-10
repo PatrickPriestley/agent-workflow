@@ -1,0 +1,26 @@
+[
+  {
+    "session_id": "b3000000-0000-0000-0000-000000000003",
+    "step": "decisions-alternative",
+    "verdict": "fail",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "judge/1:haiku",
+    "evidence": {
+      "why": "2 of 3 votes fail: the Decisions name no rejected alternative"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "b3000000-0000-0000-0000-000000000003",
+    "step": "outcome-real-output",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "judge/1:haiku",
+    "evidence": {
+      "why": "3 of 3 votes pass: the Outcome quotes commands and their output"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "session_id": "b4000000-0000-0000-0000-000000000004",
+  "first_timestamp": "2026-11-10T12:00:00.000Z",
+  "last_timestamp": "2026-11-10T12:00:00.000Z",
+  "skills": [
+    {
+      "name": "change-record:change",
+      "how": "skill",
+      "blob": "2222222222222222222222222222222222222222"
+    }
+  ]
+}

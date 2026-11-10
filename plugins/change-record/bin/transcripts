@@ -1121,6 +1121,280 @@ def cmd_grade(args):
     return 1 if failed else 0
 
 
+# ---- the judge and the report ----
+
+def load_grade_modules():
+    sys.dont_write_bytecode = True  # no __pycache__ beside the plugin's code
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade"))
+    import fields
+    import judge
+    import report
+    return fields, judge, report
+
+
+def session_root(lines):
+    cwd = first_cwd(lines)
+    return (git(cwd, "rev-parse", "--show-toplevel") if cwd and os.path.isdir(cwd) else None) or cwd
+
+
+def folder_arg(d):
+    """The folder grade, judge and report work on: DIR, else the archive AGENT_TRANSCRIPTS names."""
+    if d is None:
+        d = archive_dir()
+        if d is None:
+            raise PermissionError("needs DIR, or AGENT_TRANSCRIPTS set to the archive")
+        return d
+    d = os.path.abspath(d)
+    tree = inside_work_tree(d)
+    if tree:
+        raise PermissionError(f"{d} is inside the working tree of {tree}; scores are written beside the transcripts")
+    return d
+
+
+def read_json(path, default=None):
+    try:
+        return json.load(open(path))
+    except (OSError, ValueError):
+        return default
+
+
+JUDGE_USAGE = ("usage: transcripts judge [DIR] [--session ID]... [--repo-dir DIR] [--judge claude|opencode] [--limit N] "
+               "[--store] [--verbose]\n       transcripts judge --transcript FILE --record FILE [--judge claude|opencode]\n"
+               "--limit: sessions judged per run, newest first (default 20 for claude, the Haiku judge; 10 for opencode, "
+               "the agreement check)")
+
+
+def show_judged(sid, res, verbose):
+    for q, r in res.items():
+        statuses = " ".join(v["status"] for v in r["votes"])
+        print(f"{sid[:8]} {q} {r['verdict']}" + (f" ({statuses})" if statuses else "") + f" {r['why']}")
+        if not verbose:
+            continue
+        if r.get("prompt"):
+            print("  prompt:")
+            print("\n".join("    " + ln for ln in r["prompt"].splitlines()))
+        for v in r["votes"]:
+            if v["status"] == "vote":
+                print(f"  vote {v['vote']}: {v['verdict']}: {v['reason']}")
+            else:
+                print(f"  vote {v['vote']}: not counted, {v['status']}: {v['detail']}; answer {v['answer'][:300]!r}")
+        print(f"  verdict: {r['verdict']}")
+
+
+def cmd_judge(args):
+    d, only, repo, kind, limit, store, verbose, transcript, record_file, i = None, [], os.getcwd(), "claude", None, False, False, None, None, 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--session", "--repo-dir", "--judge", "--limit", "--transcript", "--record") and i + 1 < len(args):
+            v = args[i + 1]
+            if a == "--session":
+                only.append(v)
+            elif a == "--repo-dir":
+                repo = v
+            elif a == "--judge":
+                kind = v
+            elif a == "--limit":
+                limit = int(v) if v.isdigit() else -1
+            elif a == "--transcript":
+                transcript = v
+            else:
+                record_file = v
+            i += 2
+        elif a in ("--store", "--verbose"):
+            store, verbose = store or a == "--store", verbose or a == "--verbose"
+            i += 1
+        elif d is None and not a.startswith("--"):
+            d, i = a, i + 1
+        else:
+            say(JUDGE_USAGE)
+            return 2
+    if kind not in ("claude", "opencode") or (limit is not None and limit < 1) or bool(transcript) != bool(record_file):
+        say(JUDGE_USAGE)
+        return 2
+    fields, judge, _ = load_grade_modules()
+    limit = limit or (20 if kind == "claude" else 10)
+    if transcript:
+        try:
+            lines = (gzip.open(transcript) if transcript.endswith(".gz") else open(transcript, "rb")).read().splitlines()
+            text = open(record_file).read()
+            commands = fields.commands_run(lines)
+        except (OSError, fields.Unparsable) as e:
+            say(f"{transcript}: {e}")
+            return 1
+        sid = next((m.group(1).decode() for m in (re.search(rb'"sessionId":"([^"]+)"', ln) for ln in lines) if m),
+                   os.path.basename(transcript).split(".")[0])
+        path = "docs/changes/" + os.path.basename(record_file)
+        state = "judge" if judge.section(text, "Outcome") else "empty"
+        show_judged(sid, judge.judge_record(kind, path, text, commands, state, redact_text), True)
+        return 0
+    try:
+        d = folder_arg(d)
+        url = key = None
+        if store:
+            url = store_url()
+            if url is None:
+                raise StoreError("--store needs AGENT_TRANSCRIPTS_URL, the store's URL")
+            key = key_file("read-key", required=True)
+    except (PermissionError, StoreError) as e:
+        say(str(e))
+        return 2
+    repo = os.path.abspath(repo)
+    sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
+    sids = [s for s in sids if not only or s in only]
+    todo, skipped, already, problems = [], 0, 0, 0
+    for sid in sids:
+        entry = read_json(os.path.join(d, "sessions", sid + ".json"), {})
+        rows = read_json(os.path.join(d, "scores", sid + ".json"))
+        record = next(((r.get("evidence") or {}).get("record") for r in rows or [] if (r.get("evidence") or {}).get("record")), None)
+        why = None
+        if not rows:
+            why = "not graded yet (run transcripts grade first)"
+        elif not record:
+            why = "no record"
+        if why is None:
+            try:
+                lines = session_lines(d, sid, entry)
+                if not fields.code_written(lines, session_root(lines)):
+                    why = "no code written"
+            except (OSError, LookupError, fields.Unparsable) as e:
+                why = str(e)
+        if why is None:
+            last = (entry.get("last_stop") or {}).get("commit")
+            try:
+                text = record_reader(repo, last, lambda m: None)(record)
+            except LookupError as e:
+                text, why = None, f"the record cannot be read: {e}"
+            if text is None and why is None:
+                why = f"{record} is not in the session's last commit"
+        if why is not None:
+            print(f"{sid[:8]} not judged: {why}")
+            skipped += 1
+            continue
+        rsha = hashlib.sha256(text.encode()).hexdigest()
+        if kind == "opencode":
+            mine = read_json(os.path.join(d, "judges", f"{sid}.claude.json"), {})
+            if mine.get("judge") != judge.JUDGE or mine.get("record_sha256") != rsha:
+                print(f"{sid[:8]} not judged: the Haiku judge has not judged this record")
+                skipped += 1
+                continue
+        have = read_json(os.path.join(d, "judges", f"{sid}.{kind}.json"), {})
+        if have.get("judge") == judge.JUDGE and have.get("record_sha256") == rsha:
+            already += 1
+            continue
+        outcome = next((r["verdict"] for r in rows if r.get("step") == "outcome-filled"), "not_applicable")
+        state = {"pass": "judge", "fail": "empty"}.get(outcome, "not_done")
+        todo.append((entry.get("last_timestamp") or "", sid, entry, record, text, rsha, fields.commands_run(lines), state))
+    todo.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    judged = stored = 0
+    for _, sid, entry, record, text, rsha, commands, state in todo[:limit]:
+        res = judge.judge_record(kind, record, text, commands, state, redact_text)
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        doc = {"session_id": sid, "judge": judge.JUDGE, "kind": kind, "model": judge.MODELS[kind], "record": record,
+               "record_sha256": rsha, "judged_at": now, "questions": res}
+        write_atomic(os.path.join(d, "judges", f"{sid}.{kind}.json"), (json.dumps(doc, indent=2) + "\n").encode())
+        judged += 1
+        show_judged(sid, res, verbose)
+        skill_name, blob = change_skill(entry)
+        grader = f"{judge.JUDGE}:{judge.MODELS[kind]}"
+        score_rows = [{"session_id": sid, "step": q, "verdict": r["verdict"], "skill": skill_name, "skill_blob": blob,
+                       "grader": grader, "graded_at": now,
+                       "evidence": {"why": r["why"], "record": record, "votes": [v["status"] for v in r["votes"]],
+                                    "prompt_sha256": r.get("prompt_sha256"), "judge_file": f"judges/{sid}.{kind}.json"}}
+                      for q, r in res.items() if r["verdict"] != judge.UNDECIDED]
+        if kind == "claude":  # the agreement judge's verdicts are a check on these, not scores
+            write_atomic(os.path.join(d, "scores", sid + ".judge.json"), (json.dumps(score_rows, indent=2) + "\n").encode())
+        if store:
+            try:
+                for r in score_rows if kind == "claude" else []:
+                    stored += insert(url, key, "scores", r)
+                for q, r in res.items():
+                    for v in r["votes"]:
+                        stored += insert(url, key, "judge_votes", {
+                            "session_id": sid, "question": q, "judge": f"{judge.JUDGE}:{kind}:{judge.MODELS[kind]}",
+                            "vote": v["vote"], "status": v["status"], "verdict": v["verdict"], "reason": v["reason"],
+                            "detail": v["detail"], "answer": v["answer"], "served_model": v["served_model"],
+                            "prompt": r["prompt"], "prompt_sha256": r["prompt_sha256"], "record": record,
+                            "record_sha256": rsha, "judged_at": now})
+            except StoreError as e:
+                say(f"{sid}: {e}; its rows are kept in {d}")
+                problems += 1
+                store = False
+    left = max(0, len(todo) - limit)
+    print(f"transcripts: {kind} judge ({judge.MODELS[kind]}) judged {judged} sessions into {d}/judges"
+          + (f"; {already} already judged" if already else "") + (f"; {skipped} not judged" if skipped else "")
+          + (f"; {left} left for the next run (--limit {limit})" if left else "")
+          + (f"; stored {stored} rows at {url}" if url else ""))
+    return 1 if problems else 0
+
+
+def cmd_report(args):
+    d, store, i = None, False, 0
+    while i < len(args):
+        if args[i] == "--store":
+            store, i = True, i + 1
+        elif d is None and not args[i].startswith("--"):
+            d, i = args[i], i + 1
+        else:
+            say("usage: transcripts report [DIR] [--store]")
+            return 2
+    _, judge, report = load_grade_modules()
+    try:  # the report only reads, so DIR may be anywhere, a repository's fixtures included
+        d = os.path.abspath(d) if d else folder_arg(None)
+        url = key = None
+        if store:
+            url = store_url()
+            if url is None:
+                raise StoreError("--store needs AGENT_TRANSCRIPTS_URL, the store's URL")
+            key = key_file("read-key", required=True)
+    except (PermissionError, StoreError) as e:
+        say(str(e))
+        return 2
+    rows, entries, judges = [], {}, []
+    for p in sorted(glob.glob(os.path.join(d, "scores", "*.json"))):
+        got = read_json(p)
+        rows += [r for r in got if isinstance(r, dict) and r.get("session_id")] if isinstance(got, list) else []
+    for p in glob.glob(os.path.join(d, "sessions", "*.json")):
+        e = read_json(p)
+        if isinstance(e, dict) and e.get("session_id"):
+            entries[e["session_id"]] = e
+    for p in sorted(glob.glob(os.path.join(d, "judges", "*.json"))):
+        j = read_json(p)
+        if isinstance(j, dict) and j.get("session_id"):
+            judges.append(j)
+    if store:
+        try:
+            rows += read_rows(url, key, "/rest/v1/scores?select=*&order=session_id,step,graded_at")
+            for r in read_rows(url, key, "/rest/v1/sessions?select=session_id,entry&order=session_id,row_id"):
+                entries.setdefault(r["session_id"], r.get("entry") or {})  # only the time is read
+            judges += votes_to_judges(read_rows(url, key, "/rest/v1/judge_votes?select=session_id,question,judge,vote,status,verdict,reason,record_sha256,judged_at&order=session_id,question,judged_at,vote"), judge)
+        except StoreError as e:
+            say(str(e))
+            return 1
+    text = report.build(rows, entries, judges)
+    if text is None:
+        say(f"no score rows in {d}/scores" + (" or the store" if store else "") + "; run transcripts grade first")
+        return 1
+    sys.stdout.write(text)
+    return 0
+
+
+def votes_to_judges(votes, judge):
+    """The store's judge_votes rows as judge files: per session, judge and run, the verdict of the votes."""
+    runs = {}
+    for v in votes:
+        parts = str(v.get("judge") or "").split(":", 2)
+        if len(parts) != 3:
+            continue
+        k = (v["session_id"], parts[1], v.get("judged_at"))
+        j = runs.setdefault(k, {"session_id": v["session_id"], "judge": parts[0], "kind": parts[1], "model": parts[2],
+                                "record_sha256": v.get("record_sha256"), "judged_at": v.get("judged_at"), "questions": {}})
+        j["questions"].setdefault(v["question"], {"votes": []})["votes"].append(v)
+    for j in runs.values():
+        for q in j["questions"].values():
+            q["verdict"] = judge.decide(q["votes"])[0]
+    return list(runs.values())
+
+
 def main(argv):
     os.umask(0o077)  # the archive is as private as Claude Code's own transcripts: owner only
     if argv[:1] == ["archive"]:
@@ -1133,6 +1407,10 @@ def main(argv):
         return cmd_materialize(argv[1:])
     if argv[:1] == ["grade"]:
         return cmd_grade(argv[1:])
+    if argv[:1] == ["judge"]:
+        return cmd_judge(argv[1:])
+    if argv[:1] == ["report"]:
+        return cmd_report(argv[1:])
     if argv[:1] == ["redact"]:
         for raw in sys.stdin.buffer:
             sys.stdout.buffer.write(redact_line(raw))

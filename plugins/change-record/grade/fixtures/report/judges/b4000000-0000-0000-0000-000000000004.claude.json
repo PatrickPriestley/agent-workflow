@@ -1,0 +1,17 @@
+{
+  "session_id": "b4000000-0000-0000-0000-000000000004",
+  "judge": "judge/1",
+  "kind": "claude",
+  "model": "haiku",
+  "record": "docs/changes/2026-11-10-x.md",
+  "record_sha256": "abababababababababababababababababababababababababababababababab",
+  "judged_at": "2026-11-10T21:00:00+00:00",
+  "questions": {
+    "decisions-alternative": {
+      "verdict": "pass"
+    },
+    "outcome-real-output": {
+      "verdict": "not_applicable"
+    }
+  }
+}

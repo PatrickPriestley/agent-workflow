@@ -1,0 +1,26 @@
+[
+  {
+    "session_id": "b4000000-0000-0000-0000-000000000004",
+    "step": "decisions-alternative",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "judge/1:haiku",
+    "evidence": {
+      "why": "3 of 3 votes pass: a Decision names its rejected alternative"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  },
+  {
+    "session_id": "b4000000-0000-0000-0000-000000000004",
+    "step": "outcome-real-output",
+    "verdict": "not_applicable",
+    "skill": "change-record:change",
+    "skill_blob": "2222222222222222222222222222222222222222",
+    "grader": "judge/1:haiku",
+    "evidence": {
+      "why": "the record is not done"
+    },
+    "graded_at": "2026-11-10T20:00:00+00:00"
+  }
+]

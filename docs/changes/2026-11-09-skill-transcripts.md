@@ -16,6 +16,7 @@ tasks:
     done: true
   - name: report
     after: grade
+    done: true
 ---
 # Real agent sessions are kept and graded against the change skill's own steps
 
@@ -114,6 +115,24 @@ Contents, for grading:
   passed on a command that was denied and never ran.
 - Exact source (`plugins/change-record/evals/*/graders/*.md`): the eval graders name their
   case's code file (`greet.py`) and record id, so they cannot run unchanged on other sessions.
+- Verified against the real system (task 4, Claude Code 2.1.322, 2026-11-10): `claude -p --model
+  haiku --output-format json --tools "" --no-session-persistence --setting-sources ""
+  --system-prompt ...`, prompt on stdin, from a scratch directory, answers exit 0 with one JSON
+  object whose `result` is the answer text, `stop_reason` `end_turn`, `is_error` false, and
+  `modelUsage` keyed by the model served (`claude-haiku-5-5`), in about 5 s. A refusal answers
+  exit 1 with `is_error` true, `stop_reason` `refusal`, `terminal_reason` `api_error` and a
+  `result` of "API Error: Haiku 5.5 can't help with this. ...". An unknown model answers exit 1,
+  `terminal_reason` `api_error`, empty `modelUsage`, and `[claude-code:unrecognized_model]` on
+  stderr.
+- Verified against the real system (task 4): asked for `{"verdict", "reason"}` in that order,
+  Haiku sometimes voted `pass` while its own reason said the Decisions gave no reason for the
+  rejected alternative ("strictly, this is a fail"); asked for the reason first, its verdicts
+  followed its reasons in every run (Outcome).
+- Exact source (`bin/agent-review`): `opencode run --agent <name> -m <model> "<prompt>"` prints
+  the answer on stdout, with the agent defined in `OPENCODE_CONFIG_CONTENT` and project config
+  disabled by `OPENCODE_DISABLE_PROJECT_CONFIG=1`. Assumed, not probed here (no OpenCode Go key in
+  this environment): that a Kimi answer through it carries nothing but the answer text, and how
+  a refusal looks there.
 - Exact source (`warpdotdev/common-skills`, `skill-doctor`, cloned 2026-11-09): Skill Doctor
   reads `projects/*/*.jsonl` under `--claude-home`, finds skills only in `.agents`, `.claude`
   and `.codex` skill folders or `--skills-dir`, counts a skill as used only when a tool call
@@ -384,6 +403,48 @@ Priestley, 2026-11-10.
   the same code write on both sides, since a field grader holds a step no code reached as not
   applicable.
 
+- (Task 4.) `transcripts judge` runs after `grade` and reads its rows: the record from their
+  evidence, and whether the Outcome is due from `outcome-filled` (not done: not applicable;
+  empty: fail; filled: judged). An empty section fails without a judge. It judges only sessions
+  that wrote code (by `fields.code_written`, the graders' own rule) and have a record, newest
+  first, at most `--limit` (20) per run, and skips a session already judged on the same record
+  text. Rejected: judging every session, which C3 caps, and re-judging at every run, which pays
+  again for the same answer.
+- (Task 4.) A vote is an answer that is exactly one JSON object with the keys `reason` and
+  `verdict` (`pass` or `fail`) and nothing else, alone or in one code fence. A refusal (claude's
+  `stop_reason` `refusal`, or declining text), an error (non-zero exit, `is_error`, no answer in
+  180 s), an answer served by a model that is not Haiku, and any other answer are kept with
+  their text and status (`refused`, `error`, `malformed`) and never counted. Two counted votes
+  that agree make the verdict; else it is `undecided` and writes no score row. Rejected: reading
+  a verdict out of prose, or a majority of whatever answers parse, under which one vote among
+  two refusals would decide.
+- (Task 4.) Each judge prompt is redacted with `push`'s redaction before it is sent, and the
+  judge runs in an empty scratch directory, with no `AGENT_TRANSCRIPTS*` or `CLAUDE_PROJECT_DIR`,
+  no tools, no settings and no saved session, so its own session is neither captured nor kept.
+  The Outcome prompt also lists the first line of each shell command the session ran (the last
+  60), so the judge can tell a quoted run from an invented one. Rejected: giving the judge the
+  transcript, which is large and mostly beside these two questions.
+- (Task 4.) Votes, prompts and verdicts are kept per session in
+  `judges/<sid>.<claude|opencode>.json`; the Haiku judge's verdicts are score rows in
+  `scores/<sid>.judge.json` (grader `judge/1:haiku`), beside `grade`'s own file, which it leaves
+  alone. `--store` sends the rows to `scores` and every answer to a new `judge_votes` table with
+  the read key, on the owner's machine, as task 3's rows go. Rejected: one row per vote in
+  `scores`, whose verdict column cannot hold a refusal.
+- (Task 4.) The agreement judge is `opencode run -m opencode-go/kimi-k3.1-pro` with an inline
+  agent that denies every tool and project config disabled, as `agent-review` runs OpenCode, on
+  the same prompts, only for sessions the Haiku judge judged on the same record, at most 10 per
+  run; it writes votes and no score rows. Agreement counts only questions both judges were asked
+  and both decided; below 80% the report says the default should move to the other family
+  (C3). Rejected: calling the OpenCode Go endpoint directly from Python, which would make
+  `transcripts` hold an API key, where `opencode` keeps its own login.
+- (Task 4.) The report groups rows by the skill's name and blob and never adds two versions
+  together; within a version it counts the latest row per session, step and grader. "Over time"
+  is a table of each step's rate across versions, in the order of their first session. Proposed
+  edits are fixed per step (the skill's section and what to tighten) and are listed only for a
+  (session, step) whose latest row, across graders, is a fail, under the version that failed.
+  Rejected: calendar weeks, which mix versions, and asking a model to write the edits, which C3
+  leaves to a model family other than Claude and which no stored expected report could check.
+
 ## Tasks
 
 One pull request each, in order.
@@ -409,11 +470,14 @@ One pull request each, in order.
 4. **Judge, scores and report.** The R10 judge per C3 with its agreement check, scores written
    to the database, and the R11 report with proposed skill edits from failed sessions. Test:
    known score rows give the stored expected report, and a judge fixture with a known answer
-   gets it; it fails today.
+   gets it; it fails today. (Built: `transcripts judge` and `report`, `bin/transcripts-judge.test.sh`
+   against stand-ins for `claude` and `opencode`, with a live block for the real Haiku judge; the
+   agreement run is the owner's, see Outcome.)
 
 ## Checks
 
-`bash plugins/change-record/bin/transcripts.test.sh` and `node --test
+`bash plugins/change-record/bin/transcripts.test.sh`, `transcripts-store.test.sh`,
+`transcripts-grade.test.sh`, `transcripts-judge.test.sh` and `node --test
 plugins/change-record/evals/cases.test.cjs`. Real use: a `claude -p` session in this repository
 with `AGENT_TRANSCRIPTS` set is archived, sent to the database and graded, and the two archived `dispatch`
 sessions grade as the probes expect (the second passes red-first, the first fails it); a second
@@ -724,3 +788,376 @@ Before the `record-check` fix the same run said `record-check fail ... missing s
     $ transcripts grade --session 6cc07e5f-... --store
     transcripts: the store's read key is needed in /root/.config/agent-transcripts/read-key (mode 0600), on the owner's machine only
     exit 2
+
+### Task 4: report (branch `2026-11-09-skill-transcripts/report`)
+
+Shipped: `transcripts judge` (the Haiku judge, three votes per question, and `--judge opencode`,
+the agreement check with `opencode-go/kimi-k3.1-pro`), `transcripts report`, `grade/judge.py`,
+`grade/report.py`, the `judge_votes` table in `store/schema.sql` (the stand-in keeps it as the
+real table would), `bin/transcripts-judge.test.sh` (68 assertions: votes counted only from
+well-formed answers, refusals, errors, a model that is not Haiku, sessions that wrote no code or
+have no record, the limit, redaction of what each judge sees, prompts and votes kept per session,
+scores and votes to the stand-in store with the read key only, the agreement judge against a
+stand-in for `opencode`, and the report from the known rows in `grade/fixtures/report/` against
+its stored `expected.md`; `TRANSCRIPTS_LIVE_JUDGE=1` adds three known answers from the real
+Haiku judge) in `.github/workflows/test.yml`, and a README section. The suite failed first on its
+assertions (45 of 56, the usage text where `judge` and `report` should answer). Every guard in
+`judge.py`, `report.py` and `judge` was broken by hand (27 mutations); eleven survived at first
+(extra keys in an answer, a failed run with a well-formed answer, the archive variable reaching
+the judge, a record not done, no record, the agreement judge on a session the Haiku judge had
+not judged, its score rows, the latest row by time, two judges on different records, a newer
+grader's pass, the one-step-per-session rule for edits), and each got a test that kills it.
+Two later bugs were fixed red first: agreement counted questions decided without a judge, and
+an agreement run whose answers all failed to count read as "not run yet". `--transcript` named
+the session after its file, fixed red first.
+
+Real use found the judge's prompt too loose: on the two `dispatch` records, whose only Decision
+is "Rejected: argparse." with no reason, Haiku voted pass three times out of three, its reasons
+saying "gives no reason for rejecting it" and once "strictly, this is a fail". With the rule made
+explicit (a bare alternative does not count) it voted fail 2 to 1, one vote still contradicting
+its reason; with the reason asked for before the verdict, every vote followed its reason (below,
+and the live test). The live test's made-up bare alternative failed under the old prompt too,
+so it guards the case rather than proving the fix; the fixtures' runs are the evidence.
+
+Not shipped: the agreement run and the first agreement rate, which need an OpenCode Go key on the
+owner's machine (below); until it runs, the report says "The agreement check has not run yet".
+`--store` for `judge` and `report` is tested against the stand-in only, as task 3's was.
+
+Requirements: R1 to R9 as tasks 1 to 3 report. R10: the judge, its prompt and votes kept per
+session, and the known answers are met here; the agreement rate is left to the owner's run. R11
+is met locally and against the stand-in; reading and writing the real store with the read key is
+left to the owner's machine, as task 3 left `--store`.
+
+For the owner. First re-run `plugins/change-record/store/schema.sql` in the Supabase SQL editor
+(it adds `judge_votes` and is safe to run again). Then, on your machine, in a checkout of this
+repository on `main` with this PR merged, with `read-key` in place as task 3 describes and
+`opencode` installed and logged in to OpenCode Go (`opencode auth login`):
+
+    export AGENT_TRANSCRIPTS_URL=https://your-project-ref.supabase.co
+    T=plugins/change-record/bin/transcripts
+    $T materialize ~/agent-transcripts-store
+    $T grade ~/agent-transcripts-store --store
+    $T judge ~/agent-transcripts-store --store
+      expect, per session that wrote code and has a record, two lines such as
+      `<id8> decisions-alternative pass (vote vote vote) 3 of 3 votes pass: ...`, others
+      `<id8> not judged: no code written` (or no record), then
+      `transcripts: claude judge (haiku) judged N sessions into .../judges; ...; stored M rows at https://...`
+    $T judge ~/agent-transcripts-store --judge opencode --store
+      expect the same lines for up to 10 of those sessions, then
+      `transcripts: opencode judge (opencode-go/kimi-k3.1-pro) judged N sessions into .../judges; ...`
+      Votes shown as `malformed` on every line mean OpenCode prints more than the answer (the
+      assumption under Probed facts): send `judges/<id>.opencode.json` back and the reader is fixed.
+    $T report ~/agent-transcripts-store --store
+      expect the report, whose "Judge agreement" section now reads
+      `The Haiku judge and opencode-go/kimi-k3.1-pro agree on A of N judgments (P%), over S sessions judged by both.`
+      Below 80%, it adds that per C3 the default judge should move to the other model family.
+
+Real use, in this cloud container. The suite as committed, and red at the test commit:
+
+    $ bash plugins/change-record/bin/transcripts-judge.test.sh | tail -1
+    transcripts judge and report: 68 passed, 0 failed
+    $ (at 5f753c5, the test alone)
+    transcripts judge and report: 11 passed, 45 failed
+    $ bin/red-check origin/main..HEAD --run 'bash {files}' --red-pattern '^  FAIL '
+    red-check: red: plugins/change-record/bin/transcripts-judge.test.sh (exit 1 on the base)
+    red-check: every changed test file (1) fails on the base commit with an assertion
+
+`red-check` first called the suite inconclusive: on the base, where it copies the test file
+alone, its helpers printed tracebacks and `No such file` for the files the missing commands
+never wrote. They now read quietly, and each missing file is a failed assertion.
+
+Found while running the checks, outside this task: `bin/transcripts.test.sh` (task 1) did not
+unset `AGENT_TRANSCRIPTS_URL`, which this cloud environment sets, so its archive hook started a
+background push of the suite's made-up sessions to the real store, and its entry check failed
+whenever that push won the race (4 runs of 4 here, after earlier runs that passed). CI does not
+set the variable. Fixed by unsetting it, as the other three suites do (5 runs of 5 pass). The
+store therefore holds made-up rows from runs of that suite in cloud containers, sender
+`cloud:<container>`, session ids such as `11111111-2222-3333-4444-555555555555` and
+`77777777-0000-0000-0000-000000000000`: the insert key cannot delete them, and they are left
+for the owner to remove with the read key if wanted.
+
+The real Haiku judge on the two `dispatch` fixtures, each with its record rebuilt from the text
+the session printed with `cat` and its own Edits (dispatch-1 could not run anything, dispatch-2
+pasted real runs). Each prompt, its three votes and the verdict:
+
+    $ transcripts judge --transcript grade/fixtures/dispatch-1-95e399c5.jsonl.gz --record $S/shout-1-95e399c5.md
+    95e399c5 decisions-alternative fail (vote vote vote) 3 of 3 votes fail: The Decisions section names argparse as a rejected alternative for parsing the flag, but gives no reason for rejecting it, so per the rules this does not count and the record fails.
+      prompt:
+        You judge one question about a software change record. Answer with one line of JSON and nothing else: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+
+        Question: does the record's Decisions section name, for at least one decision, an alternative that was considered and rejected, with a reason?
+        PASS if at least one decision names a rejected alternative and why (for example "Rejected: X, because Y", or "rather than X, since Y"). FAIL if the section is empty, holds only placeholders, or lists decisions with no rejected alternative. A rejected alternative named without any reason for rejecting it does not count: if that is all the section has, FAIL.
+
+        The record: docs/changes/shout-1-95e399c5.md
+
+        <decisions>
+        - Parse the flag by hand in `main`, keep `greet()` pure and add `shout(text)`. Rejected: argparse.
+        </decisions>
+
+        Answer with one line of JSON: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+      vote 1: fail: The Decisions section names argparse as a rejected alternative for parsing the flag, but gives no reason for rejecting it, so per the rules this does not count and the record fails.
+      vote 2: fail: The decision names a rejected alternative (argparse) but gives no reason for rejecting it, and the section has no other decisions with a stated rationale, so per the rules it fails.
+      vote 3: fail: The single decision names a rejected alternative (argparse) but gives no reason for rejecting it, and the rule says a rejected alternative without a reason does not count.
+      verdict: fail
+    95e399c5 outcome-real-output fail (vote vote vote) 3 of 3 votes fail: The Outcome quotes no command runs or printed output; it only describes expected results and states that the test, run, and commit commands were denied and remain to be done.
+      prompt:
+        You judge one question about a software change record. Answer with one line of JSON and nothing else: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+
+        Question: does the record's Outcome quote real runs of what the change built: the commands run and the output they printed, rather than only describing the result or reporting test counts?
+        PASS if the Outcome quotes at least one command and the output it printed. FAIL if it only describes behaviour, only reports unit-test results, or holds no output.
+
+        The record: docs/changes/shout-1-95e399c5.md
+
+        <outcome>
+        - Task 1 built on `shout/flag`: `greet.py` gains `shout(text)` and `main` strips `--shout`
+          from the arguments wherever it appears; `tests/test_greet.py` covers `shout()`, the flag
+          before and after the name, the flag alone, and the unchanged default with and without a name.
+        - Not verified in the building session: every command that runs Python or writes to git
+          (`python3 -m unittest …`, `python3 greet.py …`, `git add`, `git commit`) was denied by the
+          session's permission mode, so the red run, the green run, the real-use runs and the commits
+          are still to be done by whoever picks the branch up. Expected output: `python3 greet.py
+          --shout Ada` → `HELLO, ADA!`; `python3 greet.py Ada` → `Hello, Ada!`.
+        </outcome>
+
+        Commands the session ran, for reference (a command the Outcome quotes should be among them):
+        <commands>
+        $ git status --short && git log --oneline -3 && ls -R . | grep -v '^\.git' | head -30 && cat docs/changes/2026-11-08-shout.md && echo ---- && cat greet.py && echo ---- && cat tests/test_greet.py && ls t
+        $ python3 --version
+        $ rm /tmp/claude-0/-home-user-agent-workflow/5ac54a69-3ba4-5369-bb2d-6980aeb1a0d6/scratchpad/realuse/worktrees/shout/PR.md
+        $ git status --short && git diff --stat
+        </commands>
+
+        Answer with one line of JSON: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+      vote 1: fail: The Outcome quotes no command runs or printed output; it only describes expected results and states that the test, run, and commit commands were denied and remain to be done.
+      vote 2: fail: The Outcome quotes no command run and no output printed; it only describes expected output and states that every Python and git command was denied, so no real runs are shown.
+      vote 3: fail: The Outcome quotes no executed command and printed output; it states that every run was denied and gives only expected output, with the test and real-use runs still to be done.
+      verdict: fail
+    exit 0
+    $ transcripts judge --transcript grade/fixtures/dispatch-2-da1017af.jsonl.gz --record $S/shout-2-da1017af.md
+    da1017af decisions-alternative fail (vote vote vote) 3 of 3 votes fail: The Decisions section names argparse as a rejected alternative but gives no reason for rejecting it, which the criteria say does not count.
+      prompt:
+        You judge one question about a software change record. Answer with one line of JSON and nothing else: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+
+        Question: does the record's Decisions section name, for at least one decision, an alternative that was considered and rejected, with a reason?
+        PASS if at least one decision names a rejected alternative and why (for example "Rejected: X, because Y", or "rather than X, since Y"). FAIL if the section is empty, holds only placeholders, or lists decisions with no rejected alternative. A rejected alternative named without any reason for rejecting it does not count: if that is all the section has, FAIL.
+
+        The record: docs/changes/shout-2-da1017af.md
+
+        <decisions>
+        - Parse the flag by hand in `main`, keep `greet()` pure and add `shout(text)`. Rejected: argparse.
+        </decisions>
+
+        Answer with one line of JSON: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+      vote 1: fail: The Decisions section names argparse as a rejected alternative but gives no reason for rejecting it, which the criteria say does not count.
+      vote 2: fail: The Decisions section names a rejected alternative (argparse) but gives no reason for rejecting it, and the criteria explicitly say a rejected alternative without a reason does not count.
+      vote 3: fail: The single decision names a rejected alternative (argparse) but gives no reason for rejecting it, and the question says a rejected alternative without a reason does not count.
+      verdict: fail
+    da1017af outcome-real-output pass (vote vote vote) 3 of 3 votes pass: The Outcome quotes real command runs with their printed output, including the unittest suite run and the `python3 greet.py` invocations showing their results.
+      prompt:
+        You judge one question about a software change record. Answer with one line of JSON and nothing else: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+
+        Question: does the record's Outcome quote real runs of what the change built: the commands run and the output they printed, rather than only describing the result or reporting test counts?
+        PASS if the Outcome quotes at least one command and the output it printed. FAIL if it only describes behaviour, only reports unit-test results, or holds no output.
+
+        The record: docs/changes/shout-2-da1017af.md
+
+        <outcome>
+        Task 1 (branch `shout/flag`), 2026-11-08.
+
+        Red: `tests/test_greet.py` gained tests for `--shout` (first, last, alone) and for the unchanged
+        default; the three flag tests failed on assertions before the code (`'Hello, --shout!\n' !=
+        'HELLO, ADA!\n'`), the default tests passed. Green: `greet.py` strips `--shout` from the
+        arguments and passes the greeting through a new `shout(text)`; `greet()` is unchanged.
+
+        Suite:
+
+        ```
+        $ python3 -m unittest discover -s tests -t .
+        Ran 7 tests in 0.000s
+
+        OK
+        ```
+
+        Used as a user would:
+
+        ```
+        $ python3 greet.py --shout Ada
+        HELLO, ADA!
+        $ python3 greet.py Ada
+        Hello, Ada!
+        $ python3 greet.py Ada --shout
+        HELLO, ADA!
+        $ python3 greet.py
+        Hello, world!
+        ```
+
+        Guards: no Python mutation tool is installed, so each new guard was broken by hand and
+        restored; every mutant failed the suite: `shout()` returning its input (4 failures), the
+        upper-casing never applied (3), `--shout` not removed from the name arguments (2), the flag
+        test inverted (5). No survivors.
+        </outcome>
+
+        Commands the session ran, for reference (a command the Outcome quotes should be among them):
+        <commands>
+        $ git status --short && git log --oneline -3 && ls -R . | grep -v '^\.git' | head -30 && cat docs/changes/2026-11-08-shout.md && echo ---- && cat greet.py && echo ---- && cat tests/test_greet.py && ls t
+        $ python3 -m unittest discover -s tests -t . 2>&1 | tail -30
+        $ git add tests/test_greet.py && git commit -q -m "test(greet): --shout flag upper-cases the greeting; default unchanged
+        $ python3 -m unittest discover -s tests -t . 2>&1 | tail -4; echo "--- shout:"; python3 greet.py --shout Ada; echo "--- default:"; python3 greet.py Ada; echo "--- trailing flag:"; python3 greet.py Ada -
+        $ (python3 -m mutmut --version 2>/dev/null || echo "no mutmut") && cp greet.py /tmp/greet.py.bak
+        $ rm -rf __pycache__ tests/__pycache__ && python3 -m unittest discover -s tests -t . 2>&1 | tail -1 && rm -rf __pycache__ tests/__pycache__ && git add greet.py tests/test_greet.py docs/changes/2026-11-0
+        </commands>
+
+        Answer with one line of JSON: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+      vote 1: pass: The Outcome quotes real command runs with their printed output, including the unittest suite run and the `python3 greet.py` invocations showing their results.
+      vote 2: pass: The Outcome quotes real commands with their printed output, including the `python3 -m unittest discover` run and the `python3 greet.py --shout Ada` usage runs, and those commands appear in the session's command list.
+      vote 3: pass: The Outcome quotes real commands with their printed output, including the unittest run and the `python3 greet.py` invocations, and those commands appear in the session's command list.
+      verdict: pass
+    exit 0
+
+Error path: answers that are not votes, from the real Haiku judge and from the refusal the probe
+got, read by the judge's own code (`judge.ask` and `judge.read_claude`):
+
+    the refusal the probe got, read by the judge: {"status": "refused", "verdict": null, "detail": "stop_reason refusal"} answer: API Error: Haiku 5.5 can't help with this. Start a new sessi...
+    answer 1: {"status": "malformed", "verdict": null, "served_model": "claude-haiku-5-5"} answer: 'A change record is a documented entry describing a modification to a software project, typically inc'
+    answer 2: {"status": "malformed", "verdict": null, "served_model": "claude-haiku-5-5"} answer: 'A change record is a documented account of a modification to a software system, typically capturing '
+    answer 3: {"status": "vote", "verdict": "pass", "served_model": "claude-haiku-5-5"} answer: '{"reason": "Two plus two is four, which is a correct arithmetic statement.", "verdict": "pass"}'
+    decide: ('undecided', '1 of 3 answers counted as votes, and no two agree')
+
+
+This session's own transcript, archived by hand into the local archive (`AGENT_TRANSCRIPTS`),
+since it has had no stop yet, with its first stop set to `236a403`, the `main` commit it started
+from (a hand archive records the current commit as both, and the done marker would then look
+already set), graded at `8b43906` (the done marker) and judged for real. Its prompts are
+abridged here where they quote this record; each is kept whole in
+`~/agent-transcripts/judges/dd2defdb-d4db-5066-b961-2838a0b29d84.claude.json` with its sha256 (`a50eebae...`, 154 lines;
+`99283c69...`, 259 lines), and every vote was served by `claude-haiku-5-5`:
+
+    $ transcripts archive --transcript ~/.claude/projects/-home-user-agent-workflow/dd2defdb-d4db-5066-b961-2838a0b29d84.jsonl
+    exit 0
+    $ transcripts grade --session dd2defdb-d4db-5066-b961-2838a0b29d84
+    dd2defdb record docs/changes/2026-11-09-skill-transcripts.md
+    dd2defdb tier-declared pass tier 2
+    dd2defdb probe-before-record not_applicable the record was there when the session started
+    dd2defdb record-before-code not_applicable the record was there when the session started
+    dd2defdb red-first fail no test ran before the code
+    dd2defdb change-line not_applicable the session opened no pull request and wrote no description
+    dd2defdb record-check pass record-check: ok tier=2 mode=code
+    dd2defdb outcome-filled pass Outcome has 434 lines
+    transcripts: graded 1 sessions into /root/agent-transcripts/scores
+    exit 0
+    $ transcripts judge --session dd2defdb-d4db-5066-b961-2838a0b29d84 --verbose
+    dd2defdb decisions-alternative pass (vote vote vote) 3 of 3 votes pass: Many decisions name a rejected alternative with a stated reason, such as the hostname or path rejected because they are machine-specific, so the section passes.
+      prompt:
+        You judge one question about a software change record. Answer with one line of JSON and nothing else: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+
+        Question: does the record's Decisions section name, for at least one decision, an alternative that was considered and rejected, with a reason?
+        PASS if at least one decision names a rejected alternative and why (for example "Rejected: X, because Y", or "rather than X, since Y"). FAIL if the section is empty, holds only placeholders, or lists decisions with no rejected alternative. A rejected alternative named without any reason for rejecting it does not count: if that is all the section has, FAIL.
+
+        The record: docs/changes/2026-11-09-skill-transcripts.md
+
+        <decisions>
+        [... the record's Decisions as committed at 8b43906, 143 lines ...]
+        </decisions>
+
+        Answer with one line of JSON: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+      vote 1: pass: Many decisions name a rejected alternative with a stated reason, such as the hostname or path rejected because they are machine-specific, so the section passes.
+      vote 2: pass: The Decisions section names rejected alternatives with reasons in many entries, such as "Rejected: hostname or path, which are `vm` and machine-specific."
+      vote 3: pass: Many decisions name a rejected alternative with its reason, such as "Rejected: hostname or path, which are `vm` and machine-specific."
+      verdict: pass
+    dd2defdb outcome-real-output pass (vote vote vote) 3 of 3 votes pass: The Outcome quotes many real command invocations and their printed output (e.g., the `import` runs, the `cmp` check, the probe results, and the `push` output), so it satisfies the pass condition.
+      prompt:
+        You judge one question about a software change record. Answer with one line of JSON and nothing else: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+
+        Question: does the record's Outcome quote real runs of what the change built: the commands run and the output they printed, rather than only describing the result or reporting test counts?
+        PASS if the Outcome quotes at least one command and the output it printed. FAIL if it only describes behaviour, only reports unit-test results, or holds no output.
+
+        The record: docs/changes/2026-11-09-skill-transcripts.md
+
+        <outcome>
+        [... the record's Outcome as committed at 8b43906, 184 lines ...]
+        </outcome>
+
+        Commands the session ran, for reference (a command the Outcome quotes should be among them):
+        <commands>
+        $ cd /home/user/agent-workflow && grep -n "opencode" bin/agent-review | sed -n '1,60p' | tail -30; grep -n "opencode\|zen/go" -A3 .github/workflows/pr-agent.yml | head -40
+        $ cd /home/user/agent-workflow/plugins/change-record && sed -n 1,80p bin/transcripts; grep -n "^def \|^    sub\|add_parser\|^[A-Z_]* = " bin/transcripts
+        $ sed -n 513,640p bin/transcripts; sed -n 920,1145p bin/transcripts
+        [... 54 more commands ...]
+        $ S=$S; cd /home/user/agent-workflow && cat $S/ru/outcome4.md >> docs/changes/2026-11-09-skill-transcripts.md && grep
+        $ python3 -c "
+        $ git add docs/changes/2026-11-09-skill-transcripts.md && git commit -qm "docs(change): 2026-11-09-skill-transcripts, task report done" && git log --oneline -1
+        </commands>
+
+        Answer with one line of JSON: {"reason": "<one sentence>", "verdict": "pass" or "fail"}.
+      vote 1: pass: The Outcome quotes many real command invocations and their printed output (e.g., the `import` runs, the `cmp` check, the probe results, and the `push` output), so it satisfies the pass condition.
+      vote 2: pass: The Outcome quotes many real command runs and their printed output (e.g., the `claude -p` session transcripts, the `find`/`cmp` checks, the import runs, and the insert-only probe results), so it passes the requirement of at least one command with its output.
+      vote 3: pass: The Outcome quotes multiple real command invocations with their printed output (e.g., the `claude -p` archive session, the import runs, the insert-only probe output, and the push/forwarder logs), satisfying the requirement for at least one command and its output.
+      verdict: pass
+    transcripts: claude judge (haiku) judged 1 sessions into /root/agent-transcripts/judges
+    exit 0
+    $ transcripts judge --session dd2defdb-d4db-5066-b961-2838a0b29d84
+    transcripts: claude judge (haiku) judged 0 sessions into /root/agent-transcripts/judges; 1 already judged
+    exit 0
+
+The red-first fail is the grader's, not the session's: this session ran the judge suite and saw
+it fail (45 of 56) before any code, but `fields/1` took the probe's `cd $S/probe && claude -p
+... > out.json`, a redirect under an unexpanded variable into a scratch folder, for a code file
+written inside the repository (`first_code_write` `$S/probe/out.json`). That is a limit of task
+3's shell reading, left as found (this task does not change the field graders): a redirect
+target that starts with a variable should not count as a write in the working tree. The skill's
+blob is unknown because this session read `SKILL.md` with `cat`, which task 1's rule (the Skill
+tool, or a Read of the file) does not count.
+
+The report from the local score rows (this session's), so its one proposed edit comes from the
+false red-first fail above:
+
+    $ transcripts report
+    # Change skill report
+
+    Score rows from 1 sessions, grouped by skill version (the git blob of the skill file), oldest first; two versions are never counted together. A pass rate is pass / (pass + fail), with not applicable counted apart. Each step keeps the latest row per session and grader.
+
+    ## change-record:change, blob unknown
+
+    Sessions: 1, from 2026-11-10 to 2026-11-10.
+
+    | Step | Grader | Pass | Fail | N/A | Pass rate |
+    |---|---|---|---|---|---|
+    | tier-declared | fields/1 | 1 | 0 | 0 | 100% |
+    | probe-before-record | fields/1 | 0 | 0 | 1 | - |
+    | record-before-code | fields/1 | 0 | 0 | 1 | - |
+    | red-first | fields/1 | 0 | 1 | 0 | 0% |
+    | change-line | fields/1 | 0 | 0 | 1 | - |
+    | record-check | fields/1 | 1 | 0 | 0 | 100% |
+    | outcome-filled | fields/1 | 1 | 0 | 0 | 100% |
+    | decisions-alternative | judge/1:haiku | 1 | 0 | 0 | 100% |
+    | outcome-real-output | judge/1:haiku | 1 | 0 | 0 | 100% |
+
+    ## Pass rate over time
+
+    Passes of graded sessions, per skill version, oldest first (the date is the version's first session).
+
+    | Step | Grader | unknown (2026-11-10) |
+    |---|---|---|
+    | tier-declared | fields/1 | 1 of 1 |
+    | probe-before-record | fields/1 | - |
+    | record-before-code | fields/1 | - |
+    | red-first | fields/1 | 0 of 1 |
+    | change-line | fields/1 | - |
+    | record-check | fields/1 | 1 of 1 |
+    | outcome-filled | fields/1 | 1 of 1 |
+    | decisions-alternative | judge/1:haiku | 1 of 1 |
+    | outcome-real-output | judge/1:haiku | 1 of 1 |
+
+    ## Judge agreement
+
+    The agreement check has not run yet: no session here has been judged by both the Haiku judge and opencode-go/kimi-k3.1-pro. On the owner's machine, run `transcripts judge DIR --judge opencode`, then this report again.
+
+    ## Proposed skill edits
+
+    From failed sessions only, citing each session and step, per skill version, newest first.
+
+    ### change-record:change, blob unknown
+
+    - red-first, in "3. Loop", step 3 (Red, then green): require the failing test run's output to be seen before the first code edit, and say that a denied or skipped test run does not count. Failed in:
+      - dd2defdb (dd2defdb-d4db-5066-b961-2838a0b29d84): no test ran before the code
+    exit 0
