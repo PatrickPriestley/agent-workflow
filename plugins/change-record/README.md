@@ -156,10 +156,12 @@ child's transcript entry names its parent.
     transcripts push [--session ID]... [--background]
     transcripts materialize DIR [--session ID]... [--repo-dir DIR]
     transcripts redact < lines
+    transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store]
+    transcripts grade --transcript FILE [--cwd DIR]
 
-`transcripts` keeps agent session transcripts in a local archive so they can be graded later
-and sends them to a shared store (record `docs/changes/2026-11-09-skill-transcripts.md`;
-grading is a later task of it). This repository's `.claude/settings.json` runs `transcripts archive`
+`transcripts` keeps agent session transcripts in a local archive, sends them to a shared store
+and grades them against the `change` skill's steps (record
+`docs/changes/2026-11-09-skill-transcripts.md`; the judge and the report are a later task of it). This repository's `.claude/settings.json` runs `transcripts archive`
 on `Stop` and `SessionEnd`, in this checkout and in every worktree `dispatch` cuts. It is
 opt-in: nothing happens unless `AGENT_TRANSCRIPTS` names an archive directory, for example
 in your shell profile or in `.claude/settings.local.json`:
@@ -214,6 +216,31 @@ blob each session recorded, read from the checkout you run it in). It checks eve
 against its chain id. For Skill Doctor, point `--claude-home` at that folder and `--skills-dir`
 at its `skills/`.
 
+**Grading.** `transcripts grade` scores every session in a folder (the local archive by
+default, or a folder `materialize` wrote) with the field graders in `grade/fields.py`, one
+verdict per step, pass, fail or not applicable, with its evidence:
+
+| Step | Passes when |
+|---|---|
+| `tier-declared` | the record at the session's last commit has tier 0, 1 or 2, or, with no record, the session declares `Tier: 0` (it fails when code was written with neither) |
+| `probe-before-record` | a probe (inline code, a module, a scratch script, `--help`, a request to another system) ran before the session first wrote its record |
+| `record-before-code` | the record was written before the first code |
+| `red-first` | a test run, before the first code, ran and reported a failed test |
+| `change-line` | the pull request it opened, or the description it wrote, opens with `Change: <record>` |
+| `record-check` | `record-check` passes on the session's first to last commit |
+| `outcome-filled` | a record that is done, or a task the session marked done, has an Outcome |
+
+A call counts only when its own result shows it ran: a denied, refused or unanswered call did
+nothing. A failure counts from the error flag or from the result's text. Code is any file in
+the session's working tree outside `docs/`, documentation, tests, fixtures and backups. The
+record is the one the session wrote and named, from its own acts, never from a prompt. Steps a
+session never reached (no record, no code, no pull request) are not applicable, and a session
+with no record grades every record step so. The record is read with git from `--repo-dir` (the
+current directory by default), which must hold the session's commits. Rows go to
+`<DIR>/scores/<sessionId>.json`; on your own machine `--store` also inserts them into `scores`
+with the read key. `--transcript FILE` grades one file without commits and prints the rows,
+as `evals/cases.test.cjs` does to run the eval graders' fixtures through the same code.
+
 ## What is not here yet
 
 - **The independent review as a CI check** of its own. Use `agent-review` locally before the
@@ -251,6 +278,8 @@ code changes, and a tier 0 declaration for trivial changes.
     bash plugins/change-record/bin/dispatch.test.sh
     bash plugins/change-record/bin/transcripts.test.sh
     bash plugins/change-record/bin/transcripts-store.test.sh
+    bash plugins/change-record/bin/transcripts-grade.test.sh
+    node --test plugins/change-record/evals/cases.test.cjs
 
 They build real git repositories in a scratch directory and need bash, git and python3 (the
 `--json` assertions parse the documents with it; the scripts themselves fall back to a shell

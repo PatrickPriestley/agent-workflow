@@ -13,6 +13,7 @@ tasks:
     done: true
   - name: grade
     after: store
+    done: true
   - name: report
     after: grade
 ---
@@ -351,6 +352,38 @@ Priestley, 2026-11-10.
   and `AGENT_TRANSCRIPTS_URL`; its network allows the project's host and its proxy injects the
   publishable key (set up before task 2).
 
+- (Task 3.) Grading runs where the read key is: `transcripts grade` works on a local folder (the
+  archive, or a folder `materialize` wrote), reads the record with git at the session's first and
+  last commit from a checkout (`--repo-dir`), writes its rows beside the transcripts in
+  `scores/<sessionId>.json`, and only `--store`, on the owner's machine, inserts them into
+  `scores` with the read key. Rejected: widening the hooks' insert-only key to `scores`, which
+  would let any environment write scores, and grading in the cloud against the store, which
+  would put the read key there.
+- (Task 3.) A score is one row per step, as the `scores` table task 2 created is keyed
+  (session, step, grader, graded_at), so "one score row per session" in task 3 is a session's
+  seven rows. Each carries the change skill's name and blob from the index entry, and the
+  grader `fields/1`, bumped when a rule changes. Rejected: one row with every step in a JSON
+  column, which the report would have to unpack per step.
+- (Task 3.) A call ran when its own result says so: no result, a denial (a permission prompt
+  refused or unanswered, an interruption, a tool error), flagged or not, or a flagged result of
+  any tool but Bash, means it did nothing; a flagged Bash result that is not a denial ran and
+  failed. Rejected: requiring an `Exit code` prefix on a failed Bash result, which the eval
+  traces do not always carry.
+- (Task 3.) The record is tied to the session as in task 1, but only from acts that ran, shell
+  writes and pull request bodies included; a step a session never reached is not applicable:
+  no record (every record step), the record there before the session (probe and record before
+  code, judged from its first commit or the session's first act on it, since a record can sit
+  uncommitted), no code (red-first, record-before-code), no pull request or description
+  (change-line), a record not done (outcome-filled), no commit (the steps that read the record).
+  Tier 0, declared or recorded, needs no red-first. Rejected: failing those steps, which would
+  score a session for work it was never asked to do.
+- (Task 3.) Where the field graders part from the eval graders on the eval fixtures, on purpose
+  and listed in `cases.test.cjs`: a code file copied to a new path inside the repository is
+  code, and a scratch script that is run is a probe whatever it imports, since no field grader
+  knows which dependency a change rests on. The eval fixtures whose code never comes are given
+  the same code write on both sides, since a field grader holds a step no code reached as not
+  applicable.
+
 ## Tasks
 
 One pull request each, in order.
@@ -371,7 +404,8 @@ One pull request each, in order.
 3. **Deterministic grading.** `transcripts grade` with the field graders for R8 and R9, writing
    one score row per session. Test: fixtures cut from the two real `dispatch` sessions and from
    the eval graders' fixtures give the expected verdict per step, the denied-command case
-   included; it fails today.
+   included; it fails today. (Built: one row per step, see Decisions; rows are local, and
+   `--store` sends them from the owner's machine.)
 4. **Judge, scores and report.** The R10 judge per C3 with its agreement check, scores written
    to the database, and the R11 report with proposed skill edits from failed sessions. Test:
    known score rows give the stored expected report, and a judge fixture with a known answer
@@ -550,3 +584,143 @@ project; its own background pushes found its proxy gone, and this session's next
     push.log: pushed 3 new chunks and 2 index rows for 2 sessions to https://your-project-ref.supabase.co
     659da00f cloud sent version 1 main lines 319 of 319 redaction 1
     883c53c9 cloud sent version 1 main lines 24 of 24 redaction 1
+
+### Task 3: grade (branch `2026-11-09-skill-transcripts/grade`)
+
+Shipped: `transcripts grade` and the field graders in `grade/fields.py` (tier-declared,
+probe-before-record, record-before-code, red-first, change-line, record-check, outcome-filled),
+one row per step in `<folder>/scores/<sessionId>.json`, `--store` for the owner's machine,
+`--transcript` for one file; `bin/transcripts-grade.test.sh` (60 assertions: both `dispatch`
+fixtures, made-up sessions in both result key orders with flagged and unflagged failures,
+denials and unanswered calls, which record, sessions with none, a materialized folder, the
+error paths and `--store` against the stand-in) and four R9 tests in `evals/cases.test.cjs`
+that run the eval graders' own fixtures through the same code and get their verdicts, two
+listed divergences aside (Decisions). Both suites are in `.github/workflows/test.yml`; the
+stand-in now keys `scores` as the real table does. The grade suite failed first on its
+assertions (51 of 53, the usage text where verdicts should be). Every guard in `fields.py` and
+in `grade`'s folder handling was broken by hand (27 mutations); three survived (a test folder
+whose files are not named `test_*`, the session's first act as proof the record existed, and
+sidechain lines), and each got a test that kills it. Real use found one bug, fixed red first: a
+first commit without the record made the grader say the session wrote it, although the session
+had read and edited it, so record-before-code failed where it does not apply. Grading this
+session found a second, older bug, in `record-check`: under `pipefail` it piped the record into
+`grep -q`, which can quit at its first match and kill `printf` with SIGPIPE, so a large record
+(this one) was reported missing `## Goal` whenever a Python program ran the check. A test with a
+large record, run through Python, failed 5 of 5; `record-check` now uses here-strings.
+
+Not shipped: the judge, the agreement check and the report (task 4). Not run: `--store` and
+`materialize` against the real store, which need the read key on the owner's machine (below).
+Known limits: a file written by a program the grader cannot read (a Python one-liner, `patch`,
+`git apply`) is not seen as a write; a PR description in the last message counts only when it
+has a `Change:` line; a hook that blocks a call with wording outside the denial patterns would
+count as a failed run, not as not run (it still cannot pass red-first unless its text reports a
+failed test).
+
+The read path, for the owner to run on their machine at the start of task 4 (the read key never
+comes to this environment). In a checkout of this repository, on `main` with this PR merged:
+
+    umask 077; mkdir -p ~/.config/agent-transcripts
+    pbpaste > ~/.config/agent-transcripts/read-key      # the project's secret key (sb_secret_...)
+    pbpaste > ~/.config/agent-transcripts/insert-key    # the publishable key, for the probe's inserts
+    chmod 600 ~/.config/agent-transcripts/read-key ~/.config/agent-transcripts/insert-key
+    export AGENT_TRANSCRIPTS_URL=https://your-project-ref.supabase.co
+
+    plugins/change-record/store/probe
+      expect 15 `ok` lines, the last new one
+      `ok   read key: the probe chunk still holds its first bytes: HTTP 200 [{"data": "first"}]`,
+      then `probe session probe-...: 15 passed, 0 failed`, exit 0. A FAIL on that line with 401
+      means the secret key is not accepted in the `apikey` header alone (the assumption task 2
+      left open); FAILs on the insert lines mean `insert-key` is missing.
+
+    git fetch origin
+    plugins/change-record/bin/transcripts materialize ~/agent-transcripts-store
+      expect `transcripts: materialized N sessions into /Users/<you>/agent-transcripts-store`,
+      exit 0, and `~/agent-transcripts-store/projects/github-com-patrickpriestley-agent-workflow/<id>.jsonl`
+      for each session the hooks sent (659da00f, 883c53c9 and the sessions since).
+
+    plugins/change-record/bin/transcripts grade ~/agent-transcripts-store --store
+      expect, per session, `<id8> record <path or none>` and seven `<id8> <step> <verdict> <why>`
+      lines, then `transcripts: graded N sessions into .../scores; stored 7N score rows at
+      https://your-project-ref.supabase.co`. A session whose commits never reached origin
+      (a `claude -p` probe, a scratch repository) is reported as `commit ... is not in <checkout>`,
+      its record steps not applicable, and the exit status is then 1; the others are graded and
+      stored.
+
+Real use, in this cloud container. The two `dispatch` fixtures as shipped, each graded on its
+own (no commits here, so the steps that read the record do not apply):
+
+    $ transcripts grade --transcript plugins/change-record/grade/fixtures/dispatch-1-95e399c5.jsonl.gz
+      tier-declared        not_applicable  the record cannot be read: no commit for the session
+      probe-before-record  not_applicable  the record was there when the session started
+      record-before-code   not_applicable  the record was there when the session started
+      red-first            fail            no test ran before the code {'test_runs_before_code': 0, 'denied_test_runs': 6, 'failing_runs': []}
+      change-line          pass            the PR description opens with the Change: line
+      record-check         not_applicable  no commit for the session
+      outcome-filled       not_applicable  the record cannot be read: no commit for the session
+    $ transcripts grade --transcript plugins/change-record/grade/fixtures/dispatch-2-da1017af.jsonl.gz
+      tier-declared        not_applicable  the record cannot be read: no commit for the session
+      probe-before-record  not_applicable  the record was there when the session started
+      record-before-code   not_applicable  the record was there when the session started
+      red-first            pass            a test run failed before the code (toolu_01Hi1bjGyT1tDD7TMdSnAcSF) {'test_runs_before_code': 1, 'denied_test_runs': 0, 'failing_runs': ['toolu_01Hi1bjGyT1tDD7TMdSnAcSF']}
+      change-line          pass            the description in the last message has the Change: line on its own
+      record-check         not_applicable  no commit for the session
+      outcome-filled       not_applicable  the record cannot be read: no commit for the session
+
+A real session with no record, a `claude -p` question in this repository:
+
+    $ AGENT_TRANSCRIPTS=$S/nr claude -p --output-format json "What does plugins/change-record/bin/red-check do? One sentence."
+    rc=0
+    session 93793685-1af7-49f1-9225-c4b42e763af7 result: `red-check` verifies test-driven changes: ...
+    $ transcripts grade $S/nr
+    93793685 record none
+    93793685 tier-declared not_applicable no record and no code written
+    93793685 probe-before-record not_applicable no record
+    93793685 record-before-code not_applicable no record
+    93793685 red-first not_applicable no code written
+    93793685 change-line not_applicable no record
+    93793685 record-check not_applicable no record
+    93793685 outcome-filled not_applicable no record
+    transcripts: graded 1 sessions into .../scratchpad/nr/scores
+    exit 0
+
+Error path: the same archive plus a transcript cut mid-line and dispatch-2 with its commits set
+to this repository's HEAD, which has no `shout` record:
+
+    $ transcripts grade $S/err
+    transcripts: cut-0001: line 8 of the transcript is not JSON; not graded
+    transcripts: da1017af-e406-4505-ade7-a5b331fa0989: docs/changes/2026-11-08-shout.md is not in commit 21c00ba8af
+    da1017af record docs/changes/2026-11-08-shout.md
+    da1017af tier-declared fail docs/changes/2026-11-08-shout.md is not in the session's last commit
+    da1017af probe-before-record not_applicable the record was there when the session started
+    da1017af record-before-code not_applicable the record was there when the session started
+    da1017af red-first pass a test run failed before the code (toolu_01Hi1bjGyT1tDD7TMdSnAcSF)
+    da1017af change-line pass the description in the last message has the Change: line on its own
+    da1017af record-check fail docs/changes/2026-11-08-shout.md is named in the PR body but not in the head commit
+    da1017af outcome-filled not_applicable the record cannot be read: not in the last commit
+    transcripts: graded 2 sessions into .../scratchpad/err/scores, 1 with problems
+    exit 1
+
+This session's own transcript, archived into the local archive (`AGENT_TRANSCRIPTS`) by hand,
+since its first Stop comes after this, and graded at its commits (before the done marker; it
+writes its pull request description afterwards, so change-line does not yet apply):
+
+    $ transcripts archive --transcript ~/.claude/projects/-home-user-agent-workflow/6cc07e5f-8172-530e-9c9a-e23e0a49a446.jsonl
+    $ transcripts grade --session 6cc07e5f-8172-530e-9c9a-e23e0a49a446
+    6cc07e5f record docs/changes/2026-11-09-skill-transcripts.md
+    6cc07e5f tier-declared pass tier 2
+    6cc07e5f probe-before-record not_applicable the record was there when the session started
+    6cc07e5f record-before-code not_applicable the record was there when the session started
+    6cc07e5f red-first pass a test run failed before the code (toolu_019RuRmPuxvNX8KzFekCwQkx)
+    6cc07e5f change-line not_applicable the session opened no pull request and wrote no description
+    6cc07e5f record-check pass record-check: ok tier=2 mode=code
+    6cc07e5f outcome-filled not_applicable the record is approved and no task was marked done
+    transcripts: graded 1 sessions into /root/agent-transcripts/scores
+
+Before the `record-check` fix the same run said `record-check fail ... missing section: Goal;
+... missing section: Problem`, which is how the bug above was found.
+
+`--store` here, where there is no read key:
+
+    $ transcripts grade --session 6cc07e5f-... --store
+    transcripts: the store's read key is needed in /root/.config/agent-transcripts/read-key (mode 0600), on the owner's machine only
+    exit 2

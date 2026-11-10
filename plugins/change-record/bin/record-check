@@ -100,7 +100,9 @@ if [ -z "$record" ]; then
     < <(printf '%s\n' "$body" | grep -oE "(^|[^[:alnum:]_./-])$path_re" | sed -E 's#^[^d]*##' || true)
 fi
 tier0_declared=false
-printf '%s\n' "$body" | grep -qiE '^[[:space:]]*\**tier\**[[:space:]]*:[[:space:]]*\**0\**[[:space:]]*$' && tier0_declared=true
+# A here-string, not a pipe: under pipefail, grep -q quitting at its first match can kill the
+# writer with SIGPIPE and turn a match into a failure.
+grep -qiE '^[[:space:]]*\**tier\**[[:space:]]*:[[:space:]]*\**0\**[[:space:]]*$' <<< "$body" && tier0_declared=true
 if [ -z "$record" ]; then
   changed=()
   # -z: git would otherwise C-quote a non-ASCII name under core.quotePath, and the quotes
@@ -139,7 +141,7 @@ case "$status" in open|approved|done|abandoned) ;; *) problem "$record: status m
 [ "$id" = "$want_id" ] || problem "$record: id must match the file name ('$want_id', not '${id:-missing}')"
 
 # ---- sections ------------------------------------------------------------------------
-has_section() { printf '%s\n' "$rest" | grep -qE "^## $1[[:space:]]*$"; }
+has_section() { grep -qE "^## $1[[:space:]]*$" <<< "$rest"; }  # a here-string, as above
 required=("Goal" "Probed facts" "Decisions" "Tasks" "Checks" "Outcome")
 [ "$tier" = 2 ] && required+=("Problem" "Requirements" "Options and concerns")
 for s in "${required[@]}"; do has_section "$s" || problem "$record: missing section: $s"; done

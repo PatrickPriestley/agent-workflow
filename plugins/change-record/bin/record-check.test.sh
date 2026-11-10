@@ -216,5 +216,16 @@ out="$(bash "$RC" nope..HEAD 2>&1)"; rc=$?; assert_eq 2 "$rc"; has "$out" "unkno
 out="$(bash "$RC" --bogus 2>&1)"; rc=$?; assert_eq 2 "$rc"
 out="$(bash "$RC" --body /nonexistent 2>&1)"; rc=$?; assert_eq 2 "$rc"
 
+it "a large record passes every time: its sections are found though grep -q stops reading early"
+repo big; record docs/changes/2026-11-07-big.md 2 approved "Problem" "Requirements" "Options and concerns"
+python3 -c 'import sys; open(sys.argv[1], "a").write("".join("    output line %d of a long pasted run\n" % i for i in range(30000)))' docs/changes/2026-11-07-big.md
+commit "docs(change): big"
+res=""; for i in 1 2 3 4 5; do
+  # SIGPIPE at its default, as under a Python caller (transcripts grade) or a CI runner
+  python3 -c 'import subprocess, sys; r = subprocess.run(sys.argv[1:], capture_output=True, text=True); print(r.returncode)' bash "$RC" HEAD~1..HEAD --body "$(body 'Change: docs/changes/2026-11-07-big.md')" > "$TMPROOT/big.rc"
+  res="$res$(cat "$TMPROOT/big.rc")"
+done
+assert_eq 00000 "$res"
+
 printf 'passed=%d failed=%d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

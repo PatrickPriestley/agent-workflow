@@ -213,3 +213,114 @@ test('probed-before-record accepts pydoc, -m, piped stdin and a scratch script t
   ];
   for(const p of notProbes) assert.ok(!re.test(p+rec),`not a probe: ${p.slice(80,170)}`);
 });
+
+// R9 (record docs/changes/2026-11-09-skill-transcripts.md): the field graders `transcripts grade`
+// runs on real sessions take the eval graders' own fixtures, with each call's result added (a
+// field grader counts a call only when its result shows it ran), and give the eval grader's
+// verdict, except where the generalisation differs on purpose (listed with the reason).
+const transcripts=path.join(root,'..','bin','transcripts');
+const ok=(c,text='ok')=>c+result(text,false,JSON.parse(c).message.content[0].id);
+const created=c=>ok(c,'File created successfully');
+const missing=c=>c+result('File does not exist.',true,JSON.parse(c).message.content[0].id);
+const say=t=>JSON.stringify({type:'assistant',message:{content:[{type:'text',text:t}]}})+'\n';
+const field=(trace,step)=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'field-'));
+  try {
+    fs.writeFileSync(path.join(dir,'s.jsonl'),trace);
+    const r=spawnSync('python3',[transcripts,'grade','--transcript',path.join(dir,'s.jsonl'),'--cwd',cwd],{encoding:'utf8'});
+    assert.equal(r.status,0,r.stderr);
+    const row=r.stdout.trim().split('\n').map(l=>JSON.parse(l)).find(x=>x.step===step);
+    return row.verdict;
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+};
+const agree=(pairs,step,evalRe,diverge={})=>{
+  for(const [name,evalTrace,fieldTrace] of pairs){
+    const want=name in diverge?diverge[name][0]:(evalRe.test(evalTrace)?'pass':'fail');
+    assert.equal(field(fieldTrace,step),want,`${step}: ${name}${name in diverge?' ('+diverge[name][1]+')':''}`);
+  }
+};
+test('R9: record-before-code gives the eval grader\'s verdicts on its fixtures',()=>{
+  const re=grader('record-before-code','record-before-code.md').re;
+  const R=id=>writeRecord(id), r=id=>created(writeRecord(id));
+  const pairs=[
+    ['Write then code',R('2026-11-08-shout')+writeGreet,r('2026-11-08-shout')+ok(writeGreet)],
+    ['heredoc then code',heredocRecord('2026-11-08-shout')+heredocGreet,ok(heredocRecord('2026-11-08-shout'))+ok(heredocGreet)],
+    ['code then Write',writeGreet+R('2026-11-08-shout'),ok(writeGreet)+r('2026-11-08-shout')],
+    ['code then heredoc',heredocGreet+heredocRecord('2026-11-08-shout'),ok(heredocGreet)+ok(heredocRecord('2026-11-08-shout'))],
+    ['test first',readGreet+heredocRecord('2026-11-08-shout')+heredocGreet,ok(readGreet)+ok(heredocRecord('2026-11-08-shout'))+ok(heredocGreet)],
+  ];
+  // each with code after the record, as the field grader holds a step no code reached as not applicable
+  for(const c of [...codeByShell,...notCode]) pairs.push([JSON.parse(c).message.content[0].input.command,c+R('2026-11-08-shout')+writeGreet,ok(c)+r('2026-11-08-shout')+ok(writeGreet)]);
+  for(const cmd of ['cp greet.py /tmp/greet.py','cp greet.py backup/greet.py','mkdir -p /tmp/probe && cat greet.py > /tmp/probe/greet.py',
+    'cp /tmp/new_greet.py greet.py','cp /tmp/greet.py ./greet.py','cat /tmp/x > /tmp/claude-eval-x/home/cwd/greet.py']){
+    const c=call('Bash',{command:cmd});
+    pairs.push([cmd,c+R('2026-11-08-shout')+writeGreet,ok(c)+r('2026-11-08-shout')+ok(writeGreet)]);
+  }
+  agree(pairs,'record-before-code',re,{'cp greet.py backup/greet.py':['fail','a new code file in the repository is code, wherever it is copied from']});
+  assert.equal(field(writeGreet+R('2026-11-08-shout'),'record-before-code'),'not_applicable','calls with no result never ran: no record, no code');
+});
+test('R9: red-first gives saw-it-fail\'s verdicts on its fixtures',()=>{
+  const re=grader('red-first','saw-it-fail.md').re;
+  const run=call('Bash',{command:'python3 -m unittest discover -s tests -t . 2>&1 | tail -5'},'toolu_run');
+  const probeCall=call('Bash',{command:'python3 -c "import fileinput; assert False"'},'toolu_probe');
+  const probeFailed=result('Exit code 1\nTraceback (most recent call last):\nAssertionError',true,'toolu_probe');
+  const testsByShell=heredocGreet.replace('greet.py','tests/test_greet.py');
+  const both=call('Bash',{command:"cat > greet.py <<'EOF'\nimport sys\nEOF\npython3 -m unittest discover -s tests -t ."});
+  agree([
+    ['red then green',writeTest+unittest+failed+writeGreet+unittest+passed,ok(writeTest)+unittest+failed+ok(writeGreet)+unittest+passed],
+    ['an erroring run',writeTest+testsByShell+unittest+result('Ran 1 test\n\nFAILED (errors=1)',true)+heredocGreet,
+      ok(writeTest)+ok(testsByShell)+unittest+result('Ran 1 test\n\nFAILED (errors=1)',true)+ok(heredocGreet)],
+    ['green, code, red',writeTest+unittest+passed+writeGreet+unittest+failed,ok(writeTest)+unittest+passed+ok(writeGreet)+unittest+failed],
+    ['code first, then red',writeTest+writeGreet+unittest+failed,ok(writeTest)+ok(writeGreet)+unittest+failed],
+    ['did not reach the tests',writeTest+unittest+result('Exit code 1\nTraceback\nSyntaxError: invalid syntax',true)+writeGreet,
+      ok(writeTest)+unittest+result('Exit code 1\nTraceback\nSyntaxError: invalid syntax',true)+ok(writeGreet)],
+    ['the word in another result',writeTest+result('AssertionError is what unittest raises',false)+writeGreet,
+      writeTest+result('AssertionError is what unittest raises',false)+ok(writeGreet)],
+    ['a green run, a failing probe',writeTest+run+result('Ran 3 tests\n\nOK',false,'toolu_run')+probeCall+probeFailed+writeGreet,
+      ok(writeTest)+run+result('Ran 3 tests\n\nOK',false,'toolu_run')+probeCall+probeFailed+ok(writeGreet)],
+    ['the run failed, flagged',writeTest+run+result('Ran 4 tests\n\nFAILED (failures=1)',true,'toolu_run')+writeGreet,
+      ok(writeTest)+run+result('Ran 4 tests\n\nFAILED (failures=1)',true,'toolu_run')+ok(writeGreet)],
+    ['the run failed, through tail',writeTest+run+result('Ran 4 tests\n\nFAILED (failures=1)',false,'toolu_run')+writeGreet,
+      ok(writeTest)+run+result('Ran 4 tests\n\nFAILED (failures=1)',false,'toolu_run')+ok(writeGreet)],
+    ['results out of order',writeTest+run+probeCall+probeFailed+result('Ran 3 tests\n\nOK',false,'toolu_run')+writeGreet,
+      ok(writeTest)+run+probeCall+probeFailed+result('Ran 3 tests\n\nOK',false,'toolu_run')+ok(writeGreet)],
+    ['code and run in one command',writeTest+both,ok(writeTest)+ok(both,'Ran 1 test\n\nFAILED (failures=1)')],
+  ],'red-first',re);
+  const denied=call('Bash',{command:'python3 -m unittest discover -s tests -t .'},'toolu_d');
+  assert.equal(field(ok(writeTest)+denied+result('This command requires approval',true,'toolu_d')+ok(writeGreet),'red-first'),'fail','a denied run is not run');
+});
+test('R9: probe-before-record gives probed-before-record\'s verdicts on its fixtures',()=>{
+  const re=grader('probed-facts-labelled','probed-before-record.md').re;
+  const id='2026-11-08-names-file', R=writeRecord(id), r=created(writeRecord(id));
+  const readR=call('Bash',{command:`cat docs/changes/README.md docs/changes/TEMPLATE.md; ls docs/changes/${id}.md`});
+  const readF=call('Read',{file_path:`${cwd}docs/changes/${id}.md`});
+  const pairs=[
+    ['probe then Write',probe+R,ok(probe)+r],['probe then heredoc',probe+heredocRecord(id),ok(probe)+ok(heredocRecord(id))],
+    ['Write then probe',R+probe,r+ok(probe)],['heredoc then probe',heredocRecord(id)+probe,ok(heredocRecord(id))+ok(probe)],
+    ['cp of the template then probe',cpRecord(id)+probe,ok(cpRecord(id))+ok(probe)],
+    ['reading docs/changes first',readRecord(id)+probe+R,ok(readR)+missing(readF)+ok(probe)+r],
+    ['probe and record in one command',call('Bash',{command:`python3 -c "import fileinput" && cat > docs/changes/${id}.md <<'EOF'\n---\nEOF`})+R,
+      ok(call('Bash',{command:`python3 -c "import fileinput" && cat > docs/changes/${id}.md <<'EOF'\n---\nEOF`}))+r],
+  ];
+  const probes=[
+    [call('Bash',{command:'python3 -m pydoc fileinput | head -40'})],[call('Bash',{command:'python3 -m fileinput --help; pydoc3 fileinput.input'})],
+    [call('Bash',{command:'echo "import fileinput; print(fileinput.input)" | python3'})],
+    [call('Write',{file_path:`${cwd}../probe.py`,content:'import fileinput\nprint(fileinput.input)\n'}),call('Bash',{command:'python3 ../probe.py'})],
+    [call('Bash',{command:"mkdir -p /tmp/p && cat > /tmp/p/probe.py <<'EOF'\nimport fileinput\nfor line in fileinput.input(['-']): pass\nEOF\npython3 /tmp/p/probe.py < /dev/null"})],
+    [call('Bash',{command:"cat > tests/test_names.py <<'EOF'\nimport fileinput\nEOF\npython3 -m unittest discover -s tests -t ."})],
+    [call('Write',{file_path:`${cwd}../probe.py`,content:'import fileinput\n'})],
+    [call('Write',{file_path:`${cwd}../probe.py`,content:'import sys\n'}),call('Bash',{command:'python3 ../probe.py'})],
+    [call('Bash',{command:'grep -n fileinput greet.py; python3 greet.py names.txt'})],
+  ];
+  probes.forEach((cs,i)=>{
+    pairs.push([`probe ${i} first`,cs.join('')+R,cs.map(c=>ok(c)).join('')+r]);
+    pairs.push([`probe ${i} after`,R+cs.join(''),r+cs.map(c=>ok(c)).join('')]);
+  });
+  agree(pairs,'probe-before-record',re,{'probe 7 first':['pass','a scratch script that is run is a probe; which dependency it probes is for the reader, since no field grader knows the change\'s']});
+});
+test('R9: tier-declared reads Tier: 0 as declares-tier-0 does',()=>{
+  const re=grader('tier-0-no-record','declares-tier-0.md').re;
+  const typo=call('Edit',{file_path:`${cwd}greet.py`,old_string:'teh',new_string:'the'});
+  agree(['Tier: 0','**Tier: 0**','**Tier**: 0','**Tier:** 0','Tier:0','- Tier: 0 (no behaviour change)','Tier: 1','Tier: 10','tier: 0']
+    .map(s=>[s,s,ok(typo)+say(`Fixed the typo.\n\n${s}`)]),'tier-declared',re);
+});

@@ -6,6 +6,8 @@
   transcripts push [--session ID]... [--background]
   transcripts materialize DIR [--session ID]... [--repo-dir DIR]
   transcripts redact < lines > redacted-lines
+  transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store]
+  transcripts grade --transcript FILE [--cwd DIR]
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
 transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
@@ -60,6 +62,18 @@ from the git repository at --repo-dir (default the current directory). It checks
 against its chain id and writes no session whose chain does not match.
 
 redact applies the redaction to lines on stdin.
+
+grade scores each session in DIR (a local archive, or a folder materialize wrote; default the
+archive AGENT_TRANSCRIPTS names) against the change skill's steps with the field graders in
+grade/fields.py: tier-declared, probe-before-record, record-before-code, red-first,
+change-line, record-check and outcome-filled, each pass, fail or not_applicable with its
+evidence. The record is read at the session's first and last commit from the git repository at
+--repo-dir (default the current directory), and record-check runs on that range. It writes one
+row per step to DIR/scores/<sessionId>.json and prints a summary. --store also inserts the rows
+into the store's scores table at AGENT_TRANSCRIPTS_URL with the read key (the owner's machine
+only). A session it cannot grade (a line that is not JSON, a commit the repository lacks) is
+reported and the others are graded; the exit status is then 1. --transcript grades one
+transcript file, with no index entry and no commit, and prints the rows as JSON lines.
 """
 import base64
 import glob
@@ -561,7 +575,7 @@ def key_file(name, required):
         st = os.stat(p)
     except FileNotFoundError:
         if required:
-            raise StoreError(f"materialize needs the store's read key in {p} (mode 0600)")
+            raise StoreError(f"the store's read key is needed in {p} (mode 0600), on the owner's machine only")
         return None
     if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise StoreError(f"{p} can be read by other users; chmod 600 it")
@@ -907,6 +921,206 @@ def cmd_materialize(args):
     print(f"transcripts: materialized {done} sessions into {out}" + (f", {failed} failed" if failed else ""))
     return 1 if failed else 0
 
+# ---- grading ----
+
+GRADER = "fields/1"  # bump when a grader's rules change, so scores from two rule sets are not mixed
+
+
+def git_run(repo, *args):
+    try:
+        r = subprocess.run(["git", "-C", repo] + list(args), capture_output=True, timeout=20,
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    except (OSError, subprocess.SubprocessError):
+        return 1, b""
+    return r.returncode, r.stdout
+
+
+def has_commit(repo, c):
+    return bool(c) and re.match(r"^[0-9a-f]{7,40}$", c) is not None and git_run(repo, "cat-file", "-e", c + "^{commit}")[0] == 0
+
+
+def record_reader(repo, commit, note):
+    def read(path):
+        if not commit:
+            raise LookupError("no commit recorded for the session")
+        if not has_commit(repo, commit):
+            raise LookupError(f"commit {commit[:10]} is not in {repo}")
+        rc, out = git_run(repo, "show", f"{commit}:{path}")
+        if rc != 0:
+            note(f"{path} is not in commit {commit[:10]}")
+            return None
+        return out.decode("utf-8", "replace")
+    return read
+
+
+def record_checker(repo, first, last, scratch):
+    def check(path):
+        if not last:
+            raise LookupError("no commit recorded for the session")
+        if not has_commit(repo, last):
+            raise LookupError(f"commit {last[:10]} is not in {repo}")
+        base = first if has_commit(repo, first) else (last + "^" if has_commit(repo, last + "^") else last)
+        body = os.path.join(scratch, "body.md")
+        with open(body, "w") as f:
+            f.write(f"Change: {path}\n")
+        try:
+            r = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "record-check"),
+                                f"{base}..{last}", "--body", body, "--json"], cwd=repo, capture_output=True, text=True, timeout=60)
+            res = json.loads(r.stdout.strip().splitlines()[-1])
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError) as e:
+            raise LookupError(f"record-check did not run ({e})")
+        good = res.get("status") == "pass"
+        return ("pass" if good else "fail"), {
+            "why": f"record-check: ok tier={res.get('tier')} mode={res.get('mode')}" if good else "; ".join(res.get("problems") or [])[:500],
+            "problems": res.get("problems") or [], "mode": res.get("mode"), "base": res.get("base"), "head": res.get("head")}
+    return check
+
+
+def first_cwd(lines):
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("cwd"):
+            return d["cwd"]
+    return None
+
+
+def session_lines(d, sid, entry):
+    """The main transcript's lines from an archive (its parts) or a materialized folder."""
+    if os.path.isdir(os.path.join(d, "parts", sid)):
+        gen = ((entry.get("streams") or {}).get("main") or {}).get("generation", 1)
+        files = sorted(glob.glob(os.path.join(d, "parts", sid, "main", f"g{gen}-*.jsonl")))
+    else:
+        files = sorted(glob.glob(os.path.join(d, "projects", "*", sid + ".jsonl")))
+    if not files:
+        raise LookupError("no transcript for the session")
+    return b"".join(open(f, "rb").read() for f in files).splitlines()
+
+
+def change_skill(entry):
+    for sk in (entry or {}).get("skills") or []:
+        if sk.get("name") == "change" or str(sk.get("name") or "").endswith(":change"):
+            return sk["name"], sk.get("blob")
+    return "change-record:change", None
+
+
+def grade_one(fields, lines, sid, entry, repo, scratch, note, root=None):
+    stops = entry or {}
+    first = (stops.get("first_stop") or {}).get("commit")
+    last = (stops.get("last_stop") or {}).get("commit")
+    if root is None:
+        cwd = first_cwd(lines)
+        root = (git(cwd, "rev-parse", "--show-toplevel") if cwd and os.path.isdir(cwd) else None) or cwd
+    if entry is None:
+        at_first = at_last = check = None
+    else:
+        at_first = record_reader(repo, first, lambda m: None)
+        at_last = record_reader(repo, last, note)
+        check = record_checker(repo, first, last, scratch)
+    record, verdicts = fields.grade(lines, root, at_first, at_last, check)
+    skill_name, blob = change_skill(entry)
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    return record, [{"session_id": sid, "step": s, "verdict": v, "skill": skill_name, "skill_blob": blob,
+                     "grader": GRADER, "evidence": ev, "graded_at": now} for s, v, ev in verdicts]
+
+
+def cmd_grade(args):
+    d, only, repo, store, transcript, cwd, i = None, [], os.getcwd(), False, None, None, 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--session", "--repo-dir", "--transcript", "--cwd") and i + 1 < len(args):
+            v = args[i + 1]
+            if a == "--session":
+                only.append(v)
+            elif a == "--repo-dir":
+                repo = v
+            elif a == "--transcript":
+                transcript = v
+            else:
+                cwd = v
+            i += 2
+        elif a == "--store":
+            store, i = True, i + 1
+        elif d is None and not a.startswith("--"):
+            d, i = a, i + 1
+        else:
+            say("usage: transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store] | grade --transcript FILE [--cwd DIR]")
+            return 2
+    sys.dont_write_bytecode = True  # no __pycache__ beside the plugin's code
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade"))
+    import fields
+    import tempfile
+    repo = os.path.abspath(repo)
+    if transcript:
+        try:
+            lines = (gzip.open(transcript) if transcript.endswith(".gz") else open(transcript, "rb")).read().splitlines()
+            sid = os.path.basename(transcript).split(".")[0]
+            _, rows = grade_one(fields, lines, sid, None, repo, None, say, root=os.path.abspath(cwd) if cwd else None)
+        except (OSError, fields.Unparsable) as e:
+            say(f"{transcript}: {e}")
+            return 1
+        for r in rows:
+            print(json.dumps(r))
+        return 0
+    try:
+        if d is None:
+            d = archive_dir()
+            if d is None:
+                raise PermissionError("grade needs DIR, or AGENT_TRANSCRIPTS set to the archive")
+        else:
+            d = os.path.abspath(d)
+            tree = inside_work_tree(d)
+            if tree:
+                raise PermissionError(f"{d} is inside the working tree of {tree}; scores are written beside the transcripts")
+        url = key = None
+        if store:
+            url = store_url()
+            if url is None:
+                raise StoreError("--store needs AGENT_TRANSCRIPTS_URL, the store's URL")
+            key = key_file("read-key", required=True)
+    except (PermissionError, StoreError) as e:
+        say(str(e))
+        return 2
+    sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
+    sids = [s for s in sids if not only or s in only]
+    graded = failed = stored = 0
+    with tempfile.TemporaryDirectory() as scratch:
+        for sid in sids:
+            notes = []
+            try:
+                entry = json.load(open(os.path.join(d, "sessions", sid + ".json")))
+                lines = session_lines(d, sid, entry)
+                record, rows = grade_one(fields, lines, sid, entry, repo, scratch, notes.append)
+            except (OSError, ValueError, LookupError, fields.Unparsable) as e:
+                say(f"{sid}: {e}; not graded")
+                failed += 1
+                continue
+            for n in notes:
+                say(f"{sid}: {n}")
+            errors = [r["evidence"]["error"] for r in rows if r["evidence"].get("error")]
+            for e in sorted(set(errors)):
+                say(f"{sid}: {e}; the steps that need it are not graded")
+            failed += bool(errors)
+            write_atomic(os.path.join(d, "scores", sid + ".json"), (json.dumps(rows, indent=2) + "\n").encode())
+            graded += 1
+            print(f"{sid[:8]} record {record or 'none'}")
+            for r in rows:
+                print(f"{sid[:8]} {r['step']} {r['verdict']} {r['evidence'].get('why', '')}")
+            if store:
+                try:
+                    for r in rows:
+                        stored += insert(url, key, "scores", r)
+                except StoreError as e:
+                    say(f"{sid}: {e}; its rows are kept in {d}/scores")
+                    failed += 1
+                    store = False
+    print(f"transcripts: graded {graded} sessions into {d}/scores" + (f", {failed} with problems" if failed else "")
+          + (f"; stored {stored} score rows at {url}" if url else ""))
+    return 1 if failed else 0
+
+
 def main(argv):
     os.umask(0o077)  # the archive is as private as Claude Code's own transcripts: owner only
     if argv[:1] == ["archive"]:
@@ -917,6 +1131,8 @@ def main(argv):
         return cmd_push(argv[1:])
     if argv[:1] == ["materialize"]:
         return cmd_materialize(argv[1:])
+    if argv[:1] == ["grade"]:
+        return cmd_grade(argv[1:])
     if argv[:1] == ["redact"]:
         for raw in sys.stdin.buffer:
             sys.stdout.buffer.write(redact_line(raw))

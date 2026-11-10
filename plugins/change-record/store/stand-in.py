@@ -24,7 +24,8 @@ PORTFILE, LOGFILE, READKEY = sys.argv[1:4]
 OPTS = dict(zip(sys.argv[4::2], sys.argv[5::2]))
 HANG = float(OPTS.get("--hang", 0))
 REFUSE = OPTS.get("--refuse")
-KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id")}
+KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
+        "scores": ("session_id", "step", "grader", "graded_at")}
 TABLES = {"chunks": [], "sessions": [], "scores": []}
 LOCK = threading.Lock()
 DENIED = {"code": "42501", "details": None, "hint": None, "message": "permission denied"}
