@@ -1,7 +1,7 @@
 ---
 id: 2026-11-09-skill-transcripts
 tier: 2
-status: approved
+status: done
 requester: Patrick Priestley, in chat on 2026-11-09 and 2026-11-10 ("I want to track skill transcripts so I can evaluate them", "We don't have to use skill doctor as written if creating our own evaluation agent makes more sense", "rewrite the record as capture and evaluate", "How do we register transcripts across multiple sessions and machines", "add it to the record", "Didn't we say database over repo?", "Works for me")
 approvers: [Patrick Priestley, 2026-11-10]
 plugin: plugins/change-record
@@ -1227,3 +1227,13 @@ Both found by the real report above, each fixed red first:
 The earlier note that a cloud session's final lines are lost was wrong; it is corrected above.
 All suites: transcripts 81/0, transcripts-store 82/0, transcripts-grade 62/0, transcripts-judge
 68/0, red-check 107/0, record-check 85/0, dispatch 218/0, `cases.test.cjs` 25/0.
+
+### Closed (2026-11-11)
+
+All four tasks and the follow-up are merged (PRs #40 to #44). Requirements R1 to R9 and R11
+are met, and the read path is verified against the real store. One part of R10 is still
+open and is the owner's to run: the agreement check with `opencode-go/kimi-k3.1-pro`
+(`transcripts judge DIR --judge opencode`), which waits on OpenCode Go balance; until then the
+report says the agreement rate has not been measured. The secret key saved on the temporary
+`agent-workflow-admin` environment is the owner's to delete. Capturing and grading Codex and
+Cursor sessions is a separate change, drafted as 2026-11-11-agent-neutral-transcripts.
