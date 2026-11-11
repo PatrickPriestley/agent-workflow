@@ -2,7 +2,8 @@
 # Tests for transcripts grade (record docs/changes/2026-11-09-skill-transcripts.md, R8 and R9):
 # the field graders on the two real dispatch sessions (grade/fixtures, redacted) and on made-up
 # sessions, in both tool-result key orders, with flagged and unflagged failures and denials.
-# Fixtures use made-up addresses and tokens only. Needs bash, git, gzip and python3.
+# Also the sheet a person labels from, the label files and transcripts accuracy (record
+# docs/changes/2026-11-11-grading-trust.md, R1 to R3). Fixtures use made-up addresses and tokens only. Needs bash, git, gzip and python3.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 T="$here/transcripts"; STANDIN="$here/../store/stand-in.py"; FIX="$here/../grade/fixtures"
@@ -501,6 +502,186 @@ it "with no first commit, a record the session read or edited before writing it 
 out="$("$T" grade --transcript "$W/$D2.jsonl" 2>&1)"
 has "$out" '"step": "record-before-code", "verdict": "not_applicable"'
 has "$out" "the record was there when the session started"
+
+# ---- record docs/changes/2026-11-11-grading-trust.md: the sheet, the labels and accuracy ----
+STEPS7="tier-declared probe-before-record record-before-code red-first change-line record-check outcome-filled"
+STEPS_RE="$(printf '%s' "$STEPS7" | tr ' ' '|')"
+LAB="$TMPROOT/labels"
+sheet() { (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$AR" "$T" sheet --repo-dir "$REPO" --labels "$LAB" "$@" 2>&1); }
+sha_of() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
+lines_of() { wc -l < "$1" | tr -d ' '; }
+# leaks SHEET SCORES: what a sheet shows of the grader's rows (their reasons, a verdict beside a step, counts)
+LEAKS="$TMPROOT/leaks.py"; cat > "$LEAKS" <<'PY'
+import json, re, sys
+try:
+    sheet, rows = open(sys.argv[1]).read(), json.load(open(sys.argv[2]))
+except OSError as e:
+    sys.exit(print(f"cannot read: {e}"))
+found = []
+for r in rows:
+    why = r["evidence"].get("why") or ""
+    if len(why) >= 12 and why in sheet:
+        found.append("why: " + why)
+    if re.search(re.escape(r["step"]) + r"\W{0,6}" + r["verdict"].replace("_", "[ _]") + r"\b", sheet):
+        found.append(r["step"] + " beside " + r["verdict"])
+for k in ("denied_test_runs", "test_runs_before_code", "failing_runs", "first_code_write", "not_applicable", '"verdict"', "fields/1"):
+    if k in sheet:
+        found.append(k)
+print("; ".join(found) or "none")
+PY
+leaks() { python3 "$LEAKS" "$1" "$2"; }
+
+echo "R2 (grading-trust): the sheet shows each step's evidence and hides the grader's verdict"
+out="$(sheet --session "$D1" --session ${S}4)"; rc=$?
+it "sheet exits 0 and writes a sheet per session beside the transcripts"
+assert_eq "0 yes yes" "$rc $([ -f "$AR/sheets/$D1.md" ] && echo yes) $([ -f "$AR/sheets/${S}4.md" ] && echo yes)"
+s4="$(cat "$AR/sheets/${S}4.md" 2>/dev/null)"
+it "the sheet shows every call in order: the command, the file written, and what came back"
+has "$s4" "python3 -m unittest discover -s tests -t ."
+has "$s4" "This command requires approval"
+has "$s4" "FAILED (failures=1)"
+has "$s4" "greet.py"
+it "a call that never got a result is shown as such, not left out"
+has "$(printf '%s\n' "$s4" | grep -A3 -F 'pytest -q')" "no result"
+it "the sheet has a section for each of the seven steps"
+assert_eq 7 "$(printf '%s\n' "$s4" | grep -cE "^### ($STEPS_RE)\$")"
+it "the made-up session's sheet holds none of the grader's reasons, verdicts or counts"
+assert_eq none "$(leaks "$AR/sheets/${S}4.md" "$AR/scores/${S}4.json")"
+d1="$(cat "$AR/sheets/$D1.md" 2>/dev/null)"
+it "the real session's sheet shows its denied test runs and its first prompt"
+has "$d1" "python3 -m unittest discover -s tests -t ."
+has "$d1" "This Bash command contains multiple operations"
+has "$d1" "# Task shout of change 2026-11-08-shout"
+it "the real session's sheet holds none of the grader's reasons, verdicts or counts"
+assert_eq none "$(leaks "$AR/sheets/$D1.md" "$AR/scores/$D1.json")"
+it "the sheet shows the record at the session's last commit, for the steps that read it"
+has "$d1" "approvers: [A Requester, 2026-11-08]"
+it "a subagent's call kept inline is left out of the sheet, as the graders leave it out"
+sheet --session ${S}6 > /dev/null
+s6="$(cat "$AR/sheets/${S}6.md" 2>/dev/null)"
+has "$s6" '`c0`'
+lacks "$s6" '`s0`'
+it "the sheet is redacted: a token in a command does not reach it"
+mkcase ${S}r <<EOF
+["call","b1","Bash",{"command":"curl -H 'Authorization: Bearer made-up-token-0123456789abcdef' https://example.com/x"}]
+["result","b1","ok for someone@example.com",false,"a"]
+EOF
+sheet --session ${S}r > /dev/null
+lacks "$(cat "$AR/sheets/${S}r.md" 2>/dev/null || echo made-up-token-0123456789abcdef)" "made-up-token-0123456789abcdef"
+
+echo "R1 (grading-trust): the sheet leaves a label file to fill in, keyed by session and transcript hash"
+lab="$(cat "$LAB/$D1.txt" 2>/dev/null)"
+it "the label file names the session and the hash and line count of the transcript it was made from"
+has "$lab" "session: $D1"
+has "$lab" "transcript: sha256:$(sha_of "$W/$D1.jsonl") lines:$(lines_of "$W/$D1.jsonl")"
+it "it has a line per step with no verdict on it, and nobody's name"
+assert_eq "7 1" "$(printf '%s\n' "$lab" | grep -cE "^($STEPS_RE):[[:space:]]*\$") $(printf '%s\n' "$lab" | grep -c '^labelled-by:[[:space:]]*$')"
+it "the sheet says where the verdicts go"
+has "$d1" "$LAB/$D1.txt"
+it "building the sheet again keeps a label file a person has written in"
+{ printf 'session: %s\ntranscript: sha256:%064d lines:1\nlabelled-by: A Labeller, 2026-11-11\n' "$D1" 0
+  for s in $STEPS7; do echo "$s: pass | kept"; done; } > "$LAB/$D1.txt"
+out="$(sheet --session "$D1")"
+has "$(cat "$LAB/$D1.txt")" "tier-declared: pass | kept"
+it "and says the label was made from another version of the transcript"
+has "$out" "stale"
+
+it "a label a person wrote from this very transcript is kept and is not called stale"
+{ printf 'session: %s\ntranscript: sha256:%s lines:%s\nlabelled-by: A Labeller, 2026-11-11\n' "$D1" "$(sha_of "$W/$D1.jsonl")" "$(lines_of "$W/$D1.jsonl")"
+  for s in $STEPS7; do echo "$s: pass | kept"; done; } > "$LAB/$D1.txt"
+out="$(sheet --session "$D1")"
+lacks "$out" "stale"
+has "$out" "0 new, 1 kept"
+has "$(cat "$LAB/$D1.txt")" "red-first: pass | kept"
+it "a label file nobody wrote in is made again when the transcript has changed"
+printf 'session: %s\ntranscript: sha256:%064d lines:1\nlabelled-by:\n' "$D1" 0 > "$LAB/$D1.txt"; for s in $STEPS7; do echo "$s:" >> "$LAB/$D1.txt"; done
+out="$(sheet --session "$D1")"
+has "$out" "1 new, 0 kept"
+has "$(cat "$LAB/$D1.txt")" "sha256:$(sha_of "$W/$D1.jsonl")"
+
+echo "R2 (grading-trust): a sheet from transcript files, as the fixtures are kept"
+out="$("$T" sheet --transcript "$FIX"/evals/eval-01-4c14e156.jsonl.gz "$FIX"/dispatch-2-da1017af.jsonl.gz --out "$TMPROOT/fsheets" --labels "$TMPROOT/flabels" 2>&1)"; rc=$?
+E1=4c14e156-58e9-4138-8bc2-a3e13e9b00fa
+it "each file gives a sheet and a label file named by the session id its lines carry"
+assert_eq "0 yes yes yes yes" "$rc $(for f in fsheets/$E1.md fsheets/$D2.md flabels/$E1.txt flabels/$D2.txt; do [ -f "$TMPROOT/$f" ] && echo yes || echo no; done | paste -sd' ' -)"
+it "the hash is of the unzipped lines"
+has "$(cat "$TMPROOT/flabels/$D2.txt" 2>/dev/null)" "sha256:$(sha_of "$W/$D2.jsonl")"
+it "sheets are not written inside a working tree"
+out="$("$T" sheet --transcript "$FIX"/dispatch-2-da1017af.jsonl.gz --out "$REPO/sheets" --labels "$TMPROOT/flabels" 2>&1)"; rc=$?
+assert_eq "2 no" "$rc $([ -d "$REPO/sheets" ] && echo yes || echo no)"
+has "$out" "inside the working tree"
+
+echo "R3 (grading-trust): accuracy compares the graders' rows with the labels"
+ACC="$FIX/accuracy"
+out="$("$T" accuracy "$ACC" --labels "$ACC/labels" 2>"$TMPROOT/acc.err")"; rc=$?
+it "known labels and score rows give the stored expected table, and exit 0"
+assert_eq "0" "$rc"
+if [ "$out" = "$(cat "$ACC/expected.md")" ]; then ok; else bad "$(printf '%s\n' "$out" | diff - "$ACC/expected.md" | head -20)"; fi
+it "a label whose transcript has since grown is stale and is not counted"
+cp -R "$ACC" "$TMPROOT/acc"; A1=e1000000-0000-0000-0000-000000000001
+head -1 "$TMPROOT/acc/projects/made-up/$A1.jsonl" > "$TMPROOT/line"; cat "$TMPROOT/line" >> "$TMPROOT/acc/projects/made-up/$A1.jsonl"
+out="$("$T" accuracy "$TMPROOT/acc" --labels "$TMPROOT/acc/labels" 2>&1)"; rc=$?
+has "$out" "$A1: stale label, made from a transcript of 3 lines"
+has "$out" "| red-first | 2 | 1 | 1 | 0 | 0 |"
+has "$out" "2 sessions are counted"
+it "a stale label is not an error: the exit status is still 0"
+assert_eq 0 "$rc"
+it "accuracy on transcript files grades them and counts a made-up label"
+mkdir -p "$TMPROOT/tl"
+{ printf 'session: %s\ntranscript: sha256:%s lines:%s\nlabelled-by: A Labeller, 2026-11-11\n' "$D1" "$(sha_of "$W/$D1.jsonl")" "$(lines_of "$W/$D1.jsonl")"
+  for s in $STEPS7; do
+    if [ "$s" = red-first ]; then echo "$s: pass | made-up: the label says a run was red"; else echo "$s: na | made-up"; fi
+  done; } > "$TMPROOT/tl/$D1.txt"
+out="$("$T" accuracy --transcript "$FIX"/dispatch-1-95e399c5.jsonl.gz "$FIX"/dispatch-2-da1017af.jsonl.gz --labels "$TMPROOT/tl" 2>&1)"; rc=$?
+has "$out" "- red-first, false fail, $D1: the label says pass (made-up: the label says a run was red); the grader says fail"
+has "$out" "$D2: no label file"
+assert_eq 0 "$rc"
+
+echo "R1 (grading-trust): a label file with a missing step, an unknown verdict, no reason or no name is rejected"
+A2=e2000000-0000-0000-0000-000000000002
+# badlabel PATTERN REPLACEMENT: session 2's label file changed so, then accuracy run on the copy
+badlabel() {
+  rm -rf "$TMPROOT/acc"; cp -R "$ACC" "$TMPROOT/acc"
+  python3 -c 'import re,sys; p=sys.argv[1]; s=open(p).read(); n=re.sub(sys.argv[2], sys.argv[3], s, flags=re.M); assert n != s; open(p,"w").write(n)' "$TMPROOT/acc/labels/$A2.txt" "$1" "$2"
+  out="$("$T" accuracy "$TMPROOT/acc" --labels "$TMPROOT/acc/labels" 2>&1)"; rc=$?
+}
+it "a missing step: the file is named with the step, nothing of it is counted, and the exit status is 1"
+badlabel '^red-first:.*\n' ''
+assert_eq 1 "$rc"
+has "$out" "$A2.txt: no line for red-first"
+has "$out" "| change-line | 2 | 2 | 0 | 0 | 0 |"
+it "an unknown verdict"
+badlabel '^red-first: pass' 'red-first: passed'
+assert_eq 1 "$rc"
+has "$out" "$A2.txt: red-first: unknown verdict 'passed' (pass, fail or na)"
+it "a verdict with no reason"
+badlabel '^record-check: pass .*' 'record-check: pass'
+assert_eq 1 "$rc"
+has "$out" "$A2.txt: record-check: a verdict needs a one-line reason after |"
+it "verdicts with nobody's name on them"
+badlabel '^labelled-by: .*' 'labelled-by:'
+assert_eq 1 "$rc"
+has "$out" "$A2.txt: verdicts with no labelled-by"
+it "a step named twice, a line that is no step, and a file named for another session"
+badlabel '^(red-first: .*\n)' '\1\1'
+has "$out" "$A2.txt: red-first is there twice"
+badlabel '^red-first:' 'red-frist:'
+has "$out" "$A2.txt: unknown line 'red-frist"
+badlabel '^session: e2' 'session: e9'
+has "$out" "$A2.txt: the file is named for another session"
+it "a hash that is not one is rejected, not read as stale"
+badlabel '^transcript: sha256:[0-9a-f]+' 'transcript: sha256:xyz'
+assert_eq 1 "$rc"
+has "$out" "$A2.txt: no transcript: sha256:<64 hex> lines:<n> line"
+
+echo "R1 (grading-trust): the label files kept in grade/labels load, and match the fixture sessions"
+out="$("$T" accuracy --transcript "$FIX"/*.jsonl.gz "$FIX"/evals/*.jsonl.gz 2>&1)"; rc=$?
+it "every label file is well formed (exit 0) and none is stale"
+assert_eq 0 "$rc"
+lacks "$out" "stale label"
+it "each of the fifteen fixture sessions has a label file"
+lacks "$out" "no label file"
+has "$out" "of 15 with a transcript here"
 
 echo "transcripts grade: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

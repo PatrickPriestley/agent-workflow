@@ -8,6 +8,10 @@
   transcripts redact < lines > redacted-lines
   transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store]
   transcripts grade --transcript FILE [--cwd DIR]
+  transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR]
+  transcripts sheet --transcript FILE... --out DIR [--labels DIR]
+  transcripts accuracy [DIR] [--labels DIR]
+  transcripts accuracy --transcript FILE... [--labels DIR]
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
 transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
@@ -74,6 +78,20 @@ into the store's scores table at AGENT_TRANSCRIPTS_URL with the read key (the ow
 only). A session it cannot grade (a line that is not JSON, a commit the repository lacks) is
 reported and the others are graded; the exit status is then 1. --transcript grades one
 transcript file, with no index entry and no commit, and prints the rows as JSON lines.
+
+sheet writes, for each session in DIR, DIR/sheets/<sessionId>.md: what the session did, call by
+call, with the question each step asks and nothing a grader concluded, redacted. A person
+labels from it. It also leaves a label file to fill in, <labels>/<sessionId>.txt (default the
+plugin's grade/labels), holding the hash of the transcript; a label file a person has written
+in is never overwritten. --transcript makes the sheets of transcript files (gzipped or not)
+into --out, which like DIR is outside every working tree.
+
+accuracy compares the field graders' latest score rows in DIR/scores with the label files
+(grade/labels.py has the format) and prints, per step: sessions labelled, agreements, false
+fails, false passes and false n/a, then each disagreement with its session id, then what was
+not counted and why. A label whose transcript hash no longer matches is stale and is not
+counted. --transcript grades the files as `grade --transcript` does and compares those rows.
+It exits 1 when a label file is rejected (a missing step, an unknown verdict), 0 otherwise.
 """
 import base64
 import glob
@@ -1130,6 +1148,183 @@ def cmd_grade(args):
     return 1 if failed else 0
 
 
+# ---- labels: the sheet a person labels from, and the graders' accuracy against the labels ----
+
+def labels_args(args, usage, takes):
+    """DIR, --transcript FILE..., and the options in takes; None after a usage message."""
+    o, i = {"dir": None, "files": [], "only": [], "repo": os.getcwd(), "out": None,
+            "labels": os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade", "labels")}, 0
+    names = {"--session": "only", "--repo-dir": "repo", "--labels": "labels", "--out": "out"}
+    while i < len(args):
+        a = args[i]
+        if a in names and names[a] in takes and i + 1 < len(args):
+            if a == "--session":
+                o["only"].append(args[i + 1])
+            else:
+                o[names[a]] = args[i + 1]
+            i += 2
+        elif a == "--transcript" and i + 1 < len(args) and not args[i + 1].startswith("--"):
+            i += 1
+            while i < len(args) and not args[i].startswith("--"):
+                o["files"].append(args[i])
+                i += 1
+        elif o["dir"] is None and not a.startswith("--"):
+            o["dir"], i = a, i + 1
+        else:
+            o = None
+            break
+    if o is None or (o["files"] and (o["dir"] or o["only"])) or bool(o["out"]) != bool(o["files"] and "out" in takes):
+        say(usage)
+        return None
+    o["labels"], o["repo"] = os.path.abspath(o["labels"]), os.path.abspath(o["repo"])
+    return o
+
+
+def load_labels_modules():
+    sys.dont_write_bytecode = True  # no __pycache__ beside the plugin's code
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade"))
+    import fields
+    import labels
+    return fields, labels
+
+
+def transcript_file(path):
+    """(session id, lines) of a transcript file, gzipped or not; the id is the one its lines carry."""
+    lines = (gzip.open(path) if path.endswith(".gz") else open(path, "rb")).read().splitlines()
+    sid = None
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("sessionId"):
+            sid = str(d["sessionId"])
+            break
+    if not sid or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", sid):
+        sid = os.path.basename(path).split(".")[0]
+    return sid, lines
+
+
+def leave_label(labels, folder, sid, lines):
+    """Write the label file to fill in, unless a person has written in the one there. Returns new, kept or stale."""
+    path = os.path.join(folder, sid + ".txt")
+    sha, n = labels.transcript_hash(lines)
+    if os.path.exists(path):
+        label, bad = labels.parse(open(path, encoding="utf-8", errors="replace").read())
+        if bad:
+            say(f"{path}: {bad[0]}; left as it is")
+            return "kept"
+        if label["sha256"] == sha:
+            return "kept"
+        if any(v or reason for v, reason in label["steps"].values()) or label["by"]:
+            say(f"{path} is stale: it was made from a transcript of {label['lines']} lines, which now has {n}. Its verdicts "
+                "are kept and will not be counted; label the session again from the new sheet, or delete the file and run sheet again")
+            return "stale"
+    os.makedirs(folder, exist_ok=True)
+    with open(path, "w") as f:
+        f.write(labels.stub(sid, sha, n))
+    os.chmod(path, 0o644)  # a label file is meant to be committed; it holds no transcript text
+    return "new"
+
+
+SHEET_USAGE = ("usage: transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR] | "
+               "sheet --transcript FILE... --out DIR [--labels DIR]")
+
+
+def cmd_sheet(args):
+    o = labels_args(args, SHEET_USAGE, ("only", "repo", "labels", "out"))
+    if o is None:
+        return 2
+    fields, labels = load_labels_modules()
+    try:
+        if o["files"]:
+            out = os.path.abspath(o["out"])
+            tree = inside_work_tree(out)
+            if tree:
+                raise PermissionError(f"{out} is inside the working tree of {tree}; sheets hold transcript text and are kept out of it")
+            todo = [(None, f) for f in o["files"]]
+        else:
+            d = folder_arg(o["dir"])
+            out = os.path.join(d, "sheets")
+            sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
+            todo = [(s, None) for s in sids if not o["only"] or s in o["only"]]
+    except PermissionError as e:
+        say(str(e))
+        return 2
+    done, failed, made = 0, 0, {"new": 0, "kept": 0, "stale": 0}
+    for sid, path in todo:
+        try:
+            if path:
+                sid, lines = transcript_file(path)
+                records = None
+            else:
+                entry = json.load(open(os.path.join(d, "sessions", sid + ".json")))
+                lines = session_lines(d, sid, entry)
+                last, records = (entry.get("last_stop") or {}).get("commit"), []
+                for rec in labels.named_records(lines)[:3]:
+                    try:
+                        text = record_reader(o["repo"], last, lambda m: None)(rec)
+                        records.append((rec, text, None if text is not None else "it is not in the session's last commit"))
+                    except LookupError as e:
+                        records.append((rec, None, f"it cannot be read ({e})"))
+            text = labels.sheet(lines, sid, os.path.join(o["labels"], sid + ".txt"), records, redact_text)
+        except (OSError, ValueError, LookupError, fields.Unparsable) as e:
+            say(f"{path or sid}: {e}; no sheet")
+            failed += 1
+            continue
+        write_atomic(os.path.join(out, sid + ".md"), text.encode())
+        made[leave_label(labels, o["labels"], sid, lines)] += 1
+        done += 1
+    print(f"transcripts: wrote {done} sheets into {out}" + (f", {failed} failed" if failed else "")
+          + f"; label files in {o['labels']}: {made['new']} new, {made['kept']} kept" + (f", {made['stale']} stale" if made["stale"] else ""))
+    return 1 if failed else 0
+
+
+ACCURACY_USAGE = "usage: transcripts accuracy [DIR] [--labels DIR] | accuracy --transcript FILE... [--labels DIR]"
+
+
+def cmd_accuracy(args):
+    o = labels_args(args, ACCURACY_USAGE, ("labels",))
+    if o is None:
+        return 2
+    fields, labels = load_labels_modules()
+    here, problems = {}, 0
+    if o["files"]:
+        for path in o["files"]:
+            try:
+                sid, lines = transcript_file(path)
+                _, rows = grade_one(fields, lines, sid, None, o["repo"], None, lambda m: None)
+            except (OSError, fields.Unparsable) as e:
+                say(f"{path}: {e}; not compared")
+                problems += 1
+                continue
+            here[sid] = dict(zip(("sha256", "lines"), labels.transcript_hash(lines)), rows=rows)
+    else:
+        try:  # accuracy only reads, so DIR may be anywhere, a repository's fixtures included
+            d = os.path.abspath(o["dir"]) if o["dir"] else folder_arg(None)
+        except PermissionError as e:
+            say(str(e))
+            return 2
+        for p in sorted(glob.glob(os.path.join(d, "sessions", "*.json"))):
+            sid = os.path.basename(p)[:-5]
+            try:
+                lines = session_lines(d, sid, read_json(p, {}) or {})
+            except (OSError, LookupError) as e:
+                say(f"{sid}: {e}; not compared")
+                problems += 1
+                continue
+            rows = read_json(os.path.join(d, "scores", sid + ".json"))
+            here[sid] = dict(zip(("sha256", "lines"), labels.transcript_hash(lines)), rows=rows if isinstance(rows, list) else None)
+    if not os.path.isdir(o["labels"]):
+        say(f"no labels folder at {o['labels']}")
+        return 2
+    found, bad = labels.load(o["labels"])
+    for name, why in bad:
+        say(f"{os.path.join(o['labels'], name)}: {why}; the file is rejected")
+    sys.stdout.write(labels.table(labels.compare(found, here), len(here), len(found) + len({n for n, _ in bad})))
+    return 1 if bad or problems else 0
+
+
 # ---- the judge and the report ----
 
 def load_grade_modules():
@@ -1416,6 +1611,10 @@ def main(argv):
         return cmd_materialize(argv[1:])
     if argv[:1] == ["grade"]:
         return cmd_grade(argv[1:])
+    if argv[:1] == ["sheet"]:
+        return cmd_sheet(argv[1:])
+    if argv[:1] == ["accuracy"]:
+        return cmd_accuracy(argv[1:])
     if argv[:1] == ["judge"]:
         return cmd_judge(argv[1:])
     if argv[:1] == ["report"]:

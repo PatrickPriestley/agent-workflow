@@ -1,0 +1,11 @@
+session: e2000000-0000-0000-0000-000000000002
+transcript: sha256:6e166f625d4db2fb4e02dabdc578c064a38f05189d29f3765d89fb35b5472412 lines:4
+labelled-by: A Labeller, 2026-11-11
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | tier 1 in the frontmatter
+probe-before-record: pass | curl to the API before the record
+record-before-code: pass | record first
+red-first: pass | the test ran red inside `cd app && npm test`, before the first code
+change-line: fail | the PR body opens with a heading, the Change: line is second
+record-check: pass | complete
+outcome-filled: na | not done

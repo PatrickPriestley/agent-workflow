@@ -8,6 +8,7 @@ plugin: plugins/change-record
 tasks:
   - name: macos
   - name: labels
+    done: true
   - name: evidence
     after: labels
 ---
@@ -144,6 +145,27 @@ record confirms it).
   which only moves which suite hides the others.
 - Grading other agents' sessions waits for this record's first measurement
   (2026-11-11-codex-cursor-capture keeps their transcripts in the meantime).
+- (Task 2.) The sheet shows the session itself, every call with its input and result, and for
+  each step the question and pointers found by plain text matches. Rejected: printing the score
+  rows' evidence with the verdict taken out; the reason, the counts and the list of calls a
+  grader picked give the verdict away, and the first report's errors were in which calls it
+  picked.
+- (Task 2.) A label file is plain lines, one per step, `grade/labels/<sessionId>.txt`; sheets are
+  separate files kept outside every working tree. Rejected: one file as both sheet and label,
+  which would commit transcript text and bury seven lines in several hundred.
+- (Task 2.) `accuracy` prints a fifth count R3 does not name, false n/a: the grader says not
+  applicable where the label says pass or fail. A step whose row carries an error (the grader
+  could not read what it needed) is listed and not counted. Rejected: counting either as a
+  false fail, which it is not.
+- (Task 2.) A label file with no verdict yet is listed as not labelled and is no error; a
+  malformed one is rejected whole and makes `accuracy` exit 1. Rejected: counting the well
+  formed lines of a malformed file.
+- (Task 2.) The hash is of the main transcript's lines as the folder holds them, so labels made
+  from the store's redacted copy are stale against the unredacted local archive. Rejected:
+  hashing a re-redacted copy, which would tie every label to the redaction version.
+- (Task 2.) CI runs `accuracy` on the fixture sessions from inside `bin/transcripts-grade.test.sh`,
+  not as its own workflow step: the suite already runs on every push, and the workflow file is
+  task 1's.
 
 ## Tasks
 
@@ -173,3 +195,165 @@ advice the session's evidence does not support, and whether a suite can be skipp
 without the job going red.
 
 ## Outcome
+
+### Task 2, labels (2026-11-11)
+
+Shipped: `transcripts sheet`, the label format and its loader (`grade/labels.py`), `transcripts
+accuracy`, the labelling guide in the plugin README, and an empty label file for each of the
+fifteen fixture sessions in `grade/labels/`, each holding its transcript's hash. Not done here,
+by design: the labelling itself, which is the owner's, and the five store sessions, whose
+label files `transcripts sheet <rebuilt folder>` leaves on the owner's machine. R1's "at least
+20 sessions" is met only once those are labelled.
+
+Found on the way: from transcript files alone (the fixtures have no commits) the graders
+cannot grade `tier-declared` for a session with a record, and give `record-check` and
+`outcome-filled` as not applicable. On the fifteen fixtures those three steps will be measured
+only where the label is also `na`; their real measurement needs the store sessions, graded
+with `--repo-dir` on a checkout that has their commits.
+
+Guards: sixteen were broken by hand, one at a time, and the suite run. Three survived the
+first round (subagent lines kept out of the sheet, a label with the right hash called stale
+by `sheet`, rows of another grader read for a field step); each got a test, and all sixteen
+now fail the suite.
+
+Real use, in this session's container, with `$U` a scratch folder holding a copy of
+`grade/labels/`. The sheets for the fifteen fixture sessions:
+
+    $ transcripts sheet --transcript plugins/change-record/grade/fixtures/*.jsonl.gz plugins/change-record/grade/fixtures/evals/*.jsonl.gz --out $U/sheets --labels $U/labels
+    transcripts: wrote 15 sheets into $U/sheets; label files in $U/labels: 0 new, 15 kept
+
+One of them, `$U/sheets/8dee9822-0a46-4b4c-8891-d973d7242829.md` (eval-07, 135 lines), cut where marked:
+
+    # Label sheet: 8dee9822-0a46-4b4c-8891-d973d7242829
+
+    Write your verdicts in `$U/labels/8dee9822-0a46-4b4c-8891-d973d7242829.txt`: after each step, `pass`, `fail` or `na`, then ` | ` and a one-line reason; and your name and the date after `labelled-by:`. This sheet shows what the session did and nothing a grader concluded from it. Judge each step from the calls below. A call did something only if its own result shows it ran: one that was denied, refused, interrupted or never answered did nothing.
+
+    Transcript: 36 lines, sha256 e62d52dbe1. Lines of subagents kept inline are left out, as the graders leave them out.
+
+    ## The steps
+
+    ### tier-declared
+
+    Did the session declare a tier? Yes if its record's frontmatter holds tier 0, 1 or 2, or, with no record, if its own text or pull request description says `Tier: 0`.
+
+    Label it `na` when the session wrote no record and no code.
+
+    The session's own texts with "tier" in them: [4], [7].
+    Calls that name a file under docs/changes/: none.
+
+    [... probe-before-record and record-before-code, the same way ...]
+
+    ### red-first
+
+    Before the first code was written, did a test run actually run and report a failed test? A run that was denied, refused or never answered did not run; a run that stopped on a syntax or import error is no failed test.
+
+    Label it `na` when no code was written, or the change is tier 0.
+
+    Shell commands with "test", "spec" or "check" in them: none.
+    Calls of the file tools: [6] Edit /tmp/claude-eval-9pSSDg/home/cwd/README.md. A shell command can write a file too.
+
+    [... change-line, record-check and outcome-filled ...]
+
+    ## The record at the session's last commit
+
+    Not shown: no commit is known for this transcript. The record's text is in the calls that wrote it, below.
+
+    ## The session, in order
+
+    [... [1] the prompt, [2] the Skill call, [3] the skill's text ...]
+
+    **[4] The session:**
+
+        Tier 0 (typo, no behaviour change). Let me find the typo.
+
+    **[5] Bash** `toolu_01KApMc26sQLik4YqqNm2f7L`
+
+        cat README.md; git status --short
+
+    Result, flagged as an error:
+
+        Exit code 1
+        # greet
+
+        `python3 greet.py NAME` prints a greating. Tests: `python3 -m unittest discover -s tests -t .`
+        /bin/bash: line 1: /tmp/claude-eval-9pSSDg/tmp/claude-0/cwd-a665: Read-only file system
+
+    **[6] Edit** `toolu_012YCzxe8Lq5kKn17s6rsWbH` /tmp/claude-eval-9pSSDg/home/cwd/README.md
+
+        - greating
+        + greeting
+
+    Result:
+
+        The file /tmp/claude-eval-9pSSDg/home/cwd/README.md has been updated successfully.
+
+    [... [7] its last message, with the pull request description ...]
+
+`accuracy`, after writing made-up verdicts into three of the copied label files (one session
+fully, one with a step left open and two verdicts chosen to disagree, one all `na`):
+
+    $ transcripts accuracy --transcript plugins/change-record/grade/fixtures/*.jsonl.gz plugins/change-record/grade/fixtures/evals/*.jsonl.gz --labels $U/labels
+    # Grader accuracy
+
+    The field graders' latest row for each session and step, against a person's label. 3 sessions are counted, of 15 with a transcript here and 15 label files. A false fail is a fail the label does not share, a false pass a pass the label does not share, and a false n/a a not applicable where the label says pass or fail.
+
+    | Step | Labelled | Agree | False fail | False pass | False n/a |
+    |---|---|---|---|---|---|
+    | tier-declared | 1 | 1 | 0 | 0 | 0 |
+    | probe-before-record | 3 | 3 | 0 | 0 | 0 |
+    | record-before-code | 3 | 3 | 0 | 0 | 0 |
+    | red-first | 3 | 1 | 1 | 1 | 0 |
+    | change-line | 3 | 1 | 0 | 2 | 0 |
+    | record-check | 3 | 3 | 0 | 0 | 0 |
+    | outcome-filled | 2 | 2 | 0 | 0 | 0 |
+
+    ## Disagreements
+
+    - red-first, false fail, 95e399c5-a1ef-4de4-8612-001551b4f84d: the label says pass (made up, to show a disagreement); the grader says fail (no test ran before the code)
+    - red-first, false pass, da1017af-e406-4505-ade7-a5b331fa0989: the label says not applicable (made up); the grader says pass (a test run failed before the code (toolu_01Hi1bjGyT1tDD7TMdSnAcSF))
+    - change-line, false pass, 95e399c5-a1ef-4de4-8612-001551b4f84d: the label says fail (made up, to show a disagreement); the grader says pass (the PR description opens with the Change: line)
+    - change-line, false pass, da1017af-e406-4505-ade7-a5b331fa0989: the label says not applicable (made up); the grader says pass (the description in the last message has the Change: line on its own)
+
+    ## Not counted
+
+    [... 12 lines: <session id>: not labelled yet ...]
+    - 95e399c5-a1ef-4de4-8612-001551b4f84d, tier-declared: the grader could not grade it (no commit for the session)
+    - 95e399c5-a1ef-4de4-8612-001551b4f84d, outcome-filled: not labelled yet
+    - da1017af-e406-4505-ade7-a5b331fa0989, tier-declared: the grader could not grade it (no commit for the session)
+    $ echo $?
+    0
+
+Error path: a label whose transcript has since grown. The same labels, against a copy of
+dispatch-2 with one more line than when it was labelled:
+
+    $ gzip -dc plugins/change-record/grade/fixtures/dispatch-2-da1017af.jsonl.gz > $U/dispatch-2.jsonl; tail -1 $U/dispatch-2.jsonl >> $U/dispatch-2.jsonl
+    $ transcripts accuracy --transcript $U/dispatch-2.jsonl --labels $U/labels
+    # Grader accuracy
+
+    The field graders' latest row for each session and step, against a person's label. 0 sessions are counted, of 1 with a transcript here and 15 label files. A false fail is a fail the label does not share, a false pass a pass the label does not share, and a false n/a a not applicable where the label says pass or fail.
+
+    | Step | Labelled | Agree | False fail | False pass | False n/a |
+    |---|---|---|---|---|---|
+    | tier-declared | 0 | 0 | 0 | 0 | 0 |
+    | probe-before-record | 0 | 0 | 0 | 0 | 0 |
+    | record-before-code | 0 | 0 | 0 | 0 | 0 |
+    | red-first | 0 | 0 | 0 | 0 | 0 |
+    | change-line | 0 | 0 | 0 | 0 | 0 |
+    | record-check | 0 | 0 | 0 | 0 | 0 |
+    | outcome-filled | 0 | 0 | 0 | 0 | 0 |
+
+    ## Disagreements
+
+    None.
+
+    ## Not counted
+
+    [... 14 lines: <session id>: labelled, but its transcript is not here ...]
+    - da1017af-e406-4505-ade7-a5b331fa0989: stale label, made from a transcript of 110 lines (sha256 b508b426bc); it now has 111 lines (sha256 c72512a016)
+
+Its made-up verdicts, which disagreed with the grader twice in the run above, are in no count.
+A malformed file is the other error path, here with a verdict misspelt:
+
+    $ transcripts accuracy --transcript plugins/change-record/grade/fixtures/*.jsonl.gz --labels $U/labels > /dev/null; echo $?
+    transcripts: $U/labels/95e399c5-a1ef-4de4-8612-001551b4f84d.txt: red-first: unknown verdict 'passed' (pass, fail or na); the file is rejected
+    1

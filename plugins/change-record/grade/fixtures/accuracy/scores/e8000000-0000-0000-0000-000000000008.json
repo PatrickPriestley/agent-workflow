@@ -1,0 +1,86 @@
+[
+  {
+    "session_id": "e8000000-0000-0000-0000-000000000008",
+    "step": "tier-declared",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "3333333333333333333333333333333333333333",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "tier 1"
+    },
+    "graded_at": "2026-11-11T09:00:00+00:00"
+  },
+  {
+    "session_id": "e8000000-0000-0000-0000-000000000008",
+    "step": "probe-before-record",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "3333333333333333333333333333333333333333",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "1 probes ran before the record was first written"
+    },
+    "graded_at": "2026-11-11T09:00:00+00:00"
+  },
+  {
+    "session_id": "e8000000-0000-0000-0000-000000000008",
+    "step": "record-before-code",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "3333333333333333333333333333333333333333",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the record was written before the first code"
+    },
+    "graded_at": "2026-11-11T09:00:00+00:00"
+  },
+  {
+    "session_id": "e8000000-0000-0000-0000-000000000008",
+    "step": "red-first",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "3333333333333333333333333333333333333333",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "a test run failed before the code (t1)"
+    },
+    "graded_at": "2026-11-11T09:00:00+00:00"
+  },
+  {
+    "session_id": "e8000000-0000-0000-0000-000000000008",
+    "step": "change-line",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "3333333333333333333333333333333333333333",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the PR description opens with the Change: line"
+    },
+    "graded_at": "2026-11-11T09:00:00+00:00"
+  },
+  {
+    "session_id": "e8000000-0000-0000-0000-000000000008",
+    "step": "record-check",
+    "verdict": "pass",
+    "skill": "change-record:change",
+    "skill_blob": "3333333333333333333333333333333333333333",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "record-check: ok tier=1 mode=finish"
+    },
+    "graded_at": "2026-11-11T09:00:00+00:00"
+  },
+  {
+    "session_id": "e8000000-0000-0000-0000-000000000008",
+    "step": "outcome-filled",
+    "verdict": "not_applicable",
+    "skill": "change-record:change",
+    "skill_blob": "3333333333333333333333333333333333333333",
+    "grader": "fields/1",
+    "evidence": {
+      "why": "the record is open and no task was marked done"
+    },
+    "graded_at": "2026-11-11T09:00:00+00:00"
+  }
+]

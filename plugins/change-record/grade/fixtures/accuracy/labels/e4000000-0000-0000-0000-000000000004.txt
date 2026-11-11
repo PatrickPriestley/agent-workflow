@@ -1,0 +1,11 @@
+session: e4000000-0000-0000-0000-000000000004
+transcript: sha256:64ed8c4aae54ef33301a10c8ac8089a51260977927ee2bc95c32e868d56a0a8c lines:2
+labelled-by: A Labeller, 2026-11-11
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | made-up
+probe-before-record: pass | made-up
+record-before-code: pass | made-up
+red-first: pass | made-up
+change-line: pass | made-up
+record-check: pass | made-up
+outcome-filled: pass | made-up

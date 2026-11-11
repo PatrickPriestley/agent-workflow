@@ -161,6 +161,10 @@ child's transcript entry names its parent.
     transcripts judge [DIR] [--session ID]... [--repo-dir DIR] [--judge claude|opencode] [--limit N] [--store] [--verbose]
     transcripts judge --transcript FILE --record FILE [--judge claude|opencode]
     transcripts report [DIR] [--store]
+    transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR]
+    transcripts sheet --transcript FILE... --out DIR [--labels DIR]
+    transcripts accuracy [DIR] [--labels DIR]
+    transcripts accuracy --transcript FILE... [--labels DIR]
 
 `transcripts` keeps agent session transcripts in a local archive, sends them to a shared store
 and grades them against the `change` skill's steps (record
@@ -289,6 +293,68 @@ table of each step's rate across versions, the agreement between the two judges 
 check has not run yet), and proposed skill edits, from failed sessions only, each citing the
 session and step. It reads `<DIR>/scores/` and `<DIR>/judges/`; `--store` adds the store's
 `scores`, `judge_votes` and `sessions` rows, with the read key.
+
+**Checking the graders against a person** (record `docs/changes/2026-11-11-grading-trust.md`).
+The graders can be wrong, so a set of sessions is labelled by hand and the graders are scored
+against it. The labels are in `grade/labels/<sessionId>.txt`, one file per session:
+
+    session: 4c14e156-58e9-4138-8bc2-a3e13e9b00fa
+    transcript: sha256:<64 hex> lines:56
+    labelled-by: Your Name, 2026-11-12
+    tier-declared: pass | the record it wrote has tier 1
+    red-first: fail | the only test run before greet.py changed was denied
+    outcome-filled: na | the record is not done
+    ...one line for each of the seven steps
+
+A verdict is `pass`, `fail` or `na`, then `|`, then a one-line reason. A step with nothing
+before the `|` is not labelled yet. A file with a missing step, an unknown verdict, a verdict
+without a reason, or verdicts with no name after `labelled-by:` is rejected. The verdicts are a
+person's: a model may fill in a reason for the person to correct, never a verdict.
+
+To label, as the owner:
+
+1. Build the sheets. For the fifteen sessions kept as fixtures (their label files are already
+   in `grade/labels/`, empty), from the repository's root:
+
+       transcripts sheet --transcript plugins/change-record/grade/fixtures/*.jsonl.gz \
+           plugins/change-record/grade/fixtures/evals/*.jsonl.gz --out ~/label-sheets
+
+   For the sessions in the store, rebuild a folder and grade it first, then build its sheets,
+   which go to `<folder>/sheets/` and also show the record at each session's last commit:
+
+       transcripts materialize ~/transcripts-rebuilt
+       transcripts grade ~/transcripts-rebuilt
+       transcripts sheet ~/transcripts-rebuilt
+
+   Sheets hold transcript text (redacted), so they are written outside every working tree.
+   Each run leaves `grade/labels/<sessionId>.txt` for a session that has none, with the hash of
+   the transcript and the seven steps to fill in. A file you have written in is never replaced.
+2. Read a sheet: `<sessionId>.md`. It opens with the seven steps, each with its question, when
+   to answer `na`, and the numbers of the calls worth looking at; then the session in order,
+   every call with its input and what came back. It shows nothing a grader concluded, so judge
+   from the calls: a call did something only if its own result shows it ran. Label what the
+   session did, not what a grader could know. Where the sheet does not show enough to decide
+   (the record at the last commit, for a fixture, which has no commit), answer `na` and say so.
+3. Write the verdicts in the session's label file, your name and the date after
+   `labelled-by:`, and commit the label files.
+4. Measure:
+
+       transcripts accuracy --transcript plugins/change-record/grade/fixtures/*.jsonl.gz \
+           plugins/change-record/grade/fixtures/evals/*.jsonl.gz
+       transcripts accuracy ~/transcripts-rebuilt
+
+   The first grades the fixture files as `grade --transcript` does (`bin/transcripts-grade.test.sh`
+   runs it, so CI fails on a label file that is malformed or no longer matches its fixture); the
+   second reads the folder's `scores/`. Each prints, per step, the sessions labelled, the
+   agreements, the false fails (the grader says fail, the label does not), the false passes and
+   the false n/a (the grader says not applicable, the label says pass or fail), then every
+   disagreement with its session id and both reasons, then what was not counted: a session with
+   no label, a label with no transcript in that folder, a step the grader could not grade, and
+   a stale label. A label is stale when the transcript's hash is no longer the one in its
+   `transcript:` line, because the session went on after it was labelled or was only partly
+   captured then; its verdicts are left out until the session is labelled again from a new
+   sheet. Label and measure from the same kind of folder: the local archive is not redacted, so
+   its hashes differ from the store's.
 
 ## What is not here yet
 

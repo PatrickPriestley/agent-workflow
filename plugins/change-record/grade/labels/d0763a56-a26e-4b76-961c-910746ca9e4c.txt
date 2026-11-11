@@ -1,0 +1,11 @@
+session: d0763a56-a26e-4b76-961c-910746ca9e4c
+transcript: sha256:27c461ab591d9f7ee5a743d8127110f02ee5496a3ef279e37220e43f7fc39547 lines:38
+labelled-by:
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared:
+probe-before-record:
+record-before-code:
+red-first:
+change-line:
+record-check:
+outcome-filled:

@@ -1,0 +1,11 @@
+session: e3000000-0000-0000-0000-000000000003
+transcript: sha256:e99ab27fb27e3acc2b2a65e86480849e333b1faea897dc37475f6704ab65c643 lines:2
+labelled-by: A Labeller, 2026-11-11
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | tier 2 in the record it wrote
+probe-before-record: fail | it wrote the record itself, with no probe before
+record-before-code: na | no code written
+red-first: pass | red before green
+change-line: pass | first line of the PR body
+record-check: pass | complete
+outcome-filled: 

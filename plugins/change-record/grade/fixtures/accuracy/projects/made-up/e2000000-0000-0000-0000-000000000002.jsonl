@@ -1,0 +1,4 @@
+{"sessionId":"e2000000-0000-0000-0000-000000000002","type":"assistant","cwd":"/work/made-up","timestamp":"2026-11-10T10:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"made-up line 1 of session 2"}]}}
+{"sessionId":"e2000000-0000-0000-0000-000000000002","type":"assistant","cwd":"/work/made-up","timestamp":"2026-11-10T10:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"made-up line 2 of session 2"}]}}
+{"sessionId":"e2000000-0000-0000-0000-000000000002","type":"assistant","cwd":"/work/made-up","timestamp":"2026-11-10T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"made-up line 3 of session 2"}]}}
+{"sessionId":"e2000000-0000-0000-0000-000000000002","type":"assistant","cwd":"/work/made-up","timestamp":"2026-11-10T10:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"made-up line 4 of session 2"}]}}

@@ -1,0 +1,11 @@
+session: e1000000-0000-0000-0000-000000000001
+transcript: sha256:f136a7527d8aac90e3209f2d603718cc6f94de8a5801cee19af0d9b664964759 lines:3
+labelled-by: A Labeller, 2026-11-11
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | the record's frontmatter says tier 1
+probe-before-record: pass | ran python3 -c before writing the record
+record-before-code: pass | the record's Write comes before the Edit of greet.py
+red-first: pass | the unittest run reports FAILED before the Edit
+change-line: pass | PR.md opens with the Change: line
+record-check: pass | every section is there
+outcome-filled: na | the record is still open
