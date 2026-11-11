@@ -226,6 +226,9 @@ def show_path(path, root):
 RECORD = re.compile(r"(?:^|/)(docs/changes/(?!README\.md$)[^/\s]+\.md)$")
 CHANGE_LINE = re.compile(r"^Change: (docs/changes/[^/\s]+\.md)[ \t]*$", re.M)
 SKILL_FILE = re.compile(r"(?:/plugins/([^/]+))?/skills/([^/]+)/SKILL\.md$")
+# a shell command that prints a skill file: a session without the plugin installed reads it this way
+BASH_READ_SKILL = re.compile(r"(?:^|[;&|(]\s*|\s)(?:cat|head|tail|sed|less|more|nl|bat)\b[^;&|]*?"
+                             r"(?<![^\s'\"=])['\"]?([^\s'\";&|]*skills/[^/\s'\";&|]+/SKILL\.md)\b")
 
 
 def scan(lines, entry, cwd, root):
@@ -262,6 +265,12 @@ def scan(lines, entry, cwd, root):
                 m = SKILL_FILE.search(fp)
                 full = fp if os.path.isabs(fp) else os.path.join(cwd or "", fp)
                 skill(entry, (m.group(1) + ":" if m.group(1) else "") + m.group(2), "Read", full, root)
+            elif name == "Bash" and isinstance(inp.get("command"), str):
+                for p in BASH_READ_SKILL.findall(inp["command"]):
+                    full = p if os.path.isabs(p) else os.path.join(cwd or "", p)
+                    m = SKILL_FILE.search(full)
+                    if m:
+                        skill(entry, (m.group(1) + ":" if m.group(1) else "") + m.group(2), "Bash", full, root)
             elif name in ("Write", "Edit", "MultiEdit", "NotebookEdit") and RECORD.search(fp):
                 add(entry["records"]["written"], RECORD.search(fp).group(1))
 

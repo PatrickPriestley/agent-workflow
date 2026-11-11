@@ -143,6 +143,21 @@ SID2=22222222-2222-3333-4444-555555555555; TR2="$PROJ/$SID2.jsonl"
 } | sed "s/$SID/$SID2/" > "$TR2"
 archive --transcript "$TR2" > /dev/null
 assert_eq "None ['docs/changes/2026-11-01-b.md']" "$(json "$AR/sessions/$SID2.json" 'str(d["record"])+" "+str(d["records"]["change_line"])')"
+it "reading the skill file with cat, head or sed in Bash counts as using the skill; naming it does not"
+SIDB=bbbbbbbb-2222-3333-4444-555555555555; mkdir -p "$TMPROOT/skillread"; TRB="$TMPROOT/skillread/$SIDB.jsonl"
+{ line 2026-11-01T12:00:00.000Z '"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"git log --oneline -- plugins/change-record/skills/change/SKILL.md; echo skills/x/SKILL.md"}}]}'
+} | sed "s/$SID/$SIDB/" > "$TRB"
+archive --transcript "$TRB" > /dev/null
+assert_eq "[]" "$(json "$AR/sessions/$SIDB.json" 'str(d["skills"])')"
+{ line 2026-11-01T12:01:00.000Z '"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b2","name":"Bash","input":{"command":"cd /tmp && sed -n 1,80p '"$REPO"'/plugins/change-record/skills/change/SKILL.md | head -5"}}]}'
+} | sed "s/$SID/$SIDB/" >> "$TRB"
+archive --transcript "$TRB" > /dev/null
+assert_eq "change-record:change Bash plugins/change-record/skills/change/SKILL.md $BLOB" "$(json "$AR/sessions/$SIDB.json" '" ".join(str(d["skills"][0][k]) for k in ("name","how","file","blob")) if d["skills"] else "none"')"
+SIDC=cccccccc-2222-3333-4444-555555555555; TRC="$TMPROOT/skillread/$SIDC.jsonl"
+{ line 2026-11-01T12:02:00.000Z '"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"cat plugins/change-record/skills/change/SKILL.md"}}]}'
+} | sed "s/$SID/$SIDC/" > "$TRC"
+archive --transcript "$TRC" > /dev/null
+assert_eq "change-record:change Bash $BLOB" "$(json "$AR/sessions/$SIDC.json" '" ".join(str(d["skills"][0][k]) for k in ("name","how","blob")) if d["skills"] else "none"')"
 it "a dispatch child records its parent and source; its own id as parent is ignored"
 SID3=33333333-2222-3333-4444-555555555555; TR3="$PROJ/$SID3.jsonl"; part1 | sed "s/$SID/$SID3/" > "$TR3"
 (cd "$REPO" && AGENT_TRANSCRIPTS="$AR" AGENT_TRANSCRIPTS_PARENT=parent-9 "$T" archive --transcript "$TR3" < /dev/null)

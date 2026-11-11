@@ -332,7 +332,9 @@ Priestley, 2026-11-10.
   first stop only and never equal to the session itself, and `dispatch` unsets it when it has
   no session id of its own, so a stale value is not passed on. A skill counts as invoked through
   the Skill tool or a Read of its `SKILL.md`, since a session without the plugin installed
-  reads the file instead.
+  reads the file instead; and (follow-up, 2026-11-11) a Bash command that prints it with `cat`,
+  `head`, `tail`, `sed`, `less`, `more`, `nl` or `bat`, which is how the cloud sessions read it.
+  A command that only names the file (`git log -- …/SKILL.md`, `echo`) does not count.
 - (Task 1.) The archive refuses a directory inside any git working tree (R5's local half,
   taken early because task 1 is where the archive is first written).
 - (Task 1, review.) `transcripts` runs under umask 077, so every folder and file it creates in
@@ -437,6 +439,13 @@ Priestley, 2026-11-10.
   and both decided; below 80% the report says the default should move to the other family
   (C3). Rejected: calling the OpenCode Go endpoint directly from Python, which would make
   `transcripts` hold an API key, where `opencode` keeps its own login.
+- (Follow-up, 2026-11-11.) The grader's shell reading does not place a write whose target holds
+  an expansion it cannot resolve (`$VAR`, `${VAR}`, `$(…)`, backticks), nor a relative write after
+  a `cd` into one, until a `cd` to a known path; such a write is outside the tree for every step.
+  The cost, accepted: a real code write made only through a variable (`echo … > "$REPO/x.py"`) is
+  missed. Rejected: guessing a variable's value from earlier commands, which the transcript does
+  not show reliably; and failing the step as unknown, which turned scratch-folder probes into
+  red-first failures (task 4's own session).
 - (Task 4.) The report groups rows by the skill's name and blob and never adds two versions
   together; within a version it counts the latest row per session, step and grader. "Over time"
   is a table of each step's rate across versions, in the order of their first session. Proposed
@@ -1161,3 +1170,60 @@ false red-first fail above:
     - red-first, in "3. Loop", step 3 (Red, then green): require the failing test run's output to be seen before the first code edit, and say that a denied or skipped test run does not count. Failed in:
       - dd2defdb (dd2defdb-d4db-5066-b961-2838a0b29d84): no test ran before the code
     exit 0
+
+### The owner's read check, against the real store (2026-11-11)
+
+Run from a cloud session, not the owner's machine: a one-off departure from the Decision that
+the read key stays on the owner's machine, agreed by the owner in chat. A separate personal
+environment (`agent-workflow-admin`) allowed only the Supabase host and held the secret key as a
+network secret, so the proxy added it to requests and the session never saw it. The session
+moved onto it for the check and back afterwards; the owner deletes that key or environment.
+The schema was re-run by the owner first ("Success. No rows returned").
+
+- The secret key is accepted in the `apikey` header alone (the assumption under task 2):
+  `GET /rest/v1/sessions?select=session_id&limit=3` answered 200 with rows.
+- Test rows removed by exact id: 116 chunks and 90 index rows of 10 sessions
+  (`11111111-…` to `66666666-…`, `probe-…`, `probe-size-…`). Left: 5 real sessions, 51 chunks,
+  22 index rows. `store/probe` was not run, since its insert-only checks fail by design with
+  the secret key; the read above stands for its read-back.
+- `transcripts materialize ~/agent-transcripts-store`: `materialized 5 sessions`, exit 0.
+- `transcripts grade ~/agent-transcripts-store --store`: `graded 5 sessions …; stored 35 score
+  rows`, exit 0. Task 3's session (`6cc07e5f`) passes every step that applies.
+- `transcripts judge ~/agent-transcripts-store --store`: Haiku judged the 2 sessions with a
+  record and code (`6cc07e5f`, `dd2defdb`), 3 of 3 votes pass on both questions for each;
+  `stored 16 rows` (12 in `judge_votes`, 4 verdicts in `scores`).
+- `transcripts report ~/agent-transcripts-store --store`: written, exit 0. The agreement
+  check has not run (OpenCode Go has no balance).
+
+What the real report shows, and why its three proposed edits are not yet evidence about the
+skill:
+
+- `659da00f` (task 2) fails tier-declared and red-first because the store holds only its first
+  319 lines (to 13:34; the session ran to about 13:45). That session's own hook never ran: the
+  environment's `AGENT_TRANSCRIPTS` variables were set at 13:34, during it, and take effect only
+  when a session starts. Its 319 lines are the ones it archived and pushed by hand for its real
+  use. Not a capture gap: tasks 3 and 4, which started with the variables set, are stored to
+  their last message (`6cc07e5f` to 18:17:07, `dd2defdb` to 20:33:42).
+- `dd2defdb` (task 4) fails red-first from the known limit of task 3's shell reading: a redirect
+  under an unexpanded variable counted as a code write in the tree.
+- Every row's skill blob is `unknown`: the sessions read `SKILL.md` with `cat`, which task 1's
+  rule does not count, so the report cannot split skill versions yet.
+- The task 1 session is not in the store: it ran before the hook and environment existed.
+
+### Follow-up: the two grading gaps the real report showed (branch `ccr-f30b758a-i1j9v1`)
+
+Both found by the real report above, each fixed red first:
+
+- Skill blob `unknown`: `bin/transcripts.test.sh` gains three assertions (a `sed -n` and a `cat`
+  of the skill file record the skill with `how` `Bash` and its blob; `git log --` and `echo` of
+  the path do not). Red: `got [none]` twice, 79 passed, 2 failed. Green: 81 passed. Mutation:
+  dropping `sed` from the verbs fails one.
+- False red-first fail on a write under a variable: `bin/transcripts-grade.test.sh` gains a
+  session that probes with `cd $S/probe && … > out.json` and `echo … > $TMPDIR/probe.py` before
+  a failing test run and the code (now red-first pass), and one whose `cd $S/probe && cd <repo>`
+  then writes `greet.py` (still fail). Red: `expected [pass] got [fail]`, 61 passed, 1 failed.
+  Green: 62 passed. Mutation: removing either the target filter or the unknown `cd` fails one.
+
+The earlier note that a cloud session's final lines are lost was wrong; it is corrected above.
+All suites: transcripts 81/0, transcripts-store 82/0, transcripts-grade 62/0, transcripts-judge
+68/0, red-check 107/0, record-check 85/0, dispatch 218/0, `cases.test.cjs` 25/0.

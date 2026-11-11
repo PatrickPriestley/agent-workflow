@@ -211,7 +211,21 @@ the session's index entry follows as a new row version, never an update.
 Keys: on a laptop, put the publishable (insert-only) key in
 `~/.config/agent-transcripts/insert-key`, mode 0600 (refused otherwise). In a cloud environment
 leave the file out: allow the project's host and save the key as a network secret for the
-`apikey` header, and the proxy adds it. The secret key is the read key: keep it only on your own
+`apikey` header, and the proxy adds it.
+
+To set up a new machine from a password manager, keep the publishable key there and put these
+lines in your dotfiles (1Password's `op` shown; `bw get password ...` works the same way with
+Bitwarden). The key never sits in git or in your shell history:
+
+    umask 077; mkdir -p ~/.config/agent-transcripts
+    op read "op://Private/Supabase transcripts/insert-key" > ~/.config/agent-transcripts/insert-key
+    export AGENT_TRANSCRIPTS=~/agent-transcripts
+    export AGENT_TRANSCRIPTS_URL=https://<project>.supabase.co
+
+A machine with no key still archives locally; its sessions are sent at the first stop or
+`transcripts push` after the key is in place.
+
+The secret key is the read key: keep it only on your own
 machine, in `~/.config/agent-transcripts/read-key` (0600), for `materialize`, which rebuilds a
 folder in Claude Code's layout (`projects/<repository>/<id>.jsonl` and subagents, each file's
 time from its last timestamp, `sessions/<id>.json`, and `skills/<plugin:skill>/SKILL.md` at the

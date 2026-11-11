@@ -218,6 +218,14 @@ def unwrap(argv):
     return argv
 
 
+UNKNOWN = "\0unknown"  # the directory after a cd the grader cannot follow
+
+
+def unexpanded(path):
+    """True when a path holds a shell expansion the grader cannot resolve ($VAR, ${VAR}, $(...), `...`)."""
+    return "$" in path or "`" in path
+
+
 def shell_writes(cmd, base):
     """[(path, base)] of the files a command writes: redirects, tee, cp, mv, install, sed -i."""
     out = []
@@ -231,7 +239,9 @@ def shell_writes(cmd, base):
         b = os.path.basename(argv[0])
         args = [a for a in argv[1:] if not a.startswith("-")]
         if b == "cd" and args:
-            base = os.path.normpath(os.path.join(base or "/", os.path.expanduser(args[0])))
+            # a cd into a path the grader cannot expand leaves the directory unknown until a cd to a known one
+            base = UNKNOWN if unexpanded(args[0]) else os.path.normpath(
+                os.path.join(base if base not in (None, UNKNOWN) else "/", os.path.expanduser(args[0])))
         elif b == "tee":
             out += [(a, base) for a in args]
         elif b in ("cp", "mv", "install") or (b == "git" and argv[1:2] == ["mv"]):
@@ -255,7 +265,8 @@ def shell_writes(cmd, base):
                 elif not a.startswith("-"):
                     pos.append(a)
             out += [(a, base) for a in (pos if script_given else pos[1:])]
-    return out
+    # a target under an unexpanded variable cannot be placed in the tree (one relative to UNKNOWN falls outside it)
+    return [(p, b) for p, b in out if not unexpanded(p)]
 
 
 INTERPRETERS = re.compile(r"^(?:python(?:\d(?:\.\d+)?)?|node|nodejs|deno|bun|ruby|perl|php)$")

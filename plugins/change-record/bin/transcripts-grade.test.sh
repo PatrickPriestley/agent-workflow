@@ -249,9 +249,33 @@ mkcase ${S}5 <<EOF
 ["call","c1","Write",{"file_path":"$REPO/greet.py","content":"x"}]
 ["result","c1","ok",false,"a"]
 EOF
+mkcase ${S}v <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","p1","Bash",{"command":"mkdir -p \$S/probe && cd \$S/probe && claude -p hi > out.json"}]
+["result","p1","",false,"a"]
+["call","p2","Bash",{"command":"echo x > \$TMPDIR/probe.py; echo y > \"\${OUT:-/tmp}/n.py\""}]
+["result","p2","",false,"a"]
+["call","r1","Bash",{"command":"$UT"}]
+["result","r1","$RED",false,"a"]
+["call","c1","Edit",{"file_path":"$REPO/greet.py","old_string":"n","new_string":"n.upper()"}]
+["result","c1","ok",false,"a"]
+EOF
+mkcase ${S}w <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","p1","Bash",{"command":"cd \$S/probe && cd $REPO && echo 'X = 1' >> greet.py"}]
+["result","p1","",false,"a"]
+["call","r1","Bash",{"command":"$UT"}]
+["result","r1","$RED",false,"a"]
+EOF
 out="$(grade)"
 it "a failure the result flags, or one only in its text, counts; in key order a or b"
 assert_eq "pass pass" "$(v ${S}1 red-first) $(v ${S}2 red-first)"
+it "a write under an unexpanded variable, or after cd into one, is not a write in the tree"
+assert_eq "pass" "$(v ${S}v red-first)"
+it "a cd back to a known path after one into a variable makes its writes count again"
+assert_eq "fail" "$(v ${S}w red-first)"
 it "a green run before the code, and a failure only after it, is not red first"
 assert_eq fail "$(v ${S}3 red-first)"
 it "a denied run, a failure in another command, and a run with no result do not count"
