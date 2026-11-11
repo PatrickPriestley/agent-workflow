@@ -1,0 +1,140 @@
+{
+  "agent": "cursor",
+  "environment": {
+    "in_git_work_tree": true,
+    "process_cwd": "workspace_roots",
+    "variables": [
+      "CODEX_PROBE_SETTING",
+      "CURSOR_TRACE_ID"
+    ]
+  },
+  "event": "stop",
+  "hook_input": {
+    "paths": {
+      ".": "object:1",
+      "conversation_id": "string:1",
+      "cursor_version": "string:1",
+      "generation_id": "string:1",
+      "hook_event_name": "string:1",
+      "loop_count": "number:1",
+      "model": "string:1",
+      "status": "string:1",
+      "transcript_path": "string:1",
+      "user_email": "string:1",
+      "workspace_roots": "array:1",
+      "workspace_roots[]": "string:1"
+    },
+    "values": {
+      "cursor_version": {
+        "2.1.321": 1
+      },
+      "hook_event_name": {
+        "stop": 1
+      },
+      "model": {
+        "claude-4.5-sonnet": 1
+      },
+      "status": {
+        "completed": 1
+      }
+    }
+  },
+  "probe": 1,
+  "transcript": {
+    "bytes": 1176,
+    "exists": true,
+    "format": "jsonl",
+    "given": true,
+    "incomplete_last_line": false,
+    "kinds": {
+      "assistant": {
+        "count": 3,
+        "markers": {
+          "message.content[].text": {
+            "Change: docs/changes/": 1
+          }
+        },
+        "paths": {
+          ".": "object:3",
+          "author": "object:1",
+          "author.email": "string:1",
+          "author.name": "string:1",
+          "message": "object:3",
+          "message.content": "array:3",
+          "message.content[]": "object:4",
+          "message.content[].id": "string:2",
+          "message.content[].input": "object:2",
+          "message.content[].input.command": "string:1",
+          "message.content[].input.env": "object:1",
+          "message.content[].input.env.<key>": "string:2",
+          "message.content[].input.new_string": "string:1",
+          "message.content[].input.old_string": "string:1",
+          "message.content[].input.path": "string:1",
+          "message.content[].input.working_directory": "string:1",
+          "message.content[].name": "string:2",
+          "message.content[].text": "string:2",
+          "message.content[].type": "string:4",
+          "role": "string:3"
+        },
+        "values": {
+          "message.content[].name": {
+            "Shell": 1,
+            "StrReplace": 1
+          },
+          "message.content[].type": {
+            "text": 2,
+            "tool_use": 2
+          },
+          "role": {
+            "assistant": 3
+          }
+        }
+      },
+      "user": {
+        "count": 3,
+        "markers": {
+          "message.content[].content": {
+            "rejected by user": 1
+          },
+          "message.content[].text": {
+            "<user_query>": 1
+          }
+        },
+        "paths": {
+          ".": "object:3",
+          "message": "object:3",
+          "message.content": "array:3",
+          "message.content[]": "object:3",
+          "message.content[].content": "string:2",
+          "message.content[].is_error": "boolean:2",
+          "message.content[].text": "string:1",
+          "message.content[].tool_use_id": "string:2",
+          "message.content[].type": "string:3",
+          "role": "string:3"
+        },
+        "values": {
+          "message.content[].type": {
+            "text": 1,
+            "tool_result": 2
+          },
+          "role": {
+            "user": 3
+          }
+        }
+      }
+    },
+    "lines": 6,
+    "name_holds_session_id": true,
+    "not_json": 0,
+    "order": [
+      "user x1",
+      "assistant x1",
+      "user x1",
+      "assistant x1",
+      "user x1",
+      "assistant x1"
+    ],
+    "path_shape": "~/.cursor/projects/<name>/agent-transcripts/<uuid>.jsonl",
+    "truncated": false
+  }
+}

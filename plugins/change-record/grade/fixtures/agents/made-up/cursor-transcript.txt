@@ -1,0 +1,14 @@
+user:
+<user_query>
+SECRET-PROMPT rename the widget
+</user_query>
+
+assistant:
+SECRET-ANSWER
+[Tool call] Shell
+  command: cat SECRET-COMMAND.txt
+[Tool result] Shell
+SECRET-OUTPUT
+
+assistant:
+Change: docs/changes/SECRET-RECORD.md

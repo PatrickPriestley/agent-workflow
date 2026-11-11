@@ -12,6 +12,7 @@
   transcripts sheet --transcript FILE... --out DIR [--labels DIR]
   transcripts accuracy [DIR] [--labels DIR]
   transcripts accuracy --transcript FILE... [--labels DIR]
+  transcripts probe --agent codex|cursor [--out DIR]
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
 transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
@@ -92,6 +93,9 @@ fails, false passes and false n/a, then each disagreement with its session id, t
 not counted and why. A label whose transcript hash no longer matches is stale and is not
 counted. --transcript grades the files as `grade --transcript` does and compares those rows.
 It exits 1 when a label file is rejected (a missing step, an unknown verdict), 0 otherwise.
+
+probe is a Codex or Cursor hook command that writes a sample of what the hook passed, holding
+structure and no content, to DIR (default grade/fixtures/agents): see probe/agent_sample.py.
 """
 import base64
 import glob
@@ -1619,6 +1623,11 @@ def main(argv):
         return cmd_judge(argv[1:])
     if argv[:1] == ["report"]:
         return cmd_report(argv[1:])
+    if argv[:1] == ["probe"]:
+        sys.dont_write_bytecode = True  # no __pycache__ beside the plugin's code
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "probe"))
+        import agent_sample
+        return agent_sample.main(argv[1:])
     if argv[:1] == ["redact"]:
         for raw in sys.stdin.buffer:
             sys.stdout.buffer.write(redact_line(raw))

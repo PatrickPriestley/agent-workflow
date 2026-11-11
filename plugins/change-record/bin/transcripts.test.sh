@@ -261,4 +261,93 @@ root="$(cd "$here/../../.." && pwd)"; AR5="$TMPROOT/archive5"
 out="$(hook Stop | (cd "$REPO" && CLAUDE_PROJECT_DIR="$root" AGENT_TRANSCRIPTS="$AR5" sh -c "$cmd" 2>&1))"; rc=$?
 assert_eq 0 "$rc"; [ -e "$AR5/sessions/$SID.json" ] && ok || bad "no index entry in $AR5: $out"
 
+echo "probe (2026-11-11-codex-cursor-capture task 1): a sample of what an agent's hook passes, structure only"
+MU="$here/../grade/fixtures/agents/made-up"
+PH="$TMPROOT/zzowner-home"; PO="$TMPROOT/probe-out"
+CXID=0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b; CUID=7c9e6679-7425-40de-944b-e07fc1f90ae7
+CXT="$PH/.codex/sessions/2026/11/11/rollout-2026-11-11T10-00-00-$CXID.jsonl"
+CUT="$PH/.cursor/projects/SECRET-PROJECT/agent-transcripts/$CUID.jsonl"
+mkdir -p "$(dirname "$CXT")" "$(dirname "$CUT")"; cp "$MU/codex-rollout.jsonl" "$CXT"; cp "$MU/cursor-transcript.jsonl" "$CUT"
+# What each agent's stop hook passes, as the record's Probed facts describe it (assumed, not yet seen).
+codex_hook() { printf '{"session_id":"%s","transcript_path":%s,"cwd":"%s","hook_event_name":"Stop","model":"gpt-5.1-codex","permission_mode":"default","turn_id":"turn_SECRETid0001","stop_hook_active":false,"last_assistant_message":"SECRET-ANSWER to pat.secret@example.com"}' "$CXID" "$1" "$REPO"; }
+cursor_hook() { printf '{"conversation_id":"%s","generation_id":"8d0f7780-8536-51ef-a55c-f18fd2a01bf8","model":"claude-4.5-sonnet","hook_event_name":"stop","cursor_version":"2.1.321","workspace_roots":["%s"],"user_email":"pat.secret@example.com","transcript_path":%s,"status":"completed","loop_count":0}' "$CUID" "$REPO" "$1"; }
+# probe OUTDIR ARGS...: run as a hook runs it, in the repository, hook JSON on stdin; stdout and stderr kept apart.
+probe() { local o="$1"; shift; (cd "$REPO" && HOME="$PH" CODEX_PROBE_SETTING=SECRET-ENV CURSOR_TRACE_ID=SECRET-ENV "$T" probe "$@" --out "$o" 2>"$TMPROOT/probe.err"); }
+same() { [ -f "$1" ] && [ -f "$2" ] && cmp -s "$1" "$2" && ok || bad "expected [the stored summary $(basename "$1")] got [$(head -c 1500 "$2" 2>/dev/null || true)]"; }
+no_content() {   # nothing of the made-up session's content, paths, addresses or ids is in the sample
+  local s; s="$(cat "$1" 2>/dev/null)"
+  [ -n "$s" ] && ok || bad "expected [a sample at $1] got [none]"
+  for x in SECRET zzowner "@" "$CXID" "$CUID" 8d0f7780 "$TMPROOT" "$REPO" toolu_ 3f2a9c1d a1b2c3d4e5f60718; do lacks "$s" "$x"; done
+}
+
+it "probe --agent codex writes the stored summary of the hook input and the rollout's shape, and prints nothing"
+out="$(codex_hook "\"$CXT\"" | probe "$PO" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "" "$out"; same "$MU/codex-stop.expected.json" "$PO/codex-stop.json"
+it "the Codex sample names item types, tool names and the markers the record's assumptions rest on"
+s="$(cat "$PO/codex-stop.json" 2>/dev/null)"
+for x in '"agent": "codex"' function_call_output custom_tool_call local_shell_call apply_patch '"shell"' '*** Update File:' 'rejected by user' session_meta creator_account_id last_assistant_message '0.58.0' 'gpt-5.1-codex' CODEX_PROBE_SETTING \
+         '~/.codex/sessions/<n>/<n>/<n>/rollout-<timestamp>-<uuid>.jsonl' '"incomplete_last_line": true'; do has "$s" "$x"; done
+it "the Codex sample holds no prompt, answer, command, path, address or id"
+no_content "$PO/codex-stop.json"
+it "probe --agent cursor writes the stored summary, whatever keys the transcript uses"
+out="$(cursor_hook "\"$CUT\"" | probe "$PO" --agent cursor)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "" "$out"; same "$MU/cursor-stop.expected.json" "$PO/cursor-stop.json"
+s="$(cat "$PO/cursor-stop.json" 2>/dev/null)"
+for x in '"agent": "cursor"' tool_use tool_result StrReplace '"Shell"' user_email workspace_roots '2.1.321' is_error CURSOR_TRACE_ID '.<key>' 'rejected by user'; do has "$s" "$x"; done
+it "the Cursor sample holds no content either: a key that is a path or an id, and a name outside a tool call, are not copied"
+no_content "$PO/cursor-stop.json"; lacks "$s" "SECRET-PROJECT"
+it "a transcript that is not JSON lines is summarised as text: counts and known markers only"
+cp "$MU/cursor-transcript.txt" "$PH/.cursor/projects/SECRET-PROJECT/agent-transcripts/$CUID.txt"
+out="$(cursor_hook "\"$PH/.cursor/projects/SECRET-PROJECT/agent-transcripts/$CUID.txt\"" | probe "$PO/text" --agent cursor)"; rc=$?
+assert_eq 0 "$rc"; same "$MU/cursor-stop-text.expected.json" "$PO/text/cursor-stop.json"; no_content "$PO/text/cursor-stop.json"
+has "$(cat "$PO/text/cursor-stop.json" 2>/dev/null)" '"format": "text"'
+it "no transcript file given: exit 0, it says so, and the sample records that none was given"
+out="$(cursor_hook null | probe "$PO/none" --agent cursor)"; rc=$?
+assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "no transcript file given"
+assert_eq "False" "$(json "$PO/none/cursor-stop.json" 'd["transcript"]["given"]')"; no_content "$PO/none/cursor-stop.json"
+it "a transcript file that does not exist: exit 0, it says so, and the sample records it"
+out="$(codex_hook "\"$PH/.codex/sessions/SECRET-gone.jsonl\"" | probe "$PO/gone" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "does not exist"
+assert_eq "True False" "$(json "$PO/gone/codex-stop.json" 'str(d["transcript"]["given"])+" "+str(d["transcript"]["exists"])')"; no_content "$PO/gone/codex-stop.json"
+it "a compressed rollout is named as zstd and not read"
+printf '\050\265\057\375SECRET-compressed' > "$PH/.codex/sessions/2026/11/11/rollout-2026-11-11T10-00-00-$CXID.jsonl.zst"
+out="$(codex_hook "\"$PH/.codex/sessions/2026/11/11/rollout-2026-11-11T10-00-00-$CXID.jsonl.zst\"" | probe "$PO/zst" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "zstd" "$(json "$PO/zst/codex-stop.json" 'd["transcript"]["format"]')"
+has "$(cat "$PO/zst/codex-stop.json" 2>/dev/null)" 'rollout-<timestamp>-<uuid>.jsonl.zst'; no_content "$PO/zst/codex-stop.json"
+it "a transcript longer than the limit is read up to it and marked truncated, so the hook's time is bounded"
+out="$(codex_hook "\"$CXT\"" | AGENT_TRANSCRIPTS_PROBE_BYTES=1500 probe "$PO/cut" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "True $(head -c 1500 "$CXT" | wc -l | tr -d " ")" "$(json "$PO/cut/codex-stop.json" 'str(d["transcript"]["truncated"])+" "+str(d["transcript"]["lines"])')"
+assert_eq "False" "$(json "$PO/codex-stop.json" 'd["transcript"]["truncated"]')"
+it "hook input that is missing or not a JSON object: exit 0, it says so, nothing is written"
+out="$(printf '' | probe "$PO/empty" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "no hook input"; [ -e "$PO/empty" ] && bad "expected [no sample] got [$(ls "$PO/empty")]" || ok
+out="$(printf '["SECRET"]' | probe "$PO/empty" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "no hook input"; lacks "$(cat "$TMPROOT/probe.err")" "SECRET"; [ -e "$PO/empty" ] && bad "expected [no sample] got [$(ls "$PO/empty")]" || ok
+it "an agent it does not know, or none: exit 0, it says so, nothing is written"
+out="$(codex_hook "\"$CXT\"" | probe "$PO/who" --agent opencode)"; rc=$?
+assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "--agent codex|cursor"; [ -e "$PO/who" ] && bad "expected [no sample] got [$(ls "$PO/who")]" || ok
+out="$(codex_hook "\"$CXT\"" | probe "$PO/who")"; rc=$?
+assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "--agent codex|cursor"; [ -e "$PO/who" ] && bad "expected [no sample] got [$(ls "$PO/who")]" || ok
+it "a folder it cannot write to: exit 0 and it says so"
+printf 'x' > "$TMPROOT/a-file"
+out="$(codex_hook "\"$CXT\"" | probe "$TMPROOT/a-file/sub" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "cannot write"
+it "an event name that is not a plain word does not choose the file's name"
+out="$(printf '{"hook_event_name":"../../SECRET evil","transcript_path":null}' | probe "$PO/ev" --agent cursor)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "cursor-unknown.json" "$(ls "$PO/ev" 2>&1)"; no_content "$PO/ev/cursor-unknown.json"
+it "a value that names a kind is copied only when it is a plain identifier or a version number, and a key that is an id is not"
+out="$(printf '{"hook_event_name":"stop","status":"s1234567","kind":"run-c9e66790-7425-40de-944b-e07fc1f90ae7","reason":"deadbeef01","cursor_version":"9.9 words","model":"two words","a1b2c3d4e5f6a7b8":1,"transcript_path":null}' | probe "$PO/vals" --agent cursor)"; rc=$?
+assert_eq 0 "$rc"; s="$(cat "$PO/vals/cursor-stop.json" 2>/dev/null)"; has "$s" '"status": "string:1"'; has "$s" '"<key>": "number:1"'
+for x in s1234567 c9e66790 deadbeef01 "9.9" words a1b2c3d4e5f6a7b8; do lacks "$s" "$x"; done
+it "input it cannot take in at all: exit 0, it gives up in one line, nothing is written"
+out="$(head -c 200000 /dev/zero | tr '\0' '[' | probe "$PO/deep" --agent codex)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "" "$out"; has "$(cat "$TMPROOT/probe.err")" "gave up"; assert_eq "1" "$(wc -l < "$TMPROOT/probe.err" | tr -d ' ')"
+[ -e "$PO/deep" ] && bad "expected [no sample] got [$(ls "$PO/deep")]" || ok
+it "without --out the sample goes to grade/fixtures/agents beside the script, and says where"
+mkdir -p "$TMPROOT/plugin"; cp -r "$here" "$TMPROOT/plugin/bin"; [ -d "$here/../probe" ] && cp -r "$here/../probe" "$TMPROOT/plugin/probe"
+out="$(codex_hook "\"$CXT\"" | (cd "$REPO" && HOME="$PH" "$TMPROOT/plugin/bin/transcripts" probe --agent codex 2>&1))"; rc=$?
+assert_eq 0 "$rc"; has "$out" "grade/fixtures/agents/codex-stop.json"
+[ -f "$TMPROOT/plugin/grade/fixtures/agents/codex-stop.json" ] && ok || bad "expected [a sample under the plugin's grade/fixtures/agents] got [none]"
+[ -e "$TMPROOT/plugin/probe/__pycache__" ] && bad "expected [no __pycache__ beside the plugin's code] got [one]" || ok
+
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

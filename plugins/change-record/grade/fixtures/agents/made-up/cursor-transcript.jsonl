@@ -1,0 +1,6 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "<user_query>\nSECRET-PROMPT rename the widget\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "SECRET-ANSWER"}, {"type": "tool_use", "id": "toolu_SECRETid0001", "name": "Shell", "input": {"command": "cat SECRET-COMMAND.txt", "working_directory": "/Users/zzowner/work/repo", "env": {"/Users/zzowner/SECRET-KEY.txt": "x", "a1b2c3d4e5f60718": "y"}}}]}}
+{"role": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_SECRETid0001", "content": "SECRET-OUTPUT", "is_error": false}]}}
+{"role": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_SECRETid0002", "name": "StrReplace", "input": {"path": "/Users/zzowner/work/repo/src/SECRET-FILE.py", "old_string": "a", "new_string": "b"}}]}}
+{"role": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_SECRETid0002", "content": "Rejected by user", "is_error": true}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "Change: docs/changes/SECRET-RECORD.md"}]}, "author": {"name": "SECRETperson", "email": "pat.secret@example.com"}}

@@ -1,0 +1,65 @@
+{
+  "agent": "cursor",
+  "environment": {
+    "in_git_work_tree": true,
+    "process_cwd": "workspace_roots",
+    "variables": [
+      "CODEX_PROBE_SETTING",
+      "CURSOR_TRACE_ID"
+    ]
+  },
+  "event": "stop",
+  "hook_input": {
+    "paths": {
+      ".": "object:1",
+      "conversation_id": "string:1",
+      "cursor_version": "string:1",
+      "generation_id": "string:1",
+      "hook_event_name": "string:1",
+      "loop_count": "number:1",
+      "model": "string:1",
+      "status": "string:1",
+      "transcript_path": "string:1",
+      "user_email": "string:1",
+      "workspace_roots": "array:1",
+      "workspace_roots[]": "string:1"
+    },
+    "values": {
+      "cursor_version": {
+        "2.1.321": 1
+      },
+      "hook_event_name": {
+        "stop": 1
+      },
+      "model": {
+        "claude-4.5-sonnet": 1
+      },
+      "status": {
+        "completed": 1
+      }
+    }
+  },
+  "probe": 1,
+  "transcript": {
+    "blank_lines": 2,
+    "bytes": 227,
+    "exists": true,
+    "format": "text",
+    "given": true,
+    "json_lines": 0,
+    "line_starts": {
+      "[Tool call]": 1,
+      "[Tool result]": 1,
+      "assistant:": 2,
+      "user:": 1
+    },
+    "lines": 14,
+    "markers": {
+      "<user_query>": 1,
+      "Change: docs/changes/": 1
+    },
+    "name_holds_session_id": true,
+    "path_shape": "~/.cursor/projects/<name>/agent-transcripts/<uuid>.txt",
+    "truncated": false
+  }
+}

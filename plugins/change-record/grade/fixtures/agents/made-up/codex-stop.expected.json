@@ -1,0 +1,389 @@
+{
+  "agent": "codex",
+  "environment": {
+    "in_git_work_tree": true,
+    "process_cwd": "cwd",
+    "variables": [
+      "CODEX_PROBE_SETTING",
+      "CURSOR_TRACE_ID"
+    ]
+  },
+  "event": "stop",
+  "hook_input": {
+    "paths": {
+      ".": "object:1",
+      "cwd": "string:1",
+      "hook_event_name": "string:1",
+      "last_assistant_message": "string:1",
+      "model": "string:1",
+      "permission_mode": "string:1",
+      "session_id": "string:1",
+      "stop_hook_active": "boolean:1",
+      "transcript_path": "string:1",
+      "turn_id": "string:1"
+    },
+    "values": {
+      "hook_event_name": {
+        "Stop": 1
+      },
+      "model": {
+        "gpt-5.1-codex": 1
+      },
+      "permission_mode": {
+        "default": 1
+      }
+    }
+  },
+  "probe": 1,
+  "transcript": {
+    "bytes": 3648,
+    "exists": true,
+    "format": "jsonl",
+    "given": true,
+    "incomplete_last_line": true,
+    "kinds": {
+      "compacted": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.message": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "type": {
+            "compacted": 1
+          }
+        }
+      },
+      "event_msg/token_count": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.info": "object:1",
+          "payload.info.model_context_window": "number:1",
+          "payload.info.total_token_usage": "object:1",
+          "payload.info.total_token_usage.cached_input_tokens": "number:1",
+          "payload.info.total_token_usage.input_tokens": "number:1",
+          "payload.info.total_token_usage.output_tokens": "number:1",
+          "payload.info.total_token_usage.total_tokens": "number:1",
+          "payload.type": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.type": {
+            "token_count": 1
+          },
+          "type": {
+            "event_msg": 1
+          }
+        }
+      },
+      "response_item/custom_tool_call": {
+        "count": 1,
+        "markers": {
+          "payload.input": {
+            "*** Add File:": 1,
+            "*** Begin Patch": 1,
+            "*** Update File:": 1
+          }
+        },
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.call_id": "string:1",
+          "payload.input": "string:1",
+          "payload.name": "string:1",
+          "payload.status": "string:1",
+          "payload.type": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.name": {
+            "apply_patch": 1
+          },
+          "payload.status": {
+            "completed": 1
+          },
+          "payload.type": {
+            "custom_tool_call": 1
+          },
+          "type": {
+            "response_item": 1
+          }
+        }
+      },
+      "response_item/custom_tool_call_output": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.call_id": "string:1",
+          "payload.output": "json-string:1",
+          "payload.output|json": "object:1",
+          "payload.output|json.metadata": "object:1",
+          "payload.output|json.metadata.duration_seconds": "number:1",
+          "payload.output|json.metadata.exit_code": "number:1",
+          "payload.output|json.output": "string:1",
+          "payload.type": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.type": {
+            "custom_tool_call_output": 1
+          },
+          "type": {
+            "response_item": 1
+          }
+        }
+      },
+      "response_item/function_call": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.arguments": "json-string:1",
+          "payload.arguments|json": "object:1",
+          "payload.arguments|json.command": "array:1",
+          "payload.arguments|json.command[]": "string:3",
+          "payload.arguments|json.timeout_ms": "number:1",
+          "payload.arguments|json.workdir": "string:1",
+          "payload.call_id": "string:1",
+          "payload.name": "string:1",
+          "payload.type": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.name": {
+            "shell": 1
+          },
+          "payload.type": {
+            "function_call": 1
+          },
+          "type": {
+            "response_item": 1
+          }
+        }
+      },
+      "response_item/function_call_output": {
+        "count": 2,
+        "markers": {
+          "payload.output": {
+            "rejected by user": 1
+          }
+        },
+        "paths": {
+          ".": "object:2",
+          "payload": "object:2",
+          "payload.call_id": "string:2",
+          "payload.output": "json-string:1 string:1",
+          "payload.output|json": "object:1",
+          "payload.output|json.metadata": "object:1",
+          "payload.output|json.metadata.duration_seconds": "number:1",
+          "payload.output|json.metadata.exit_code": "number:1",
+          "payload.output|json.output": "string:1",
+          "payload.type": "string:2",
+          "timestamp": "string:2",
+          "type": "string:2"
+        },
+        "values": {
+          "payload.type": {
+            "function_call_output": 2
+          },
+          "type": {
+            "response_item": 2
+          }
+        }
+      },
+      "response_item/local_shell_call": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.action": "object:1",
+          "payload.action.command": "array:1",
+          "payload.action.command[]": "string:3",
+          "payload.action.env": "object:1",
+          "payload.action.env.<key>": "string:1",
+          "payload.action.env.PATH": "string:1",
+          "payload.action.timeout_ms": "null:1",
+          "payload.action.type": "string:1",
+          "payload.action.working_directory": "string:1",
+          "payload.call_id": "string:1",
+          "payload.status": "string:1",
+          "payload.type": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.action.type": {
+            "exec": 1
+          },
+          "payload.status": {
+            "completed": 1
+          },
+          "payload.type": {
+            "local_shell_call": 1
+          },
+          "type": {
+            "response_item": 1
+          }
+        }
+      },
+      "response_item/message": {
+        "count": 2,
+        "markers": {
+          "payload.content[].text": {
+            "Change: docs/changes/": 1
+          }
+        },
+        "paths": {
+          ".": "object:2",
+          "payload": "object:2",
+          "payload.content": "array:2",
+          "payload.content[]": "object:2",
+          "payload.content[].text": "string:2",
+          "payload.content[].type": "string:2",
+          "payload.role": "string:2",
+          "payload.type": "string:2",
+          "timestamp": "string:2",
+          "type": "string:2"
+        },
+        "values": {
+          "payload.content[].type": {
+            "input_text": 1,
+            "output_text": 1
+          },
+          "payload.role": {
+            "assistant": 1,
+            "user": 1
+          },
+          "payload.type": {
+            "message": 2
+          },
+          "type": {
+            "response_item": 2
+          }
+        }
+      },
+      "response_item/reasoning": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.encrypted_content": "string:1",
+          "payload.summary": "array:1",
+          "payload.summary[]": "object:1",
+          "payload.summary[].text": "string:1",
+          "payload.summary[].type": "string:1",
+          "payload.type": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.summary[].type": {
+            "summary_text": 1
+          },
+          "payload.type": {
+            "reasoning": 1
+          },
+          "type": {
+            "response_item": 1
+          }
+        }
+      },
+      "session_meta": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.cli_version": "string:1",
+          "payload.creator_account_id": "string:1",
+          "payload.creator_user_id": "string:1",
+          "payload.cwd": "string:1",
+          "payload.git": "object:1",
+          "payload.git.branch": "string:1",
+          "payload.git.commit_hash": "string:1",
+          "payload.git.repository_url": "string:1",
+          "payload.id": "string:1",
+          "payload.instructions": "null:1",
+          "payload.originator": "string:1",
+          "payload.source": "string:1",
+          "payload.timestamp": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.cli_version": {
+            "0.58.0": 1
+          },
+          "payload.originator": {
+            "codex_cli_rs": 1
+          },
+          "payload.source": {
+            "cli": 1
+          },
+          "type": {
+            "session_meta": 1
+          }
+        }
+      },
+      "turn_context": {
+        "count": 1,
+        "paths": {
+          ".": "object:1",
+          "payload": "object:1",
+          "payload.approval_policy": "string:1",
+          "payload.cwd": "string:1",
+          "payload.model": "string:1",
+          "payload.sandbox_policy": "object:1",
+          "payload.sandbox_policy.network_access": "boolean:1",
+          "payload.sandbox_policy.type": "string:1",
+          "payload.summary": "string:1",
+          "timestamp": "string:1",
+          "type": "string:1"
+        },
+        "values": {
+          "payload.approval_policy": {
+            "on-request": 1
+          },
+          "payload.model": {
+            "gpt-5.1-codex": 1
+          },
+          "payload.sandbox_policy.type": {
+            "workspace-write": 1
+          },
+          "type": {
+            "turn_context": 1
+          }
+        }
+      }
+    },
+    "lines": 13,
+    "name_holds_session_id": true,
+    "not_json": 0,
+    "order": [
+      "session_meta x1",
+      "turn_context x1",
+      "response_item/message x1",
+      "response_item/reasoning x1",
+      "response_item/function_call x1",
+      "response_item/function_call_output x1",
+      "response_item/custom_tool_call x1",
+      "response_item/custom_tool_call_output x1",
+      "response_item/local_shell_call x1",
+      "response_item/function_call_output x1",
+      "event_msg/token_count x1",
+      "response_item/message x1",
+      "compacted x1"
+    ],
+    "path_shape": "~/.codex/sessions/<n>/<n>/<n>/rollout-<timestamp>-<uuid>.jsonl",
+    "truncated": false
+  }
+}

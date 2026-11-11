@@ -239,6 +239,13 @@ One pull request each, in order.
    change label from what the samples show, in the same pull request. Test, in
    `bin/transcripts.test.sh`: `probe` on made-up Codex and Cursor files gives the stored
    summaries; it fails today because the command does not exist.
+   As built (see Outcome): the logic is in `probe/agent_sample.py`, with five lines of code in
+   `bin/transcripts`. The hook input is not written as it came, since it carries the agent's
+   last message, an email address and ids: it is summarised like the transcript, as keys, types
+   and the values of the fields that name a kind of thing. The sample is
+   `<agent>-<event>.json`, in `grade/fixtures/agents/` unless `--out` names another folder.
+   The command is merged ahead of the samples; the samples and the labels follow in the
+   owner's pull request, and the task is done then.
 2. **Capture.** `.codex/hooks.json`, `.cursor/hooks.json`, and in `bin/transcripts`:
    `archive --agent`, the entry's `agent`, version and `format`, `import --agent`,
    `materialize` per agent, the redaction patterns of R6, and the skip with its reason in
@@ -265,3 +272,153 @@ session from another agent can reach a pass rate, and whether any step has an ag
 Codex's trust prompt.
 
 ## Outcome
+
+### Task 1: probe (branch `2026-11-11-codex-cursor-capture/probe`): the command shipped, the samples are still owed
+
+**This task is not complete, and its done marker is not set.** It was built in a cloud
+session where neither Codex nor Cursor is installed or logged in, as C2 decided. What shipped
+is the `probe` command and its tests on made-up files. The two parts of the task that need the
+real agents are still to do, by the owner on his machine: running one short session per agent
+with `probe` hooked in and committing the samples under `grade/fixtures/agents/`, and changing
+the labels of the Probed facts from what the samples show. The steps are in the plugin README
+("Probing Codex and Cursor (the owner's steps)"); every step there that rests on an assumption
+of this record is marked unverified. Until the samples exist, every Codex and Cursor fact
+above keeps the label it has, and task 2 has nothing real to test against.
+
+Shipped: `transcripts probe --agent codex|cursor [--out DIR]` (`probe/agent_sample.py`, five
+lines of code in `bin/transcripts`), 70 assertions in `bin/transcripts.test.sh`, the made-up
+Codex rollout and Cursor transcripts (JSON lines and plain text) with the samples `probe` must
+give for them under `grade/fixtures/agents/made-up/`, and the README section. The made-up
+files are shaped like this record's assumptions; they show that `probe` works, and nothing
+about the agents.
+
+What a sample holds: the hook input's key paths and value types; the transcript path with each
+part replaced by its class; the transcript's format (`jsonl`, `json`, `text`, `zstd`, `sqlite`,
+`binary`, `empty`), its line count, and per kind of line the key paths, types and count; the
+order the kinds came in; the values of `type`, `role`, `status`, `kind`, `model`, the version
+fields and a few like them, and of `name` inside a tool call, only when they look like an
+identifier or a version number; counts of fixed phrases (`*** Update File:`, `rejected by user`,
+`Change: docs/changes/` and others), which is how the two Codex assumptions about `apply_patch`
+and refusals can be checked without copying text; whether the hook ran in the session's
+directory and in a git work tree; and the names of `CODEX_*` and `CURSOR_*` environment
+variables. A JSON document inside a string (Codex's `arguments` and `output`) is opened and
+described the same way. A key that does not look like a field name is written `<key>`.
+
+Departures from the task as written: the hook input is summarised, not copied (see Tasks).
+Not built, because nothing asked for them: decompressing a `.jsonl.zst` (the sample says
+`zstd`, which is what the assumption about the live file needs), and any check that a hook's
+stdout matters, which a passive hook cannot observe; `probe` prints nothing on stdout so that
+it cannot matter here.
+
+A limit the owner should know: key names are copied when they look like field names, so an
+object the agent keys by short plain words of the user's (a map from file name to content
+whose names have no dot, say) would show those words. The made-up files have no such object
+because the record's facts describe none; step 5 of the README has the owner read the sample
+before committing it for this reason.
+
+Red first: the tests were committed before the command (`b889b3d`) and failed on their
+assertions, 69 failures, the first being `expected [0] got [2]` (the usage exit). Three needles
+in that first version were wrong and were corrected with the code: `call_` and `turn_` match
+the key names `call_id` and `turn_id`, and the made-up environment variable had `SECRET` in its
+own name. Guards: 28 were broken by hand in turn. Six survived the first round (a key that is
+a hex id, three of the identifier checks, the version pattern, and the catch-all that keeps an
+unexpected error from failing the session); two tests were added and all six then failed a
+test. No survivor remains.
+
+Not verified, and not verifiable here: the layout of `.codex/hooks.json` and
+`.cursor/hooks.json` given in the README, whether either agent runs a hook command through a
+shell, Codex's trust prompt, when each event fires, and everything about the real transcripts.
+
+Real use, in this cloud container, on the made-up files, run as each agent's hook would run it
+(the checkout as working directory, the hook's JSON on stdin), with `--out` so that nothing
+made up lands in `grade/fixtures/agents/`. `$H` is a made-up home folder holding the two
+files; the transcripts hold made-up prompts, commands, paths, an address and ids. Main path,
+Codex (the sample is shown with each kind's `paths` left out and re-wrapped; the whole of it
+is `grade/fixtures/agents/made-up/codex-stop.expected.json` but for the two variable names
+the test sets):
+
+    $ printf '{"session_id":"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop","model":"gpt-5.1-codex","permission_mode":"default","turn_id":"turn_1","stop_hook_active":false,"last_assistant_message":"Renamed the widget."}' \
+        "$H/.codex/sessions/2026/11/11/rollout-2026-11-11T10-00-00-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl" "$PWD" \
+        | HOME=$H plugins/change-record/bin/transcripts probe --agent codex --out $R/out; echo "rc=$?"
+    transcripts probe: wrote /tmp/tmp.0M7JuVkwBu/out/codex-stop.json
+    rc=0
+    {"agent": "codex", "environment": {"in_git_work_tree": true, "process_cwd": "cwd", "variables": []}, "event": "stop",
+     "hook_input": {"paths": {".": "object:1", "cwd": "string:1", "hook_event_name": "string:1", "last_assistant_message": "string:1",
+       "model": "string:1", "permission_mode": "string:1", "session_id": "string:1", "stop_hook_active": "boolean:1",
+       "transcript_path": "string:1", "turn_id": "string:1"},
+      "values": {"hook_event_name": {"Stop": 1}, "model": {"gpt-5.1-codex": 1}, "permission_mode": {"default": 1}}},
+     "probe": 1,
+     "transcript": {"bytes": 3648, "exists": true, "format": "jsonl", "given": true, "incomplete_last_line": true,
+      "kinds": {"compacted": {"count": 1, "values": {"type": {"compacted": 1}}},
+       "event_msg/token_count": {"count": 1, "values": {"payload.type": {"token_count": 1}, "type": {"event_msg": 1}}},
+       "response_item/custom_tool_call": {"count": 1, "markers": {"payload.input": {"*** Add File:": 1, "*** Begin Patch": 1, "*** Update File:": 1}},
+        "values": {"payload.name": {"apply_patch": 1}, "payload.status": {"completed": 1}, "payload.type": {"custom_tool_call": 1}, "type": {"response_item": 1}}},
+       "response_item/custom_tool_call_output": {"count": 1, "values": {"payload.type": {"custom_tool_call_output": 1}, "type": {"response_item": 1}}},
+       "response_item/function_call": {"count": 1, "values": {"payload.name": {"shell": 1}, "payload.type": {"function_call": 1}, "type": {"response_item": 1}}},
+       "response_item/function_call_output": {"count": 2, "markers": {"payload.output": {"rejected by user": 1}},
+        "values": {"payload.type": {"function_call_output": 2}, "type": {"response_item": 2}}},
+       "response_item/local_shell_call": {"count": 1, "values": {"payload.action.type": {"exec": 1}, "payload.status": {"completed": 1},
+        "payload.type": {"local_shell_call": 1}, "type": {"response_item": 1}}},
+       "response_item/message": {"count": 2, "markers": {"payload.content[].text": {"Change: docs/changes/": 1}},
+        "values": {"payload.content[].type": {"input_text": 1, "output_text": 1}, "payload.role": {"assistant": 1, "user": 1},
+         "payload.type": {"message": 2}, "type": {"response_item": 2}}},
+       "response_item/reasoning": {"count": 1, "values": {"payload.summary[].type": {"summary_text": 1}, "payload.type": {"reasoning": 1}, "type": {"response_item": 1}}},
+       "session_meta": {"count": 1, "values": {"payload.cli_version": {"0.58.0": 1}, "payload.originator": {"codex_cli_rs": 1},
+        "payload.source": {"cli": 1}, "type": {"session_meta": 1}}},
+       "turn_context": {"count": 1, "values": {"payload.approval_policy": {"on-request": 1}, "payload.model": {"gpt-5.1-codex": 1},
+        "payload.sandbox_policy.type": {"workspace-write": 1}, "type": {"turn_context": 1}}}},
+      "lines": 13, "name_holds_session_id": true, "not_json": 0,
+      "order": ["session_meta x1", "turn_context x1", "response_item/message x1", "response_item/reasoning x1", "response_item/function_call x1",
+       "response_item/function_call_output x1", "response_item/custom_tool_call x1", "response_item/custom_tool_call_output x1",
+       "response_item/local_shell_call x1", "response_item/function_call_output x1", "event_msg/token_count x1", "response_item/message x1", "compacted x1"],
+      "path_shape": "~/.codex/sessions/<n>/<n>/<n>/rollout-<timestamp>-<uuid>.jsonl", "truncated": false}}
+
+Main path, Cursor (same view):
+
+    $ printf '{"conversation_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","generation_id":"8d0f7780-8536-51ef-a55c-f18fd2a01bf8","model":"claude-4.5-sonnet","hook_event_name":"stop","cursor_version":"2.1.321","workspace_roots":["%s"],"user_email":"someone@example.com","transcript_path":"%s","status":"completed","loop_count":0}' \
+        "$PWD" "$H/.cursor/projects/made-up/agent-transcripts/7c9e6679-7425-40de-944b-e07fc1f90ae7.jsonl" \
+        | HOME=$H plugins/change-record/bin/transcripts probe --agent cursor --out $R/out; echo "rc=$?"
+    transcripts probe: wrote /tmp/tmp.0M7JuVkwBu/out/cursor-stop.json
+    rc=0
+    {"agent": "cursor", "environment": {"in_git_work_tree": true, "process_cwd": "workspace_roots", "variables": []}, "event": "stop",
+     "hook_input": {"paths": {".": "object:1", "conversation_id": "string:1", "cursor_version": "string:1", "generation_id": "string:1",
+       "hook_event_name": "string:1", "loop_count": "number:1", "model": "string:1", "status": "string:1", "transcript_path": "string:1",
+       "user_email": "string:1", "workspace_roots": "array:1", "workspace_roots[]": "string:1"},
+      "values": {"cursor_version": {"2.1.321": 1}, "hook_event_name": {"stop": 1}, "model": {"claude-4.5-sonnet": 1}, "status": {"completed": 1}}},
+     "probe": 1,
+     "transcript": {"bytes": 1176, "exists": true, "format": "jsonl", "given": true, "incomplete_last_line": false,
+      "kinds": {"assistant": {"count": 3, "markers": {"message.content[].text": {"Change: docs/changes/": 1}},
+        "values": {"message.content[].name": {"Shell": 1, "StrReplace": 1}, "message.content[].type": {"text": 2, "tool_use": 2}, "role": {"assistant": 3}}},
+       "user": {"count": 3, "markers": {"message.content[].content": {"rejected by user": 1}, "message.content[].text": {"<user_query>": 1}},
+        "values": {"message.content[].type": {"text": 1, "tool_result": 2}, "role": {"user": 3}}}},
+      "lines": 6, "name_holds_session_id": true, "not_json": 0,
+      "order": ["user x1", "assistant x1", "user x1", "assistant x1", "user x1", "assistant x1"],
+      "path_shape": "~/.cursor/projects/<name>/agent-transcripts/<uuid>.jsonl", "truncated": false}}
+
+No content in either sample (the count of matching lines, per file):
+
+    $ grep -cE "@|$H|/Users/|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-|SECRET|zzowner" $R/out/*.json
+    /tmp/tmp.0M7JuVkwBu/out/codex-stop.json:0
+    /tmp/tmp.0M7JuVkwBu/out/cursor-stop.json:0
+
+Error paths: no transcript file given, one that does not exist, and a folder that cannot be
+written. Each exits 0 and says so:
+
+    $ printf '{"conversation_id":"7c9e6679-7425-40de-944b-e07fc1f90ae7","hook_event_name":"stop","transcript_path":null}' \
+        | HOME=$H plugins/change-record/bin/transcripts probe --agent cursor --out $R/none; echo "rc=$?"
+    transcripts probe: no transcript file given (transcript_path is null)
+    transcripts probe: wrote /tmp/tmp.0M7JuVkwBu/none/cursor-stop.json
+    rc=0
+    $ python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["transcript"])' $R/none/cursor-stop.json
+    {'given': False}
+    $ printf '{"session_id":"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b","hook_event_name":"Stop","transcript_path":"%s"}' "$H/.codex/sessions/gone.jsonl" \
+        | HOME=$H plugins/change-record/bin/transcripts probe --agent codex --out $R/gone; echo "rc=$?"
+    transcripts probe: the transcript file the hook names does not exist
+    transcripts probe: wrote /tmp/tmp.0M7JuVkwBu/gone/codex-stop.json
+    rc=0
+    $ python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["transcript"])' $R/gone/codex-stop.json
+    {'exists': False, 'given': True, 'name_holds_session_id': False, 'path_shape': '~/.codex/sessions/<name>.jsonl'}
+    $ echo '{}' | plugins/change-record/bin/transcripts probe --agent codex --out /dev/null/x; echo "rc=$?"
+    transcripts probe: no transcript file given (transcript_path is null)
+    transcripts probe: cannot write the sample to /dev/null/x: Not a directory
+    rc=0

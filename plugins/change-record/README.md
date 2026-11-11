@@ -165,6 +165,7 @@ child's transcript entry names its parent.
     transcripts sheet --transcript FILE... --out DIR [--labels DIR]
     transcripts accuracy [DIR] [--labels DIR]
     transcripts accuracy --transcript FILE... [--labels DIR]
+    transcripts probe --agent codex|cursor [--out DIR]
 
 `transcripts` keeps agent session transcripts in a local archive, sends them to a shared store
 and grades them against the `change` skill's steps (record
@@ -355,6 +356,92 @@ To label, as the owner:
    captured then; its verdicts are left out until the session is labelled again from a new
    sheet. Label and measure from the same kind of folder: the local archive is not redacted, so
    its hashes differ from the store's.
+
+**Probing Codex and Cursor (the owner's steps).** Capture of Codex and Cursor sessions (record
+`docs/changes/2026-11-11-codex-cursor-capture.md`) is built on what those agents' hooks really
+pass, and neither agent runs in the cloud environment. `transcripts probe --agent codex|cursor`
+is a hook command that writes a sample of it: `<agent>-<event>.json`, in
+`plugins/change-record/grade/fixtures/agents/` unless `--out DIR` names another folder. A
+sample holds structure and no content: the hook input's keys and value types; the transcript
+path with every part replaced by its class (`~/.codex/sessions/<n>/<n>/<n>/rollout-<timestamp>-<uuid>.jsonl`);
+the transcript's format, line count and, per kind of line, its key paths and types; the values
+of the few fields that name a kind of thing (`type`, `role`, `status`, `model`, the version
+fields, and `name` inside a tool call) when they look like an identifier or a version number;
+how often fixed phrases occur (`*** Update File:`, `rejected by user`, `Change: docs/changes/`);
+and the names, never the values, of `CODEX_*` and `CURSOR_*` environment variables. A key that
+does not look like a field name is written `<key>`. It holds no prompt, answer, command, path,
+address or id. `probe` never fails the session: every problem is a line on stderr and exit 0,
+it prints nothing on stdout, and it reads at most 20 MB of the transcript. The list of what a
+sample may hold is at the top of `probe/agent_sample.py`.
+
+Nothing below has run against the real agents. Each step marked *unverified* rests on an
+assumption in the record's Probed facts; if one turns out wrong, say what you saw instead and
+that is itself the finding. Do the steps yourself: no agent may answer a trust, permission or
+login prompt, and no Codex or Cursor login goes into a cloud environment (the record's C2, C4).
+
+1. In your checkout of this repository, on a branch cut from `main`, write the two hook files.
+   They hold your checkout's absolute path, so they are for this probe only: do not commit
+   them (the capture task adds the real ones).
+
+       root="$(git rev-parse --show-toplevel)"
+       mkdir -p "$root/.codex" "$root/.cursor"
+       cat > "$root/.codex/hooks.json" <<EOF
+       {"hooks": {"Stop":       [{"hooks": [{"type": "command", "command": "$root/plugins/change-record/bin/transcripts probe --agent codex", "timeout": 10}]}],
+                  "SessionEnd": [{"hooks": [{"type": "command", "command": "$root/plugins/change-record/bin/transcripts probe --agent codex", "timeout": 10}]}]}}
+       EOF
+       cat > "$root/.cursor/hooks.json" <<EOF
+       {"version": 1, "hooks": {"stop":       [{"command": "$root/plugins/change-record/bin/transcripts probe --agent cursor"}],
+                                "sessionEnd": [{"command": "$root/plugins/change-record/bin/transcripts probe --agent cursor"}]}}
+       EOF
+
+   *Unverified:* the layout of both files (Codex's is taken to be Claude Code's; Cursor's is
+   from its documentation as quoted in search results), that Codex reads a project's
+   `.codex/hooks.json` without a feature being switched on in `config.toml`, and that either
+   agent runs the command through a shell. The command has no `|| true` and no variable so
+   that it works either way; a checkout path with a space in it may still break it.
+2. **Codex.** Start `codex` in the checkout, in a mode that asks before it runs a command.
+   *Unverified:* Codex asks once whether to trust this project's hooks, because the hook is
+   new (and again whenever the command changes); it may also ask whether to trust the folder.
+   The wording is not known. Only you answer it. Then give it one short task that makes one
+   of each thing the record assumes about: "Run `git status`. Create the file
+   `probe-scratch.txt` holding one line. Then run `touch probe-scratch-2.txt`. End your answer
+   with the line `Change: docs/changes/probe.md`." Approve the first command and the edit and
+   refuse the last command. Let the turn end, then quit Codex. *Unverified:* `Stop` fires at
+   the end of the turn and `SessionEnd` on quitting, so two files appear:
+   `plugins/change-record/grade/fixtures/agents/codex-stop.json` and `codex-sessionend.json`.
+3. **Cursor.** Open the checkout in Cursor (or run its CLI agent there), give the agent the same
+   task in a mode that asks before running commands, refuse the last command, let the turn end,
+   then close the window. *Unverified:* project hooks need no approval in Cursor, `stop` fires
+   at the end of the turn and `sessionEnd` when the window closes, so `cursor-stop.json` and
+   perhaps `cursor-sessionend.json` appear in the same folder. If transcripts are turned off in
+   Cursor, the sample says `"given": false`, which is worth knowing too: commit it, then turn
+   them on and run once more with `--out` naming another folder to keep both.
+4. If no file appears, the hook did not run or could not write. Run the command from the hook
+   file by hand with `echo '{}' |` in front: it should print `transcripts probe: wrote ...` and
+   leave `<agent>-unknown.json`, which you delete. If that works, the agent is not running the
+   hook, and what it showed (or did not) is the finding.
+5. Check each sample before it leaves your machine. This should print nothing:
+
+       cd "$root/plugins/change-record/grade/fixtures/agents"
+       grep -nE "@|$HOME|/Users/|/home/|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-|probe-scratch|git status" *.json
+
+   Then read the files. Copied strings can only be in three places: under `"values"` (expect
+   type names, tool names, model names and version numbers), under `"variables"` (names of
+   environment variables) and as key names in the paths. Anything else is counts and classes.
+   If something that is yours shows up, do not commit it; say which field it was.
+6. Remove the scratch files and the two hook files, and commit only the samples, on your branch:
+
+       rm -f "$root"/probe-scratch.txt "$root"/probe-scratch-2.txt "$root/.codex/hooks.json" "$root/.cursor/hooks.json"
+       git add plugins/change-record/grade/fixtures/agents/codex-*.json plugins/change-record/grade/fixtures/agents/cursor-*.json
+       git commit -m "test(transcripts): samples of what Codex's and Cursor's hooks pass"
+
+   Open the pull request with `Change: docs/changes/2026-11-11-codex-cursor-capture.md` as the
+   first line of its body. The record's Probed facts change label from what the samples show in
+   that pull request, which completes the record's task 1.
+
+`grade/fixtures/agents/made-up/` holds the invented Codex and Cursor files the tests run `probe`
+on, and the samples it must give for them. They are shaped like the record's assumptions, not
+like anything a real agent wrote.
 
 ## What is not here yet
 
