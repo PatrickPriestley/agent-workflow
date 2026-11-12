@@ -30,7 +30,8 @@ on() { [ "$(git config "commitgate.$1" || true)" = true ]; }
 # The hook is a small real file, so a moved or deleted checkout makes commits fail loudly
 # instead of git silently skipping a dangling link.
 hook_body() {
-  local quoted="'${self//\'/\'\\\'\'}'"
+  # sed, not ${self//...}: bash 3.2 (macOS) and later versions quote that replacement differently.
+  local quoted; quoted="'$(printf '%s' "$self" | sed "s/'/'\\\\''/g")'"
   cat <<HOOK
 #!/bin/sh
 $marker; see \`commit-gate status\`.

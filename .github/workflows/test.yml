@@ -41,8 +41,44 @@ jobs:
         run: bash pr-agent/verify-image.test.sh
       - name: pr-size
         run: bash bin/pr-size.test.sh
-      - name: change-record plugin
-        run: bash plugins/change-record/bin/red-check.test.sh && bash plugins/change-record/bin/record-check.test.sh && bash plugins/change-record/bin/dispatch.test.sh && bash plugins/change-record/bin/transcripts.test.sh && bash plugins/change-record/bin/transcripts-store.test.sh && bash plugins/change-record/bin/transcripts-grade.test.sh && bash plugins/change-record/bin/transcripts-judge.test.sh && node --test plugins/change-record/evals/cases.test.cjs
+
+  # A job of its own, so these suites run whatever happens in the job above, and a step per
+  # suite that runs even after an earlier one failed, so one red suite does not hide the next.
+  change-record:
+    name: change-record (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Versions
+        run: bash --version | head -n1; python3 --version; git --version; node --version
+      - name: red-check
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/red-check.test.sh
+      - name: record-check
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/record-check.test.sh
+      - name: dispatch
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/dispatch.test.sh
+      - name: transcripts
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/transcripts.test.sh
+      - name: transcripts store
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/transcripts-store.test.sh
+      - name: transcripts grade
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/transcripts-grade.test.sh
+      - name: transcripts judge
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/transcripts-judge.test.sh
+      - name: eval cases
+        if: ${{ !cancelled() }}
+        run: node --test plugins/change-record/evals/cases.test.cjs
 
   pr-size:
     name: pr size

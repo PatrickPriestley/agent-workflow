@@ -5,7 +5,9 @@
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 T="$here/transcripts"
-TMPROOT="$(mktemp -d)"; trap 'rm -rf "$TMPROOT"' EXIT
+# The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
+# and git and python name the real one.
+TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$TMPROOT"' EXIT
 pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
@@ -91,7 +93,7 @@ lacks "$out" "nothing archived"; has "$(parts)" "main/g2-000001.jsonl"
 assert_eq "$(cat "$TR")" "$(cat "$AR/parts/$SID/main/g2-000001.jsonl" 2>&1)"
 rm -rf "$AR"; mv "$TMPROOT/archive-before-cut" "$AR"; cp "$TMPROOT/tr.keep" "$TR"
 it "the archive's folders and files are open to their owner only, as Claude Code keeps the transcripts"
-assert_eq "" "$(find "$AR" -perm /077 2>&1 | sed "s|$AR|AR|")"
+assert_eq "" "$(find "$AR" \( -perm -040 -o -perm -020 -o -perm -010 -o -perm -004 -o -perm -002 -o -perm -001 \) 2>&1 | sed "s|$AR|AR|")"
 
 echo "R3: the index entry"
 it "the entry for the fixture session matches the stored one"

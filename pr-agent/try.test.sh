@@ -206,7 +206,7 @@ has "$(git diff tooling scratch/pr-agent-no-test)" "+target=\"\"; reviewer=\"\";
 it "the canary branch adds fake secrets carrying the recorded canary, and an ordinary change"
 canary="$(cat "$(git rev-parse --git-path pr-agent)/canary.txt" 2>/dev/null)"
 case "$canary" in SYNTHETIC_CANARY_*) ok ;; *) bad "canary not recorded: [$canary]" ;; esac
-files="$(git diff --name-only tooling scratch/pr-agent-canary | sort | tr '\n' ' ')"
+files="$(git diff --name-only tooling scratch/pr-agent-canary | LC_ALL=C sort | tr '\n' ' ')"
 assert_eq ".env README.md config/secrets.yml " "$files"
 has "$(git show scratch/pr-agent-canary:.env)" "$canary"
 has "$(git show scratch/pr-agent-canary:config/secrets.yml)" "$canary"

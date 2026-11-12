@@ -154,11 +154,15 @@ assert_has "end marker" "$out"
 
 it "the default base prefers origin/main to a stale local main, as pr-size does"
 ST=$(repo stale); O="$TMPROOT/stale-origin.git"; git clone -q --bare "$ST" "$O"
+# A real remote's HEAD is its default branch; the clone took the checked-out one, feature, and
+# git 2.48 and later would record that as origin/HEAD at the fetch below.
+git -C "$O" symbolic-ref HEAD refs/heads/main
 git -C "$ST" remote add origin "$O"
 git -C "$ST" checkout -q main; printf 'merged by someone else\n' > "$ST/other.txt"
 git -C "$ST" add -A; git -C "$ST" -c user.name=t -c user.email=t@t commit -q -m "feat: other"
 git -C "$ST" push -q origin main; git -C "$ST" reset -q --hard HEAD~1; git -C "$ST" fetch -q origin
-git -C "$ST" checkout -q feature; git -C "$ST" merge -q --no-edit origin/main
+git -C "$ST" checkout -q feature; git -C "$ST" -c user.name=t -c user.email=t@t merge -q --no-edit origin/main
+[ -f "$ST/other.txt" ] || bad "the setup did not merge origin/main into feature"
 out=$(run "$ST" claude code 2>&1)
 dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
 grep -q "merged by someone else" "$dir/diff.patch" && bad "diffed from the stale local main" || ok

@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from urllib.parse import parse_qsl, urlsplit
 
 PORTFILE, LOGFILE, READKEY = sys.argv[1:4]
@@ -116,7 +117,15 @@ class H(BaseHTTPRequestHandler):
     do_GET = do_POST = do_PATCH = do_DELETE = handle_any
 
 
-srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+class Server(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind also looks up the host's name (socket.getfqdn), which nothing
+        # here uses and which took 35 seconds per stand-in on the macOS runner.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+srv = Server(("127.0.0.1", 0), H)
 with open(PORTFILE + ".tmp", "w") as f:
     f.write(str(srv.server_address[1]))
 import os  # noqa: E402

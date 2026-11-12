@@ -5,7 +5,9 @@
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 D="$here/dispatch"
-TMPROOT="$(mktemp -d)"; trap 'rm -rf "$TMPROOT"' EXIT
+# The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
+# and git and python name the real one.
+TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$TMPROOT"' EXIT
 pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
@@ -177,7 +179,7 @@ it "a record that fails record-check on the branch is not pushed"
 cat > "$TMPROOT/breaker.sh" <<'AGENT'
 #!/usr/bin/env bash
 set -eu; cat > /dev/null; printf 'x\n' > feature-alpha.txt
-sed -i 's/^## Checks$/## Cheques/' docs/changes/2026-11-08-t.md
+sed -i.bak 's/^## Checks$/## Cheques/' docs/changes/2026-11-08-t.md; rm -f docs/changes/2026-11-08-t.md.bak
 git add -A; git commit -qm "feat: alpha"
 printf '{"type":"result","result":"Change: docs/changes/2026-11-08-t.md\\n\\nDone.","num_turns":2,"total_cost_usd":0.002}\n'
 AGENT
@@ -204,7 +206,7 @@ it "a task whose done marker cannot be written fails loudly and is not pushed"
 cat > "$TMPROOT/renamer.sh" <<'AGENT'
 #!/usr/bin/env bash
 set -eu; cat > /dev/null; printf 'x\n' > feature-alpha.txt
-sed -i 's/- name: alpha/- name: alfa/' docs/changes/2026-11-08-t.md
+sed -i.bak 's/- name: alpha/- name: alfa/' docs/changes/2026-11-08-t.md; rm -f docs/changes/2026-11-08-t.md.bak
 git add -A; git commit -qm "feat: alpha"
 printf '{"type":"result","result":"Change: docs/changes/2026-11-08-t.md\\n\\nDone.","num_turns":2,"total_cost_usd":0.002}\n'
 AGENT
@@ -214,7 +216,7 @@ out="$(dispatch docs/changes/2026-11-08-t.md --agent "$TMPROOT/renamer.sh")"; rc
 assert_eq 1 "$rc"; has "$out" "done: true"; has "$out" "alpha"; assert_eq "main " "$(remote_heads)"
 
 it "tasks without a plugin line are refused unless --agent replaces the command"
-repo noplugin; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; sed -i '/^plugin:/d' docs/changes/2026-11-08-t.md; commit_main "docs(change): t"
+repo noplugin; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; sed -i.bak '/^plugin:/d' docs/changes/2026-11-08-t.md; rm -f docs/changes/2026-11-08-t.md.bak; commit_main "docs(change): t"
 out="$(dispatch docs/changes/2026-11-08-t.md --dry-run)"; rc=$?
 assert_eq 2 "$rc"; has "$out" "plugin"
 out="$(dispatch docs/changes/2026-11-08-t.md --agent "$TMPROOT/agent.sh")"; rc=$?
@@ -257,7 +259,7 @@ out="$(dispatch docs/changes/2026-11-08-t.md --agent "$TMPROOT/agent.sh")"; rc=$
 assert_eq 0 "$rc"; has "$out" "pushed=yes"
 
 it "a task with no numbered item under Tasks fails instead of briefing the whole section"
-repo noitem; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; sed -i 's/^[0-9]\. \*\*/- **/' docs/changes/2026-11-08-t.md; commit_main "docs(change): t"
+repo noitem; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; sed -i.bak 's/^[0-9]\. \*\*/- **/' docs/changes/2026-11-08-t.md; rm -f docs/changes/2026-11-08-t.md.bak; commit_main "docs(change): t"
 out="$(dispatch docs/changes/2026-11-08-t.md --agent "$TMPROOT/agent.sh")"; rc=$?
 assert_eq 1 "$rc"; has "$out" "numbered item"; has "$out" "alpha"; assert_eq "main " "$(remote_heads)"; [ -f "$WT/2026-11-08-t/alpha.brief.md" ] && bad "a brief was written" || ok
 
@@ -364,7 +366,7 @@ assert_eq 0 "$rc"; has "$out" "pushed=yes"; lacks "$out" "could not set done"
 git fetch -q origin; has "$(git show origin/thing/alpha:docs/changes/2026-11-08-t.md | sed -n '/- name: alpha/,/- name: beta/p')" "done: true"
 
 it "a record whose id does not match its file name, or whose id is not a slug, is refused"
-repo idmismatch; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; sed -i 's/^id: .*/id: 2026-11-08-other/' docs/changes/2026-11-08-t.md; commit_main "docs(change): t"
+repo idmismatch; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; sed -i.bak 's/^id: .*/id: 2026-11-08-other/' docs/changes/2026-11-08-t.md; rm -f docs/changes/2026-11-08-t.md.bak; commit_main "docs(change): t"
 out="$(dispatch docs/changes/2026-11-08-t.md --dry-run)"; rc=$?
 assert_eq 2 "$rc"; has "$out" "does not match"
 repo idslug; record "docs/changes/.hidden.md" 2 approved "$TASKS"; commit_main "docs(change): t"

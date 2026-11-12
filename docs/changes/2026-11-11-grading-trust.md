@@ -7,6 +7,7 @@ approvers: [Patrick Priestley, 2026-11-11]
 plugin: plugins/change-record
 tasks:
   - name: macos
+    done: true
   - name: labels
     done: true
   - name: evidence
@@ -36,11 +37,23 @@ as Linux.
   (macos-latest)` job fails at `bin/commit-gate.test.sh`, in "a checkout path with an apostrophe
   still produces a working hook", with `passed=80 failed=1`. Every later step is skipped, so
   no change-record suite has run on macOS. The same test passes on Ubuntu.
-- Not known: why that test fails on macOS. It cannot be reproduced in the Linux container. To
-  be probed in task 1 on the macOS runner.
+- (Task 1; was "not known".) Verified against the real system (the `test (macos-latest)` jobs on
+  PR #48): that test fails where `commit-gate enable` writes the hook. The hook's own path is
+  quoted with `"'${self//\'/\'\\\'\'}'"`, and the runner's `bash` is 3.2.57, which expands that
+  differently from bash 4.3 and later; the hook then names a path that does not exist, falls back
+  to `commit-gate` on `PATH`, finds none under the test's `PATH=/usr/bin:/bin`, and refuses the
+  commit. The hook's text was never printed; the cause is shown by the fix (the same quoting
+  through `sed`) turning the suite from `passed=80 failed=1` to `passed=81 failed=0` there.
+- (Task 1.) Verified against the real system (the same jobs): two more suites of the other
+  plugin failed on macOS behind that one, each hidden until the one before it passed:
+  `bin/agent-review.test.sh` (1 of 141) and `pr-agent/try.test.sh` (1 of 78). See Outcome.
+- (Task 1.) Verified against the real system (the `change-record (macos-latest)` jobs on PR #48):
+  the runner has bash 3.2.57, Python 3.15.2, git 2.56.0 and node 24.22.2; its temporary folder
+  is `/var/folders/...`, a link to `/private/var/folders/...`.
 - Exact source (a search of the change-record suites and tools, 2026-11-11): one GNU-only
   construct was found, `find -perm /077` in `bin/transcripts.test.sh`. Whether the suites
-  otherwise pass on macOS is not known.
+  otherwise pass on macOS is not known. (Task 1: they did not. Five of the eight failed on the
+  first macOS run, 106 assertions in all, from four causes. See Outcome.)
 - Verified against the real system (`vermin`, 2026-11-11): `bin/transcripts`, the graders and the
   store scripts need Python 3.8 or later, which a stock macOS has.
 - Verified against the real system (2026-11-11): the sessions available to label are the five
@@ -145,6 +158,19 @@ record confirms it).
   which only moves which suite hides the others.
 - Grading other agents' sessions waits for this record's first measurement
   (2026-11-11-codex-cursor-capture keeps their transcripts in the meantime).
+- (Task 1.) The new job has one step per suite, each run even when an earlier one failed.
+  Rejected: one step chaining the suites with `&&`, as before, where the first red suite hides
+  the rest; that is how four causes sat behind one on macOS.
+- (Task 1.) The suites use the temporary folder's real path. Rejected: changing the tools to
+  resolve links, which is a behaviour change to `bin/transcripts` and the graders that task 2
+  was editing at the same time; the limit is written in Outcome for the owner.
+- (Task 1.) The stand-in store skips the host name lookup, and the suites wait up to 30 seconds
+  for it and say so when it is slow. Rejected: only waiting longer, which passed on macOS but
+  took 35 seconds for each of eleven stand-ins.
+- (Task 1.) The commit-gate fix and two one-line fixes to the other plugin's tests are in this
+  pull request: each is a few lines and is shown green on macOS, as C3 allows. The second and
+  third were not named in C3; they were in the way of the same job going green and are the
+  same kind of fix. Rejected: leaving `test (macos-latest)` red with the causes written down.
 - (Task 2.) The sheet shows the session itself, every call with its input and result, and for
   each step the question and pointers found by plain text matches. Rejected: printing the score
   rows' evidence with the verdict taken out; the reason, the counts and the list of calls a
@@ -195,6 +221,100 @@ advice the session's evidence does not support, and whether a suite can be skipp
 without the job going red.
 
 ## Outcome
+
+### Task 1, macOS (2026-11-11)
+
+Shipped: `.github/workflows/test.yml` has a job `change-record`, on `ubuntu-latest` and
+`macos-latest`, with one step per suite; the step in the `test` job that chained them is gone.
+All eight change-record suites pass on macOS, and so does every suite of the `test` job, which
+had never got past `bin/commit-gate.test.sh` there. Pull request #48.
+
+The macOS jobs on the last head (`c6cddfa`, runner: bash 3.2.57, Python 3.15.2, git 2.56.0,
+node 24.22.2), from their logs:
+
+    change-record (macos-latest)                       first run, job only (bdb8d6a)
+    red-check.test.sh            passed=107 failed=0   passed=107 failed=0
+    record-check.test.sh         passed=85 failed=0    passed=85 failed=0
+    dispatch.test.sh             passed=218 failed=0   passed=207 failed=11
+    transcripts.test.sh          passed=250 failed=0   passed=79 failed=2
+    transcripts-store.test.sh    passed=82 failed=0    passed=57 failed=25
+    transcripts-grade.test.sh    120 passed, 0 failed  37 passed, 25 failed
+    transcripts-judge.test.sh    68 passed, 0 failed   25 passed, 43 failed
+    evals/cases.test.cjs         pass 25, fail 0       pass 25, fail 0
+
+    test (macos-latest)
+    evals/context.test.cjs       pass 5, fail 0
+    install.test.sh              passed=112 failed=0
+    bin/commit-gate.test.sh      passed=81 failed=0    (passed=80 failed=1 on main)
+    bin/agent-review.test.sh     passed=141 failed=0   (passed=140 failed=1 before its fix)
+    skills/plan/scripts/test-*   49 ok, no FAIL
+    pr-agent/pr-agent.test.sh    passed=11 failed=0
+    pr-agent/try.test.sh         passed=78 failed=0    (passed=77 failed=1 before its fix)
+    pr-agent/workflow.test.sh    passed=61 failed=0
+    pr-agent/verify-image.test.sh passed=16 failed=0
+    bin/pr-size.test.sh          passed=41 failed=0
+
+The counts for `transcripts.test.sh` and `transcripts-grade.test.sh` grew between the two columns
+because task 2 merged in between. Both Ubuntu jobs are green on the same head. The first push carried only the new job, so its macOS run is the red this task started
+from: that run is the first column.
+
+Each portability fix in the change-record suites, with what failed before it:
+
+1. `sed -i 's/…/' file` in `bin/dispatch.test.sh`, five places, now `sed -i.bak … ; rm -f file.bak`.
+   Before: `sed: 1: "docs/changes/2026-11-08 ...": extra characters at the end of d command`,
+   and ten assertions that depended on the edit (BSD `sed` takes the script as the backup suffix).
+2. `find "$AR" -perm /077` in `bin/transcripts.test.sh`, now six `-perm -NNN` tests joined by `-o`.
+   Before: `expected [] got [find: -perm: /077: illegal mode string]`.
+3. `TMPROOT="$(mktemp -d)"` in all seven suites, now `"$(cd "$(mktemp -d)" && pwd -P)"`. Before:
+   the suites named files under `/var/folders/…` while git and Python named the same files
+   under `/private/var/folders/…`. One assertion in `dispatch.test.sh` (`--plugin-dir`), one in
+   `transcripts.test.sh` (the skill file's path recorded whole and not relative to the
+   repository), about twenty in `transcripts-grade.test.sh` (sessions graded `not_applicable`,
+   "no code written", because no write was under the repository's path as git gives it) and
+   most of `transcripts-judge.test.sh`'s 43, which follow from the grades.
+4. The stand-in store (`store/stand-in.py`) took 35 seconds to listen, every time but the first
+   in a suite, and the suites waited 5. Before: `cat: …/s2.port: No such file or directory`, then
+   `Connection refused` for everything sent to it: 25 assertions in `transcripts-store.test.sh`,
+   four in `transcripts-grade.test.sh` and four in `transcripts-judge.test.sh`. With a 30 second
+   wait that reports itself the suites passed and the log said `the stand-in took 35s to listen`
+   eleven times (the store suite alone took 4 minutes 53 seconds). `http.server.HTTPServer` looks
+   up the host's name when it binds, which the stand-in never uses; with that left out there is
+   no such line, and the store suite takes 15 seconds. Why the first stand-in of each run was
+   quick was not found.
+
+Still printed on macOS and harmless: bash 3.2 reports each stand-in the suite kills at exit
+(`Terminated: 15`), eleven lines after the summaries.
+
+Not fixed, for the owner: fix 3 is in the tests, not the tools. `bin/transcripts` and the graders
+compare a session's working folder as text with the path git gives for the repository, so a
+session started in a checkout reached through a link (on macOS, anything under `/tmp` or
+`/var`) would have its skill path recorded whole and its code writes not counted. Whether
+Claude Code reports the real path as `cwd` there is not known; it is worth a probe before
+the first measurement on a Mac.
+
+The other plugin's suites (C3). Each was a few lines and is green on macOS above:
+
+- `bin/commit-gate.test.sh`, "a checkout path with an apostrophe still produces a working hook".
+  Cause: the quoting of the hook's own path under bash 3.2, as Probed facts now says. Fix, in
+  `bin/commit-gate`: the same quoting through `sed`. The test is unchanged. So on a Mac, with
+  its stock bash, a checkout whose path holds an apostrophe got a hook that refused every commit
+  unless `commit-gate` was also on `PATH`.
+- `bin/agent-review.test.sh`, "the default base prefers origin/main to a stale local main".
+  Hidden until commit-gate passed. Cause, in the test's setup and not the tool: its bare origin
+  is cloned while `feature` is checked out, so the origin's HEAD is `feature`, and git 2.48 and
+  later record that as `origin/HEAD` at the next fetch; `agent-review` then rightly takes
+  `origin/HEAD` first. Reproduced in the container (git 2.43) by setting `origin/HEAD` by hand:
+  the same FAIL line. Ubuntu's runner has the same git and passed; that fits the setup's merge
+  failing there for want of a git identity, which leaves the test with nothing to find, but
+  this was not observed. Fix: the origin's HEAD is set to `main`, the merge is given an
+  identity, and the setup asserts the merge happened. With `agent-review`'s list of candidates
+  reordered to put local `main` first, the fixed test fails, as it should.
+- `pr-agent/try.test.sh`, "the canary branch adds fake secrets…". Hidden until agent-review
+  passed. Cause: `sort` in the runner's locale gave `.env config/secrets.yml README.md` where the
+  test expects byte order. Fix: `LC_ALL=C sort`.
+
+Not done: the PR-Agent `review` check will be red once the pull request is ready, for want of a
+balance at its provider (Probed facts); nothing here changes that.
 
 ### Task 2, labels (2026-11-11)
 

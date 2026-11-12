@@ -4,7 +4,9 @@
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RC="$here/record-check"
-TMPROOT="$(mktemp -d)"; trap 'rm -rf "$TMPROOT"' EXIT
+# The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
+# and git and python name the real one.
+TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$TMPROOT"' EXIT
 pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }

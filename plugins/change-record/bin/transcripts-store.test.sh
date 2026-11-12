@@ -5,8 +5,17 @@
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 T="$here/transcripts"; STANDIN="$here/../store/stand-in.py"
-TMPROOT="$(mktemp -d)"; PIDS=""
+# The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
+# and git and python name the real one.
+TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; PIDS=""
 trap 'for p in $PIDS; do kill $p 2>/dev/null; done; rm -rf "$TMPROOT"' EXIT
+# await_port FILE: wait for a stand-in to write its port; say so when it is slow or never does.
+await_port() {
+  local t=$SECONDS
+  for _ in $(seq 600); do [ -s "$1" ] && break; sleep 0.05; done
+  [ -s "$1" ] || echo "the stand-in wrote no port to $1 in $((SECONDS - t))s" >&2
+  [ $((SECONDS - t)) -lt 5 ] || echo "the stand-in took $((SECONDS - t))s to listen" >&2
+}
 pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
@@ -27,7 +36,7 @@ READKEY="read-key-made-up-0001"
 standin() {
   local pf="$TMPROOT/$1.port"; LOG="$TMPROOT/$1.log"; : > "$LOG"
   python3 "$STANDIN" "$pf" "$LOG" "$READKEY" "${@:2}" & PIDS="$PIDS $!"
-  for _ in $(seq 100); do [ -s "$pf" ] && break; sleep 0.05; done
+  await_port "$pf"
   URL="http://127.0.0.1:$(cat "$pf")"
 }
 # A repository with the plugin skill, and a session in it.
