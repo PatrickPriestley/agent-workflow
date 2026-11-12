@@ -185,6 +185,27 @@ python3 -c '
 import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["sent"]["redaction"]=0; open(p,"w").write(json.dumps(d))' "$ARC/sessions/$SID3.json"
 out="$(cd "$REPO" && AGENT_TRANSCRIPTS="$ARC" AGENT_TRANSCRIPTS_URL="$URL" "$T" push 2>&1)"
 assert_eq "2 2" "$(count chunks) $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sent"]["streams"]["main"]["generation"])' "$ARC/sessions/$SID3.json")"
+it "a push that stops between two streams after a new redaction version still sends both again (record 2026-11-12-push-resend-after-stop)"
+SID7=dddddddd-2222-3333-4444-555555555555; TRR="$PROJ/$SID7.jsonl"; mkdir -p "$PROJ/$SID7/subagents"
+part1 | sed "s/$SID/$SID7/" > "$TRR"; line 2026-11-01T10:01:00.000Z user '"sub line"' | sed "s/$SID/$SID7/" > "$PROJ/$SID7/subagents/agent-a1.jsonl"
+ARR="$TMPROOT/arR"; pushR() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARR" AGENT_TRANSCRIPTS_URL="$URL" "$T" push 2>&1); }
+gens() { python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["sent"]; print(s["redaction"], " ".join("%s=%d/%d" % (k, v["generation"], v["parts"]) for k, v in sorted(s["streams"].items())))' "$ARR/sessions/$SID7.json"; }
+(cd "$REPO" && AGENT_TRANSCRIPTS="$ARR" "$T" archive --transcript "$TRR" < /dev/null 2>/dev/null)
+standin sr1; out="$(pushR)"
+assert_eq "1 main=1/1 subagents/agent-a1=1/1" "$(gens)"
+python3 -c '
+import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["sent"]["redaction"]=0; open(p,"w").write(json.dumps(d))' "$ARR/sessions/$SID7.json"
+standin sr2 --refuse-after 1; out="$(pushR)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "503"
+it "after the stop, the entry says the stream that was not reached is still owed"
+assert_eq "1 main=2/1 subagents/agent-a1=2/0" "$(gens)"
+it "the next push sends the stream that was not reached, as the next generation, and the first one is not sent a third time"
+standin sr3; out="$(pushR)"; rc=$?
+assert_eq "0 1 main=2/1 subagents/agent-a1=2/1" "$rc $(gens)"
+assert_eq "subagents/agent-a1 2" "$(sent | python3 -c 'import json,sys; print(" ".join("%s %d" % (c["stream"], c["generation"]) for c in map(json.loads, sys.stdin)))')"
+it "and a push after that has nothing to send"
+standin sr4; out="$(pushR)"
+assert_eq "0 0" "$(count chunks) $(count sessions)"
 it "a later index row the store refused is sent at the next push, with no chunk sent again"
 SID6=abababab-2222-3333-4444-555555555555; TRF="$PROJ/$SID6.jsonl"; part1 | sed "s/$SID/$SID6/" > "$TRF"
 ARF="$TMPROOT/arF"; pushF() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARF" AGENT_TRANSCRIPTS_URL="$URL" "$T" push 2>&1); }

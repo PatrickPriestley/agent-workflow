@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A stand-in for the store's HTTPS interface (PostgREST on Supabase), for the tests only.
 
-  stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE]
+  stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE] [--refuse-after N]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -12,7 +12,9 @@ judge_votes are
 `limit` and `offset`. Every request is appended to LOGFILE as one JSON line: method, path,
 apikey, prefer and body. POST /__admin/tamper with {"chunk_id": ...} changes a stored chunk's
 data, to test that materialize checks it. --refuse TABLE answers 503 to every insert into
-TABLE, as a store that fails part way would. It writes its port to PORTFILE once it listens.
+TABLE, as a store that fails part way would; --refuse-after N accepts N inserts into chunks
+and answers 503 to every later one, as a store that fails part way through a session would.
+It writes its port to PORTFILE once it listens.
 """
 import json
 import sys
@@ -26,6 +28,8 @@ PORTFILE, LOGFILE, READKEY = sys.argv[1:4]
 OPTS = dict(zip(sys.argv[4::2], sys.argv[5::2]))
 HANG = float(OPTS.get("--hang", 0))
 REFUSE = OPTS.get("--refuse")
+REFUSE_AFTER = int(OPTS["--refuse-after"]) if "--refuse-after" in OPTS else None
+ACCEPTED = {"chunks": 0}
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
         "scores": ("session_id", "step", "grader", "graded_at"),
         "judge_votes": ("session_id", "question", "judge", "vote", "judged_at")}
@@ -70,6 +74,12 @@ class H(BaseHTTPRequestHandler):
         reader = key == READKEY
         if self.command == "POST" and table == REFUSE:
             return self.answer(503, {"message": "the stand-in refuses this table"})
+        if self.command == "POST" and table == "chunks" and REFUSE_AFTER is not None:
+            with LOCK:
+                ACCEPTED["chunks"] += 1
+                over = ACCEPTED["chunks"] > REFUSE_AFTER
+            if over:
+                return self.answer(503, {"message": f"the stand-in refuses chunks after the first {REFUSE_AFTER}"})
         if self.command == "POST":
             if (not reader and (table in ("scores", "judge_votes") or "ignore-duplicates" in prefer
                                 or "return=representation" in prefer)):

@@ -718,15 +718,23 @@ def push_session(ar, url, key, sid, sender):
     entry = json.load(open(os.path.join(ar, "sessions", sid + ".json")))
     sent = json.loads(json.dumps(entry.get("sent") or {}))
     sent.setdefault("streams", {})
-    fresh = sent.get("redaction") not in (None, REDACTION)
+    def restart(name, st):
+        s = sent["streams"].get(name)
+        sent["streams"][name] = {"archive_generation": st["generation"], "parts": 0, "generation": (s["generation"] + 1 if s else 1),
+                                 "chunks": 0, "lines": 0, "bytes": 0, "tip": chain_root(sid, name)}
+        return sent["streams"][name]
+
+    if sent.get("redaction") != REDACTION:
+        # a new redaction version (or a first push): every stream is owed. All of them restart before
+        # anything is sent, so the state saved after the first part already says so, should the push stop there.
+        for name, st in entry["streams"].items():
+            restart(name, st)
     sent["redaction"] = REDACTION
     chunks = 0
     for name, st in sorted(entry["streams"].items()):
         s = sent["streams"].get(name)
-        if s is None or fresh or s["archive_generation"] != st["generation"]:
-            s = {"archive_generation": st["generation"], "parts": 0, "generation": (s["generation"] + 1 if s else 1),
-                 "chunks": 0, "lines": 0, "bytes": 0, "tip": chain_root(sid, name)}
-            sent["streams"][name] = s
+        if s is None or s["archive_generation"] != st["generation"]:
+            s = restart(name, st)
         for n in range(s["parts"] + 1, st["parts"] + 1):
             p = os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], n))
             data = b"".join(redact_line(x) for x in open(p, "rb").read().splitlines(keepends=True))
