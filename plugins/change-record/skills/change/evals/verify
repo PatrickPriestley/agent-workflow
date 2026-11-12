@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""verify: check, with no model, the statements of one eval that code can check.
+
+  verify EVAL OUTPUTS [--final-message FILE]
+
+EVAL is an eval's name or number in evals.json, beside this script. OUTPUTS is the folder the
+run left: its copy of the repository (the `repo/` of the input files) after the agent worked
+in it. FILE holds the agent's final message, when the runner kept it.
+
+It prints what the open Agent Skills guide calls grading.json: for each statement it could
+check, the text, whether it passed, and the evidence. The statements it could not check are
+listed under not_checked with why: they need a judge, the run's transcript, or the final
+message. Exit 0 when every checked statement passed, 1 when one failed, 2 when it could not
+run. It reads checks.json, which plugins/change-record/evals/export-evals-json writes from
+the graders, and needs nothing but Python 3.8 and this folder.
+"""
+import json
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+FLAGS = {"i": re.I, "m": re.M, "s": re.S}
+JUDGE, TRANSCRIPT = "needs a judge", "needs the run's transcript"
+MESSAGE = "needs the run's final message (--final-message FILE)"
+
+
+def say(msg):
+    sys.stderr.write(f"verify: {msg}\n")
+
+
+def read(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def found(pattern, flags, text):
+    m = re.search(pattern, text, sum(FLAGS[f] for f in flags))
+    if not m:
+        return None
+    line = next((ln for ln in m.group(0).splitlines() if ln.strip()), "")
+    return line.strip()[:120]
+
+
+def run_check(c, outputs, message):
+    """(passed, evidence) for one check, or None when it cannot be made here."""
+    kind = c["kind"]
+    if kind == "message_matches":
+        if message is None:
+            return None
+        hit = found(c["pattern"], c["flags"], message)
+        return (True, f'the final message has: "{hit}"') if hit is not None else \
+               (False, "nothing in the final message matches the grader's pattern")
+    if kind == "only":
+        d = os.path.join(outputs, c["dir"])
+        if not os.path.isdir(d):
+            return False, f"{c['dir']}/ is not in the outputs folder"
+        there, want = set(os.listdir(d)), set(c["names"])
+        if there == want:
+            return True, f"{c['dir']}/ holds {', '.join(sorted(want))} and nothing else"
+        parts = ([f"also holds {', '.join(sorted(there - want))}"] if there - want else []) + \
+                ([f"lacks {', '.join(sorted(want - there))}"] if want - there else [])
+        return False, f"{c['dir']}/ " + " and ".join(parts)
+    path = os.path.join(outputs, c["path"])
+    if not os.path.isfile(path):
+        return False, f"{c['path']} is not in the outputs folder"
+    if kind == "file_exists":
+        return True, f"{c['path']} is there ({os.path.getsize(path)} bytes)"
+    if kind == "unchanged":
+        with open(path, "rb") as f, open(os.path.join(HERE, "files", "repo", c["path"]), "rb") as g:
+            same = f.read() == g.read()
+        return (True, f"{c['path']} is the same as the input file ({os.path.getsize(path)} bytes)") if same else \
+               (False, f"{c['path']} differs from the input file")
+    if kind == "file_matches":
+        hit = found(c["pattern"], c["flags"], read(path))
+        return (True, f'{c["path"]} has: "{hit}"') if hit is not None else \
+               (False, f"nothing in {c['path']} matches the grader's pattern")
+    raise ValueError(f"checks.json has a kind this script does not know: {kind}")
+
+
+def main(argv):
+    message_file, rest, i = None, [], 0
+    while i < len(argv):
+        if argv[i] == "--final-message" and i + 1 < len(argv):
+            message_file, i = argv[i + 1], i + 2
+        else:
+            rest.append(argv[i])
+            i += 1
+    if len(rest) != 2:
+        say("usage: verify EVAL OUTPUTS [--final-message FILE]")
+        return 2
+    want, outputs = rest
+    try:
+        evals = json.loads(read(os.path.join(HERE, "evals.json")))["evals"]
+        checks = json.loads(read(os.path.join(HERE, "checks.json")))["checks"]
+    except (OSError, ValueError, KeyError) as e:
+        say(f"cannot read evals.json and checks.json beside this script ({e})")
+        return 2
+    ev = next((e for e in evals if e.get("name") == want or str(e.get("id")) == want), None)
+    if ev is None:
+        say(f"no eval named {want}; there are: {', '.join(e['name'] for e in evals)}")
+        return 2
+    if not os.path.isdir(outputs):
+        say(f"{outputs} is not a folder")
+        return 2
+    message = None
+    if message_file is not None:
+        try:
+            message = read(message_file)
+        except OSError as e:
+            say(f"cannot read the final message ({e})")
+            return 2
+    how = {c["assertion"]: c for c in checks.get(ev["name"], [])}
+    results, skipped = [], []
+    try:
+        for text in ev["assertions"]:
+            got = run_check(how[text], outputs, message) if text in how else None
+            if got is not None:
+                results.append({"text": text, "passed": got[0], "evidence": got[1]})
+            elif text in how:
+                skipped.append({"text": text, "why": MESSAGE})
+            else:
+                skipped.append({"text": text, "why": TRANSCRIPT if text.startswith("The transcript shows") else JUDGE})
+    except (OSError, ValueError, KeyError) as e:
+        say(str(e))
+        return 2
+    passed = sum(1 for r in results if r["passed"])
+    total = len(results)
+    print(json.dumps({"eval": ev["name"], "assertion_results": results, "not_checked": skipped,
+                      "summary": {"passed": passed, "failed": total - passed, "total": total,
+                                  "pass_rate": round(passed / total, 2) if total else None}}, indent=2, ensure_ascii=False))
+    return 0 if passed == total else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

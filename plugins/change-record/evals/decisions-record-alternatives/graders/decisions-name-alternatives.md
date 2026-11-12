@@ -1,5 +1,6 @@
 ---
 type: llm
+# assertion: In docs/changes/2026-11-08-format.md, the Decisions section has at least one decision that names an alternative that was considered and rejected, with the reason.
 focus:
   source: file
   path: docs/changes/2026-11-08-format.md

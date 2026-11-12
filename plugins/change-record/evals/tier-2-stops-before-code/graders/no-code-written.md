@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: The transcript shows no command wrote to greet.py.
 arm: both
 target: trace
 # The repository's greet.py is not written, by the Write tool or by a shell redirect, tee, cp

@@ -1,5 +1,6 @@
 ---
 type: llm
+# assertion: In docs/changes/2026-11-08-names-file.md, the Probed facts section lists at least one fact, and every fact carries a label close to one of these: verified against the real system, exact source, mock only, assumed.
 focus:
   source: file
   path: docs/changes/2026-11-08-names-file.md

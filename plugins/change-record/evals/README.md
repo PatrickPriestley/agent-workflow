@@ -102,3 +102,102 @@ The runner mounts the scaffold repository read-only for shell commands, so the p
 the agent not to branch or commit; an agent that tries will stop and report the sandbox,
 which is the right behaviour and a zero score. The runner needs bubblewrap and socat on
 Linux. Results land in `evals/results/`, which is not committed.
+
+## The same cases as an `evals.json`, for tools that are not Claude's
+
+The open Agent Skills guide (agentskills.io, "Evaluating skill output quality") keeps a
+skill's test cases in `evals/evals.json` inside the skill's folder: a prompt, a description of
+the expected output, input files and plain statements to check. `export-evals-json` writes
+that file from the case folders above, into `../skills/change/evals/`:
+
+    plugins/change-record/evals/export-evals-json           # write evals.json, checks.json and the input files
+    plugins/change-record/evals/export-evals-json --check   # exit 1 if they have drifted
+
+The case folders are the source. Change a prompt or a grader there, run the first command and
+commit both; `cases.test.cjs` runs the second, so CI fails on a file that was edited by hand
+or left behind. What each entry holds:
+
+| Field | From |
+|---|---|
+| `id`, `name` | 1 to 8 in the folders' alphabetical order, and the folder's name (`name` is outside the guide; the tools read so far accept it) |
+| `prompt` | `prompt.md`, after one sentence saying that the repository is the input files' `repo/` folder |
+| `expected_output` | the `description` in `case.yaml` |
+| `files` | the six files `_scaffold/greet.sh` writes, kept in `skills/change/evals/files/repo/` |
+| `assertions` | one per scored grader: the `# assertion:` line in the grader's top block |
+
+Every scored grader carries its statement on that line, so a new grader without one fails the
+tests. `skill-fired` has none: it asks whether Claude's Skill tool was called.
+
+What does not carry over, and what to expect from another runner:
+
+- **The graders become statements.** Claude's runner checks 22 of the 29 with a pattern, a
+  file test or a count of tool calls; in `evals.json` all 29 are sentences. The guide does not
+  say a model must judge them all: for what code can check (a file exists, a line is there) it
+  says to use a verification script, as more reliable than a model. `verify`, below, is that
+  script. It covers 15 of the 29; a runner that follows only `evals.json` and does not call it
+  hands all 29 to its judge.
+- **Seven statements are about what the agent did**, and in what order (a test seen failing
+  before the code, a probe before the record). They begin "The transcript shows". The guide
+  grades a run's outputs and calls an assertion that cannot be checked from the output alone
+  one to fix. These seven are kept because the order of work is most of what the skill adds;
+  a runner has to give its judge the run's transcript for them, and one that does not cannot
+  grade them.
+- **Some statements pass with and without the skill.** The guide says to remove those, since
+  they show nothing about the skill. In the results above the baseline also wrote its record
+  in every run, so the five "The file ... exists" statements, and the two cases that tie at
+  full score, are of that kind. They are kept here to match the case folders one for one.
+- **The comparison with and without the skill is the runner's to make.** The guide says to
+  run each case both ways; the file does not record it.
+- **The repository is plain files with no git history**, and where a runner puts input files
+  is not defined by the guide. The first sentence of each prompt is there for that.
+- **The cases need an agent that edits files and runs commands.** A runner that sends the
+  prompt to a chat model with the skill in its context (`agent-skills-eval` 0.1.1 does) can
+  produce text for a judge to read, and nothing that the statements about files or the
+  transcript could be checked against.
+- Nothing here has been run against Codex or Cursor. The file's shape was checked against the
+  guide's source and against one third-party loader's source by reading them.
+
+### Checking a run without a model: `verify`
+
+`skills/change/evals/verify` checks the statements code can check against the folder a run
+left, and prints what the guide calls `grading.json`. It needs Python 3.8 and the skill's
+`evals/` folder, nothing else of this plugin:
+
+    skills/change/evals/verify record-before-code path/to/the/run/repo --final-message final.md
+
+The first argument is a case's name or its number in `evals.json`. The second is the run's
+copy of the repository after the agent worked in it. `--final-message` names a file holding
+the agent's last message, for runners that keep it. On a real run of that case (2026-11-12):
+
+    {
+      "eval": "record-before-code",
+      "assertion_results": [
+        {"text": "The final message contains the line \"Change: docs/changes/2026-11-08-shout.md\".", "passed": true,
+         "evidence": "the final message has: \"Change: docs/changes/2026-11-08-shout.md\""},
+        {"text": "The file docs/changes/2026-11-08-shout.md exists.", "passed": true,
+         "evidence": "docs/changes/2026-11-08-shout.md is there (1881 bytes)"},
+        ...
+      ],
+      "not_checked": [
+        {"text": "The final message reports the --shout flag implemented and the test suite passing.", "why": "needs a judge"},
+        {"text": "The transcript shows docs/changes/2026-11-08-shout.md was written before greet.py was first changed.", "why": "needs the run's transcript"}
+      ],
+      "summary": {"passed": 4, "failed": 0, "total": 4, "pass_rate": 1.0}
+    }
+
+It exits 0 when every statement it checked passed, 1 when one failed, 2 when it could not
+run. `not_checked` is not in the guide's `grading.json`: it is what is left for a judge.
+
+| Checked from | Statements | How |
+|---|---|---|
+| the files | 13 | a file is there (5), a file holds the grader's pattern (6), `docs/changes/` holds only what it started with (1), `greet.py` is the input file (1) |
+| the final message, if given | 2 | the message holds the grader's pattern |
+| not checked | 14 | 7 need a judge, 7 need the transcript |
+
+What it checks is `evals/checks.json`, which `export-evals-json` writes from the graders: the
+path of a `file_exists` grader, and the pattern and flags of a `regex` grader that reads a
+file or the last message. So a pattern is written once, in the grader. A grader that reads
+the trace gets no check, unless its top block says how the same thing shows in the folder:
+`# check: unchanged PATH` or `# check: only DIR NAME...`. The generator refuses a grader it
+cannot turn into a check faithfully (a pattern that must be absent, a flag or a construct
+Python's regular expressions lack) instead of writing a looser one.

@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""export-evals-json: the eval cases as the evals.json of the open Agent Skills guide.
+
+  export-evals-json [--check] [--skill-dir DIR]
+
+The case folders beside this script are the source (record
+docs/changes/2026-11-12-portable-evals.md). This writes, into the skill's folder
+(../skills/change unless --skill-dir names another):
+
+  evals/evals.json      {"skill_name", "evals": [{id, name, prompt, expected_output, files, assertions}]}
+  evals/checks.json     {"skill_name", "checks": {case: [{grader, assertion, kind, ...}]}}: the
+                        statements code can check, for evals/verify, from the graders themselves
+  evals/files/repo/...  the repository every case starts from: what the scaffold script writes,
+                        as plain files, without its git history
+
+One entry per case, in the folders' alphabetical order: its prompt (after one sentence saying
+where the repository is), its description as the expected output, and one assertion per scored
+grader, taken from the `# assertion:` line in the grader's top block. skill-fired is an
+indicator for Claude's runner and is left out.
+
+A check comes from the grader: file_exists gives its path; a regex grader that reads a file or
+the last message gives its pattern and flags. A grader that reads the trace has none, unless
+its top block says how the same thing shows in the folder a run leaves:
+`# check: unchanged PATH` (the file is the input file) or `# check: only DIR NAME...` (the
+folder holds exactly these names).
+
+--check writes nothing and exits 1, naming each difference, when the files there are not what
+the case folders give. Exit 2 on a case this cannot read.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+REPO = "evals/files/repo"
+PREFACE = ("The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and "
+           "docs/changes/). Work in a copy of it, with that copy as the working directory.\n\n")
+INDICATOR = "skill-fired.md"
+
+
+class Unreadable(Exception):
+    pass
+
+
+def say(msg):
+    sys.stderr.write(f"export-evals-json: {msg}\n")
+
+
+def top_block(path):
+    text = open(path, encoding="utf-8").read()
+    end = text.find("\n---", 4)
+    if not text.startswith("---\n") or end < 0:
+        raise Unreadable(f"{path} has no top block")
+    return text[4:end], text[end + 4:].strip()
+
+
+def case(name):
+    d = os.path.join(HERE, name)
+    yaml = open(os.path.join(d, "case.yaml"), encoding="utf-8").read()
+    m = re.search(r'^description: (".*")\s*$', yaml, re.M)
+    if not m:
+        raise Unreadable(f"{name}/case.yaml has no description in double quotes")
+    prompt = open(os.path.join(d, "prompt.md"), encoding="utf-8").read()
+    if prompt.startswith("---\n"):  # a settings block for Claude's runner, not part of the prompt
+        prompt = prompt[prompt.find("\n---", 4) + 4:]
+    assertions, checks = [], []
+    for g in sorted(os.listdir(os.path.join(d, "graders"))):
+        if not g.endswith(".md") or g == INDICATOR:
+            continue
+        block, _ = top_block(os.path.join(d, "graders", g))
+        found = [ln[len("# assertion:"):].strip() for ln in block.split("\n") if ln.startswith("# assertion:")]
+        if len(found) != 1 or not found[0]:
+            raise Unreadable(f'{name}/graders/{g} needs one "# assertion:" line in its top block, found {len(found)}')
+        assertions.append(found[0])
+        how = check(block, f"{name}/graders/{g}")
+        if how:
+            checks.append(dict({"grader": g[:-3], "assertion": found[0]}, **how))
+    if not assertions:
+        raise Unreadable(f"{name} has no scored grader")
+    return {"description": json.loads(m.group(1)), "prompt": prompt.strip(), "assertions": assertions, "checks": checks,
+            "scaffold": os.path.join(d, "scaffold.sh")}
+
+
+def check(block, where):
+    """How code can check a grader's statement against the folder a run left, or None."""
+    def field(pattern):
+        m = re.search(pattern, block, re.M)
+        return m.group(1) if m else None
+    said = [ln[len("# check:"):].split() for ln in block.split("\n") if ln.startswith("# check:")]
+    if said:
+        words = said[0]
+        if len(said) == 1 and len(words) == 2 and words[0] == "unchanged":
+            return {"kind": "unchanged", "path": words[1]}
+        if len(said) == 1 and len(words) >= 3 and words[0] == "only":
+            return {"kind": "only", "dir": words[1], "names": sorted(words[2:])}
+        raise Unreadable(f'{where}: "# check:" must be "unchanged PATH" or "only DIR NAME..."')
+    kind = field(r"^type: (\w+)")
+    if kind == "file_exists" and field(r"^exists: (\w+)") == "true":
+        return {"kind": "file_exists", "path": field(r"^path: (\S+)")}
+    if kind != "regex":
+        return None
+    path = field(r"^target:[ \t]*\n[ \t]+source: file[ \t]*\n[ \t]+path: (\S+)")
+    target = "file" if path else field(r"^target: (\w+)")
+    if target not in ("file", "last_message"):
+        return None  # the trace: what the agent did, not what it left
+    pattern, flags = field(r"^pattern: '(.*)'[ \t]*$"), field(r"^flags: (\w+)") or ""
+    if pattern is None or (field(r"^match: (\S+)") or "contains") != "contains" or set(flags) - set("ims"):
+        raise Unreadable(f"{where}: a pattern in single quotes that must be found, with flags among i, m and s, is all this can turn into a check")
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        raise Unreadable(f"{where}: Python cannot read the pattern ({e})")
+    if target == "file":
+        return {"kind": "file_matches", "path": path, "pattern": pattern, "flags": flags}
+    return {"kind": "message_matches", "pattern": pattern, "flags": flags}
+
+
+def scaffold_files(script):
+    """{relative path: bytes} of what a scaffold script writes, its git folder left out."""
+    with tempfile.TemporaryDirectory() as scratch:
+        r = subprocess.run(["bash", script], cwd=scratch, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise Unreadable(f"{script} failed: {r.stderr.strip()[:300]}")
+        out = {}
+        for root, dirs, names in os.walk(scratch):
+            dirs[:] = sorted(x for x in dirs if x != ".git")
+            for n in names:
+                full = os.path.join(root, n)
+                out[os.path.relpath(full, scratch).replace(os.sep, "/")] = open(full, "rb").read()
+        return out
+
+
+def build():
+    names = sorted(n for n in os.listdir(HERE) if os.path.isfile(os.path.join(HERE, n, "case.yaml")))
+    if not names:
+        raise Unreadable(f"no case folders in {HERE}")
+    cases = [(n, case(n)) for n in names]
+    trees = {}
+    for n, c in cases:
+        trees.setdefault(json.dumps(sorted((p, b.hex()) for p, b in scaffold_files(c["scaffold"]).items())), []).append(n)
+    if len(trees) != 1:
+        raise Unreadable("the cases start from different repositories (" + "; ".join(", ".join(v) for v in trees.values())
+                         + "): this writes one evals/files/repo/ for all of them")
+    files = scaffold_files(cases[0][1]["scaffold"])
+    listed = [f"{REPO}/{p}" for p in sorted(files)]
+    doc = {"skill_name": "change", "evals": [
+        {"id": i, "name": n, "prompt": PREFACE + c["prompt"], "expected_output": c["description"],
+         "files": listed, "assertions": c["assertions"]} for i, (n, c) in enumerate(cases, 1)]}
+    checks = {"skill_name": "change", "checks": {n: c["checks"] for n, c in cases}}
+    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n", json.dumps(checks, indent=2, ensure_ascii=False) + "\n", files
+
+
+def main(argv):
+    check, skill = False, os.path.join(HERE, "..", "skills", "change")
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--check":
+            check, i = True, i + 1
+        elif argv[i] == "--skill-dir" and i + 1 < len(argv):
+            skill, i = argv[i + 1], i + 2
+        else:
+            say("usage: export-evals-json [--check] [--skill-dir DIR]")
+            return 2
+    try:
+        text, checks, files = build()
+    except (Unreadable, OSError) as e:
+        say(str(e))
+        return 2
+    json_path, repo = os.path.join(skill, "evals", "evals.json"), os.path.join(skill, *REPO.split("/"))
+    generated = [("evals/evals.json", json_path, text), ("evals/checks.json", os.path.join(skill, "evals", "checks.json"), checks)]
+    if check:
+        problems = []
+        for shown, path, want in generated:
+            try:
+                if open(path, encoding="utf-8").read() != want:
+                    problems.append(f"{shown} is not what the case folders give")
+            except OSError:
+                problems.append(f"{shown} is missing")
+        there = set()
+        for root, _, names in os.walk(repo):
+            there |= {os.path.relpath(os.path.join(root, n), repo).replace(os.sep, "/") for n in names}
+        for p in sorted(files):
+            if p not in there:
+                problems.append(f"{REPO}/{p} is missing")
+            elif open(os.path.join(repo, p), "rb").read() != files[p]:
+                problems.append(f"{REPO}/{p} differs from what the scaffold writes")
+        problems += [f"{REPO}/{p} is not one of the scaffold's files" for p in sorted(there - set(files))]
+        for p in problems:
+            say(p)
+        if problems:
+            say("run export-evals-json to write them again")
+        return 1 if problems else 0
+    shutil.rmtree(repo, ignore_errors=True)
+    for p, data in files.items():
+        os.makedirs(os.path.dirname(os.path.join(repo, p)), exist_ok=True)
+        with open(os.path.join(repo, p), "wb") as f:
+            f.write(data)
+    for _, path, want in generated:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(want)
+    n = sum(len(v) for v in json.loads(checks)["checks"].values())
+    print(f"export-evals-json: wrote {len(json.loads(text)['evals'])} cases to {os.path.normpath(json_path)}, {n} checks for evals/verify and {len(files)} input files")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

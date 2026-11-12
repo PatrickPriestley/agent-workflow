@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: The transcript shows the unit tests were run before greet.py was first changed, in an earlier command than the change.
 arm: both
 target: trace
 # Ordered trace: a unittest run before any write or edit of greet.py (same guard as

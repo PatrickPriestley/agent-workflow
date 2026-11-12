@@ -1,5 +1,7 @@
 ---
 type: regex
+# assertion: docs/changes/ holds only README.md and TEMPLATE.md, as in the input files: no change record was created.
+# check: only docs/changes README.md TEMPLATE.md
 arm: both
 target: trace
 # No record is created, by the Write tool or by a shell redirect, tee or cp into docs/changes/.

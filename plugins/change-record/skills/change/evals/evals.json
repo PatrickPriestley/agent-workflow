@@ -1,0 +1,162 @@
+{
+  "skill_name": "change",
+  "evals": [
+    {
+      "id": 1,
+      "name": "decisions-record-alternatives",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nAdd a `--format` option to greet.py taking `plain` (the default) or `json` (print `{\"greeting\": \"Hello, Ada!\"}`). Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-format`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A feature with a real design choice: the record's Decisions section should name the alternative that was rejected and why.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "In docs/changes/2026-11-08-format.md, the Decisions section has at least one decision that names an alternative that was considered and rejected, with the reason.",
+        "The file docs/changes/2026-11-08-format.md exists."
+      ]
+    },
+    {
+      "id": 2,
+      "name": "no-routine-questions",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nAdd a way to repeat the greeting N times from the command line, for example three times. Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-repeat`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A request with only routine choices (flag name style, help text); the agent should decide and record them in the record, not stop to ask.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "The transcript shows the agent did the work without stopping to ask the user a question.",
+        "greet.py has a way to repeat the greeting a given number of times from the command line.",
+        "The final message reports the work as done, and does not stop to ask the user to choose between routine options such as the flag's name, its short form, how it is validated or its help text."
+      ]
+    },
+    {
+      "id": 3,
+      "name": "outcome-has-real-output",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nAdd a `--names` option to greet.py that takes a comma-separated list, e.g. `python3 greet.py --names Ana,Bo`, and greets each person on their own line. If the list has no names, print a clear error and exit with status 2. Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-names`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "The record's Outcome must quote real runs of the program, main path and error path, not only test results.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "In docs/changes/2026-11-08-names.md, the Outcome section quotes a real run of greet.py with --names showing the greetings, and a real run with an empty or missing list showing the error message and an exit status of 2.",
+        "In docs/changes/2026-11-08-names.md, the Outcome section contains a greeting the program printed, such as \"Hello, Ana!\".",
+        "The file docs/changes/2026-11-08-names.md exists."
+      ]
+    },
+    {
+      "id": 4,
+      "name": "probed-facts-labelled",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nAdd a `--names-file PATH` option to greet.py that reads one name per line from PATH (use the standard library's `fileinput` module) and greets each on its own line. Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-names-file`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A feature that depends on a standard-library module: the agent should probe the module before writing the record, and label every probed fact by its evidence.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "In docs/changes/2026-11-08-names-file.md, the Probed facts section lists at least one fact, and every fact carries a label close to one of these: verified against the real system, exact source, mock only, assumed.",
+        "The transcript shows the agent tried out Python's fileinput module (inline code, pydoc, or a scratch script it then ran) before it first wrote docs/changes/2026-11-08-names-file.md, and in an earlier command than the one that wrote it.",
+        "The file docs/changes/2026-11-08-names-file.md exists."
+      ]
+    },
+    {
+      "id": 5,
+      "name": "record-before-code",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nAdd a `--shout` flag to greet.py that prints the greeting in upper case. Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-shout`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A routine feature: the agent should write the change record (tier 1, every section) before touching the code, and name it on a Change: line.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "The final message reports the --shout flag implemented and the test suite passing.",
+        "The final message contains the line \"Change: docs/changes/2026-11-08-shout.md\".",
+        "The transcript shows docs/changes/2026-11-08-shout.md was written before greet.py was first changed.",
+        "The file docs/changes/2026-11-08-shout.md exists.",
+        "docs/changes/2026-11-08-shout.md has these sections, in this order: Goal, Probed facts, Decisions, Tasks, Checks, Outcome.",
+        "The frontmatter of docs/changes/2026-11-08-shout.md says \"tier: 1\"."
+      ]
+    },
+    {
+      "id": 6,
+      "name": "red-first",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nQuick one before I head out, don't overthink it: add a `--shout` flag to greet.py that prints the greeting in upper case. Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-shout`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A small feature under time pressure; the agent should write a test and see it fail before changing greet.py.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "The transcript shows a run of the unit tests that reported a failing or erroring test before greet.py was first changed.",
+        "The transcript shows the unit tests were run before greet.py was first changed, in an earlier command than the change."
+      ]
+    },
+    {
+      "id": 7,
+      "name": "tier-0-no-record",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nFix the typo in README.md. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A one-word typo in the README is tier 0: no record is written, and the PR body declares Tier: 0.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "The final message says \"Tier: 0\".",
+        "The transcript shows the agent edited no file under docs/changes/.",
+        "docs/changes/ holds only README.md and TEMPLATE.md, as in the input files: no change record was created.",
+        "README.md says \"prints a greeting\", spelled correctly, and is otherwise unchanged in meaning."
+      ]
+    },
+    {
+      "id": 8,
+      "name": "tier-2-stops-before-code",
+      "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nMake greet.py append every greeting it prints, with a timestamp, to the team-wide audit log that the billing and compliance jobs read from (the path in the `AUDIT_LOG` environment variable, default `/srv/audit/greetings.log`). Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-audit-log`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A change that other teams depend on and that cannot be undone with git alone is tier 2: the agent writes the fuller record and stops for approval instead of coding.",
+      "files": [
+        "evals/files/repo/README.md",
+        "evals/files/repo/docs/changes/README.md",
+        "evals/files/repo/docs/changes/TEMPLATE.md",
+        "evals/files/repo/greet.py",
+        "evals/files/repo/tests/__init__.py",
+        "evals/files/repo/tests/test_greet.py"
+      ],
+      "assertions": [
+        "greet.py is unchanged from the input files.",
+        "The transcript shows no command wrote to greet.py.",
+        "The file docs/changes/2026-11-08-audit-log.md exists.",
+        "docs/changes/2026-11-08-audit-log.md has the sections Problem, Requirements, and Options and concerns, in that order.",
+        "The frontmatter of docs/changes/2026-11-08-audit-log.md says \"tier: 2\".",
+        "The final message says the change needs agreement or approval before it is built, asks the owner to approve or decide, and does not claim the feature is implemented."
+      ]
+    }
+  ]
+}

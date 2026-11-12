@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: The transcript shows a run of the unit tests that reported a failing or erroring test before greet.py was first changed.
 arm: both
 target: trace
 # Ordered trace: a unittest call whose own tool result (matched by tool_use_id) reports a

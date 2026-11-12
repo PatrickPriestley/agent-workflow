@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: The final message says "Tier: 0".
 arm: both
 target: last_message
 # "Tier: 0" in any of the markdown styles agents write it: plain, bold around the whole line,

@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: The transcript shows the agent tried out Python's fileinput module (inline code, pydoc, or a scratch script it then ran) before it first wrote docs/changes/2026-11-08-names-file.md, and in an earlier command than the one that wrote it.
 arm: both
 target: trace
 # Ordered trace: a probe of fileinput before the record is written (by Write or Edit, or by a

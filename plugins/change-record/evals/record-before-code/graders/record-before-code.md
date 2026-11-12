@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: The transcript shows docs/changes/2026-11-08-shout.md was written before greet.py was first changed.
 arm: both
 target: trace
 # Ordered trace: the record is written (by Write or Edit, or by a shell redirect, tee or cp)

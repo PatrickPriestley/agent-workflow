@@ -1,5 +1,6 @@
 ---
 type: llm
+# assertion: README.md says "prints a greeting", spelled correctly, and is otherwise unchanged in meaning.
 focus:
   source: file
   path: README.md

@@ -1,0 +1,128 @@
+{
+  "skill_name": "change",
+  "checks": {
+    "decisions-record-alternatives": [
+      {
+        "grader": "record-exists",
+        "assertion": "The file docs/changes/2026-11-08-format.md exists.",
+        "kind": "file_exists",
+        "path": "docs/changes/2026-11-08-format.md"
+      }
+    ],
+    "no-routine-questions": [
+      {
+        "grader": "feature-landed",
+        "assertion": "greet.py has a way to repeat the greeting a given number of times from the command line.",
+        "kind": "file_matches",
+        "path": "greet.py",
+        "pattern": "repeat|times|count|-n\\b|--n\\b",
+        "flags": "i"
+      }
+    ],
+    "outcome-has-real-output": [
+      {
+        "grader": "outcome-quotes-main-path",
+        "assertion": "In docs/changes/2026-11-08-names.md, the Outcome section contains a greeting the program printed, such as \"Hello, Ana!\".",
+        "kind": "file_matches",
+        "path": "docs/changes/2026-11-08-names.md",
+        "pattern": "^## Outcome[\\s\\S]*Hello, [A-Za-z]+!",
+        "flags": "m"
+      },
+      {
+        "grader": "record-exists",
+        "assertion": "The file docs/changes/2026-11-08-names.md exists.",
+        "kind": "file_exists",
+        "path": "docs/changes/2026-11-08-names.md"
+      }
+    ],
+    "probed-facts-labelled": [
+      {
+        "grader": "record-exists",
+        "assertion": "The file docs/changes/2026-11-08-names-file.md exists.",
+        "kind": "file_exists",
+        "path": "docs/changes/2026-11-08-names-file.md"
+      }
+    ],
+    "record-before-code": [
+      {
+        "grader": "pr-body-names-record",
+        "assertion": "The final message contains the line \"Change: docs/changes/2026-11-08-shout.md\".",
+        "kind": "message_matches",
+        "pattern": "Change:\\s*`?docs/changes/2026-11-08-shout\\.md",
+        "flags": ""
+      },
+      {
+        "grader": "record-exists",
+        "assertion": "The file docs/changes/2026-11-08-shout.md exists.",
+        "kind": "file_exists",
+        "path": "docs/changes/2026-11-08-shout.md"
+      },
+      {
+        "grader": "record-has-sections",
+        "assertion": "docs/changes/2026-11-08-shout.md has these sections, in this order: Goal, Probed facts, Decisions, Tasks, Checks, Outcome.",
+        "kind": "file_matches",
+        "path": "docs/changes/2026-11-08-shout.md",
+        "pattern": "^## Goal[\\s\\S]*^## Probed facts[\\s\\S]*^## Decisions[\\s\\S]*^## Tasks[\\s\\S]*^## Checks[\\s\\S]*^## Outcome",
+        "flags": "m"
+      },
+      {
+        "grader": "record-is-tier-1",
+        "assertion": "The frontmatter of docs/changes/2026-11-08-shout.md says \"tier: 1\".",
+        "kind": "file_matches",
+        "path": "docs/changes/2026-11-08-shout.md",
+        "pattern": "^tier:\\s*1\\s*(#.*)?$",
+        "flags": "m"
+      }
+    ],
+    "red-first": [],
+    "tier-0-no-record": [
+      {
+        "grader": "declares-tier-0",
+        "assertion": "The final message says \"Tier: 0\".",
+        "kind": "message_matches",
+        "pattern": "\\**Tier\\**\\s*:\\s*\\**\\s*0(?!\\d)",
+        "flags": ""
+      },
+      {
+        "grader": "no-record-written",
+        "assertion": "docs/changes/ holds only README.md and TEMPLATE.md, as in the input files: no change record was created.",
+        "kind": "only",
+        "dir": "docs/changes",
+        "names": [
+          "README.md",
+          "TEMPLATE.md"
+        ]
+      }
+    ],
+    "tier-2-stops-before-code": [
+      {
+        "grader": "no-code-edited",
+        "assertion": "greet.py is unchanged from the input files.",
+        "kind": "unchanged",
+        "path": "greet.py"
+      },
+      {
+        "grader": "record-exists",
+        "assertion": "The file docs/changes/2026-11-08-audit-log.md exists.",
+        "kind": "file_exists",
+        "path": "docs/changes/2026-11-08-audit-log.md"
+      },
+      {
+        "grader": "record-has-tier-2-sections",
+        "assertion": "docs/changes/2026-11-08-audit-log.md has the sections Problem, Requirements, and Options and concerns, in that order.",
+        "kind": "file_matches",
+        "path": "docs/changes/2026-11-08-audit-log.md",
+        "pattern": "^## Problem[\\s\\S]*^## Requirements[\\s\\S]*^## Options and concerns",
+        "flags": "m"
+      },
+      {
+        "grader": "record-is-tier-2",
+        "assertion": "The frontmatter of docs/changes/2026-11-08-audit-log.md says \"tier: 2\".",
+        "kind": "file_matches",
+        "path": "docs/changes/2026-11-08-audit-log.md",
+        "pattern": "^tier:\\s*2\\s*(#.*)?$",
+        "flags": "m"
+      }
+    ]
+  }
+}

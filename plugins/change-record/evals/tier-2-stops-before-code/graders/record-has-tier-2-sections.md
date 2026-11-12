@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: docs/changes/2026-11-08-audit-log.md has the sections Problem, Requirements, and Options and concerns, in that order.
 arm: both
 target:
   source: file

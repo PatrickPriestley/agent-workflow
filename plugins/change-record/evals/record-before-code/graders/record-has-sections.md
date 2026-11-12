@@ -1,5 +1,6 @@
 ---
 type: regex
+# assertion: docs/changes/2026-11-08-shout.md has these sections, in this order: Goal, Probed facts, Decisions, Tasks, Checks, Outcome.
 arm: both
 target:
   source: file
