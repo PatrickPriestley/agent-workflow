@@ -1,11 +1,11 @@
 session: d7098b89-f99f-4a45-a7e8-d0f3fd590c5b
 transcript: sha256:0771b721821120d884ee2a6a3222691ec013462f70909f11ec5002b75fc648a4 lines:53
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the record written at [5] has `tier: 1` in its frontmatter
+probe-before-record: fail | before the record [5] the session only loaded the skill [2] and listed and cat'ed files [4]; nothing was run, although the record's Probed facts say `verified (python3 ...)`
+record-before-code: pass | the record is written at [5]; the first code is the greet.py edit at [9] (the file written in between, [6], is a test)
+red-first: pass | the test run [7] ran 5 tests and reported FAILED (failures=3) before greet.py was first edited [9]
+change-line: pass | the description in the last message [13] opens with the Change: line for the record, wrapped in bold; record-check accepts that form (owner's ruling, 2026-11-12)
+record-check: na | the sheet says no commit is known and shows no record at the last commit
+outcome-filled: pass | status is set to done [12] and the Outcome was filled with the red and green results and real-use output [11]

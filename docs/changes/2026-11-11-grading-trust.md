@@ -223,6 +223,22 @@ record confirms it).
   read what it needed ("Rows that are no verdict"), so that the limit task 2 found is on the
   page before anyone has labelled. `labels.compare` gained one count, `both_na`; the table
   `accuracy` prints is unchanged.
+- (Labelling, 2026-11-12.) The labels are a model's first pass, adjudicated by the owner, not
+  the owner's from scratch: three fresh Claude sessions labelled the fifteen fixture sessions
+  from the sheets alone, barred from the graders, their scores and their code, and the owner
+  rules on every step where a label and the grader disagree, plus a sample of agreements. This
+  changes C1's resolution on the owner's instruction in chat ("Can you do the remaining work",
+  then "I label, you adjudicate"). Until the owner has ruled, each label file says so on its
+  `labelled-by` line and the numbers are agreement between a model and the graders, not error
+  against a person. Rejected: the owner labelling all 105 steps, for the time it takes; and
+  model labels with no adjudication, which is option B.
+- (Rulings, 2026-11-12.) The owner ruled on the fifteen disagreements "as recommended", which
+  sets four rules for labels and graders alike. A `Change:` line wrapped in bold counts, as
+  `record-check` already accepts it. A probe is something tried against what the change depends
+  on: a look at the real environment counts, a run of the existing tests counts, `--version`
+  alone does not, and listing or reading files does not. A record with its tasks ticked counts
+  as done for `outcome-filled`, whatever its status says. A session with no record and no code
+  that says `Tier: 0` passes `tier-declared`.
 
 ## Tasks
 
@@ -739,3 +755,56 @@ malformed label file, here a verdict misspelt in a second copy of the labels:
     46:| red-first | fields/1 | 4 | 0 | not yet checked | 0 | 0 | 0 | 1 |
     57:- 95e399c5-a1ef-4de4-8612-001551b4f84d.txt is rejected: red-first: unknown verdict 'passed' (pass, fail or na)
     1
+
+### Labelling: first pass (2026-11-12, not yet adjudicated)
+
+The fifteen fixture sessions are labelled by three blind Claude sessions (five each), the label
+files are in `grade/labels/`, and `transcripts accuracy` on the fixtures gives:
+
+    | Step | Labelled | Agree | False fail | False pass | False n/a |
+    | tier-declared | 2 | 1 | 0 | 1 | 0 |
+    | probe-before-record | 15 | 11 | 3 | 1 | 0 |
+    | record-before-code | 15 | 15 | 0 | 0 | 0 |
+    | red-first | 15 | 15 | 0 | 0 | 0 |
+    | change-line | 15 | 11 | 0 | 4 | 0 |
+    | record-check | 15 | 15 | 0 | 0 | 0 |
+    | outcome-filled | 15 | 9 | 0 | 0 | 6 |
+
+Fifteen disagreements wait for the owner's ruling. What they show before it: one fault in the
+graders (a record Write refused by a read-only file system is counted as the record written,
+session c76ecdac); two labels stricter than the repository's own rule (`record-check` accepts
+a `Change:` line wrapped in bold, so the graders' pass on bdd53cec and d7098b89 is right); the
+six `outcome-filled` rows are the known limit of fixtures without commits; and "what counts as
+a probe" is not settled between `python3 --version`, a look at the real environment, and a run
+of the existing tests. The five store sessions are not labelled: they need the read key.
+
+### Labelling: the owner's rulings and the first measurement (2026-11-12)
+
+The owner ruled on all fifteen disagreements; three labels changed (two bold `Change:` lines
+and one `Tier: 0` to pass) and twelve stood. The agreements were not reviewed one by one. Each
+label file's `labelled-by` line says who did what. On the fifteen fixture sessions, graded
+into an archive and reported with these labels:
+
+    $ transcripts report   (Grader error section)
+    | Step | Grader | Covered | Wrong | Error | False fail | False pass | False n/a | Both n/a |
+    | tier-declared | fields/1 | 1 | 0 | not yet checked | 0 | 0 | 0 | 1 |
+    | probe-before-record | fields/1 | 11 | 4 | 36% | 3 | 1 | 0 | 4 |
+    | record-before-code | fields/1 | 9 | 0 | 0% | 0 | 0 | 0 | 6 |
+    | red-first | fields/1 | 11 | 0 | 0% | 0 | 0 | 0 | 4 |
+    | change-line | fields/1 | 11 | 2 | 18% | 0 | 2 | 0 | 4 |
+    | record-check | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 2 |
+    | outcome-filled | fields/1 | 6 | 6 | 100% | 0 | 0 | 6 | 9 |
+
+What it says. `red-first` and `record-before-code` made no mistake on the sessions that
+exercised them. `probe-before-record` is wrong on four of eleven: it takes `python3 --version`
+for a probe, misses a look at the real environment and a run of the existing tests, and
+counts a record whose Write the file system refused as written. `change-line` passed two
+descriptions it should not have: one whose `Change:` line follows a title and a paragraph,
+and one where the line sits in a suggested commit message. `outcome-filled` could not judge
+any of the six sessions that needed it, because the fixtures carry no commit to read the
+record from: a limit of the fixtures, shown here as error. `tier-declared` and `record-check`
+are not yet checked for the same reason.
+
+Still open under this record: the five store sessions (R1 asks for twenty; fifteen are
+labelled), which need the read key and are the only way to measure the three steps that read
+the record at a commit. The grader faults above are not fixed here.

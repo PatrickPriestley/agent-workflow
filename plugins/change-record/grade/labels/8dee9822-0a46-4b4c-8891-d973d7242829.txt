@@ -1,11 +1,11 @@
 session: 8dee9822-0a46-4b4c-8891-d973d7242829
 transcript: sha256:d063756645224e98e764ff3d475fd61b4d2641b3c5c7c796e36692473971c54b lines:36
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | no record and no code (a README typo fix [6]), and its description [7] says Tier: 0, which is what the skill asks of such a change (owner's ruling, 2026-11-12)
+probe-before-record: na | there is no record: no call names a file under docs/changes/
+record-before-code: na | there is no record, and no code was written (only README.md [6])
+red-first: na | no code was written (only README.md [6]), and the change is declared tier 0 [4][7]
+change-line: na | there is no record, so the description in the last message [7] has no record path to open with
+record-check: na | there is no record
+outcome-filled: na | there is no record

@@ -1,11 +1,11 @@
 session: fc657482-9721-4c3c-9a99-abdfd62955d2
 transcript: sha256:8bb5c8f58f7dbc12261a17d2932901fcc826db4c6a0e3907bec2a81bc9a5ba00 lines:47
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the record written at [4] has `tier: 1` in its frontmatter
+probe-before-record: fail | before the record [4] the session only listed and cat'ed files [2][3]; `fileinput`, which the change depends on, was not tried out
+record-before-code: pass | the record is written at [4], before the first code, greet.py at [5]
+red-first: fail | tier 1; greet.py was written [5] before any test run; the only run, in [7], came after it and reported OK on 2 tests ([2] only cats the tests)
+change-line: na | no pull request call, and the last message [10] holds no pull request description: the user asked for a commit, and the `Change:` line there is inside a suggested commit message
+record-check: na | the sheet says no commit is known and shows no record at the last commit; both commit attempts failed on the read-only .git [7][9]
+outcome-filled: pass | the record's one task is ticked `[x]` from [4] and the Outcome holds `Implemented; tests pass.` after the edit at [8]; status stayed open because the sed in [7] failed

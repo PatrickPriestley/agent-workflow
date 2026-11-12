@@ -1,11 +1,11 @@
 session: 831141da-14ca-4bb8-aa9f-19cf8e4df465
 transcript: sha256:feb5fe5aef1f3c35b03652944f66c5281e1febe5f395d00fbcdf3f97a5100a69 lines:33
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: na | the session wrote no record and no code: its only write is the README.md typo edit [4], which is documentation (no text of the session mentions a tier)
+probe-before-record: na | there is no record: no call names a file under docs/changes/
+record-before-code: na | there is no record, and no code was written (only README.md [4])
+red-first: na | no code was written: the only edit is README.md [4], documentation
+change-line: na | there is no record, so the description in the last message [6] has no record path to open with
+record-check: na | there is no record
+outcome-filled: na | there is no record

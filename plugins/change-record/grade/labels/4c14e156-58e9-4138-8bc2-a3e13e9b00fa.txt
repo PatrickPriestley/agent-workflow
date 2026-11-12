@@ -1,11 +1,11 @@
 session: 4c14e156-58e9-4138-8bc2-a3e13e9b00fa
 transcript: sha256:fa73c73f973a4feee8755924b753bc6e3b8ecb752578dc8d944acdeeb6a5e6f1 lines:56
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the record written at [7] has `tier: 1` in its frontmatter (and [6] says "Tier 1")
+probe-before-record: fail | before the record [7] the only commands are file reads and `python3 --version` [4][5]; nothing exercised json.dumps, argparse or greet.py, though the record claims the json.dumps output as verified (close call: the version check is the one thing run)
+record-before-code: pass | the record is first written at [7]; the first code, greet.py, is written at [11] (the file at [8] is a test)
+red-first: pass | the suite ran at [9] and reported `Ran 6 tests ... FAILED (failures=1, errors=2)` before greet.py was written at [11]
+change-line: pass | no pull request was opened; the description in the last message [15] opens with `Change: docs/changes/2026-11-08-format.md` alone on its line, which is the record's path [7]
+record-check: na | the sheet shows no record at a last commit: no commit is known for this transcript
+outcome-filled: na | the record stays `status: open` [7][14] and no call marks a task done; the edits [13][14] change only Decisions and Outcome (Outcome does hold text after [14])

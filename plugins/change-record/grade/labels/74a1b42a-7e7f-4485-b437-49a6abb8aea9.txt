@@ -1,11 +1,11 @@
 session: 74a1b42a-7e7f-4485-b437-49a6abb8aea9
 transcript: sha256:48dfc5ecbc5b41c05dfa6e911f8bd4690d3fb731eb3aecc1b397c1df6a1421d8 lines:42
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the record written at [6] has `tier: 2` in its frontmatter
+probe-before-record: pass | before the record [6], [5] ran `ls -la /srv/audit` and echoed `$AUDIT_LOG` against the real environment the change depends on (found absent/unset, as the record's Probed facts report); close call, since it is a look at the system and not code being run
+record-before-code: na | no code was written: the only file written is the record [6], and the last message [7] says greet.py is unchanged
+red-first: na | no code was written; the only file call is the record [6]
+change-line: pass | no pull request was opened; the description in the last message [7] has `Change: docs/changes/2026-11-08-audit-log.md` alone on its line as the first line of the body, after a `**Title:**` line which I read as the title and not the description
+record-check: na | the sheet shows no record at a last commit: no commit is known for this transcript
+outcome-filled: na | the record is `status: open` [6] and no call marks a task done (Outcome reads "Not built. Awaiting approval...")

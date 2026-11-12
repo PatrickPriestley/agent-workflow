@@ -1,11 +1,11 @@
 session: c76ecdac-f3a9-4330-9b54-3339fd4923a9
 transcript: sha256:6248de6cfc6bdd1a94fc331087f0c7dc13190ca3f72740214ef3fb0ae680ee6c lines:38
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: na | the session wrote no record and no code: its only write, the record heredoc in [5], was refused (Read-only file system) and there are no file-tool calls; "Tier 1" in [7] is a plan only
+probe-before-record: na | there is no record: the write of docs/changes/2026-11-08-names.md in [5] was refused (Read-only file system)
+record-before-code: na | there is no record ([5] refused) and no code was written
+red-first: na | no code was written; no file-tool calls, and the shell commands [4], [5], [6] wrote nothing and ran no test
+change-line: na | there is no record ([5] refused), and the last message [7] holds no pull request description
+record-check: na | there is no record ([5] refused) and no commit is known
+outcome-filled: na | there is no record ([5] refused)

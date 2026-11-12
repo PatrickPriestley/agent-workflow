@@ -1,11 +1,11 @@
 session: d178b31d-417f-4242-8c53-5f69a20cd87e
 transcript: sha256:983ce2093301412b56a3a58ac3a3467d6056ef42370b934c1b15811b67787675 lines:46
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the record written at [6] has `tier: 1` in its frontmatter; the session also says it is tier 1 [5]
+probe-before-record: fail | before the record was first written [6] the only commands were listings and cat of greet.py, the tests and the docs [2][4]; nothing was run or tried out
+record-before-code: pass | the record is written at [6], before the first code, greet.py at [7]
+red-first: fail | tier 1; greet.py was written [7] before any test run; the only test run [9] came after it and reported OK on 6 tests, so no failed test was seen ([2] only cats the tests)
+change-line: fail | no pull request call; the description in the last message [11] opens with a bold title and a paragraph, and `Change: docs/changes/2026-11-08-shout.md` sits alone on its line near the end, not at the opening
+record-check: na | the sheet says no commit is known and shows no record at the last commit
+outcome-filled: fail | the session ticked both tasks done [10] but the Outcome section written at [6] is empty and no later call fills it; [11] itself says Outcome is empty and status is still open

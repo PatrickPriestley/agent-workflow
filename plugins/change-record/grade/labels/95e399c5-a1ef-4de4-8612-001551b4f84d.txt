@@ -1,11 +1,11 @@
 session: 95e399c5-a1ef-4de4-8612-001551b4f84d
 transcript: sha256:2f653e0a531a25075aa05b0225dbc356c12a03f2557b98a9e709327ce15f67a0 lines:189
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the session's record docs/changes/2026-11-08-shout.md existed already ([1], commit d0f5117 in [5]) and the session calls it "the approved tier 2 record" [41][44]; the frontmatter itself is cut from the sheet's copy of [5], so the tier value is not directly shown
+probe-before-record: na | the record was there before the session started ([1] says so; [5] shows it committed as d0f5117) and the session did not write it, only added to its Outcome at [34]
+record-before-code: na | the record was there before the session started ([1], [5]); the session did not first write it
+red-first: fail | greet.py was written at [24] with no test run having run: every earlier run [6][7][12][15][18][21] was denied ("requires approval"), and the work is tier 1, not tier 0 [1]
+change-line: pass | the description the session wrote to PR.md [41] (removed at [42]) and the one in its last message [44] both open with `Change: docs/changes/2026-11-08-shout.md` alone on its line, the record's path
+record-check: na | the sheet shows no record at a last commit: no commit is known, and the session's commits [22][32] were denied
+outcome-filled: na | the sheet shows no `done` status (the session was told not to change status [1]) and no call marks a task done; [34] only adds text to Outcome, which says the checks and commits were not done

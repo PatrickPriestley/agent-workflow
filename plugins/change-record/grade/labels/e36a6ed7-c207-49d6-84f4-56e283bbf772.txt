@@ -1,11 +1,11 @@
 session: e36a6ed7-c207-49d6-84f4-56e283bbf772
 transcript: sha256:a78eefc3a74687dfa028a2a6ff600903525db67d8d8a7a32d1adf4adca94a195 lines:38
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the record written at [6] has `tier: 1` in its frontmatter
+probe-before-record: fail | before the record [6] the session only read files [2][3] and wrote greet.py and the tests [4][5]; nothing was run until the test run [7], after the record
+record-before-code: fail | greet.py was written at [4], before the record was first written at [6]
+red-first: fail | tier 1; greet.py was written [4] before any test run; the only run [7] came after it and reported OK on 6 tests ([2] only cats the tests)
+change-line: pass | no pull request call; in the last message [8] the description gives a line labelled `**Title:**` and then `Change: docs/changes/2026-11-08-format.md` alone on its line; I read the Title line as the pull request's title, so the description body opens with the Change line; borderline, fail if the Title line counts as the description's first line
+record-check: na | the sheet says no commit is known and shows no record at the last commit
+outcome-filled: fail | the record was written with both tasks ticked `[x]` and an empty Outcome [6], and no later call touches it; status is open

@@ -1,11 +1,11 @@
 session: da1017af-e406-4505-ade7-a5b331fa0989
 transcript: sha256:c598737ccbb4301422db92fbb8a41a2912c188198dea357ba46223af5033bb50 lines:110
-labelled-by:
+labelled-by: Claude (a model, blind first pass); disagreements with the graders ruled by Patrick Priestley, 2026-11-12
 # One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
-tier-declared:
-probe-before-record:
-record-before-code:
-red-first:
-change-line:
-record-check:
-outcome-filled:
+tier-declared: pass | the session wrote code [11] against a record that already existed; its frontmatter is not visible on the sheet ([5] output is cut, [19] reads from line 40), but the task [1] calls it tier 1 work and forbids changing the tier, and [22] says the tier is untouched, so the wording points to pass
+probe-before-record: na | the record was there before the session started: [1] says it exists already and the log at [5] already holds commit d0f5117 `docs(change): 2026-11-08-shout`; the session never first-wrote it
+record-before-code: na | the record was there before the session started ([1], commit d0f5117 in [5]); the session only added to its Outcome at [20]
+red-first: pass | after writing the tests [7], the run [8] ran 6 tests and reported FAILED (failures=3) before greet.py was first written [11]
+change-line: pass | no pull request call; the description in the last message [22] opens with `Change: docs/changes/2026-11-08-shout.md` alone on its line
+record-check: na | the sheet says no commit is known and shows no record at the last commit; the session did commit [21], but the record as committed is not shown and its full text is not in the calls
+outcome-filled: na | the record's status is not shown as done ([1] forbids changing it, [22] says it is untouched) and no call marks a task done; the session only added Outcome text [20], which is not empty, so pass is the only other candidate
