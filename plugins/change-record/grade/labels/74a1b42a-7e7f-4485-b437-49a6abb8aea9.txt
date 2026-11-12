@@ -9,3 +9,5 @@ red-first: na | no code was written; the only file call is the record [6]
 change-line: pass | no pull request was opened; the description in the last message [7] has `Change: docs/changes/2026-11-08-audit-log.md` alone on its line as the first line of the body, after a `**Title:**` line which I read as the title and not the description
 record-check: na | the sheet shows no record at a last commit: no commit is known for this transcript
 outcome-filled: na | the record is `status: open` [6] and no call marks a task done (Outcome reads "Not built. Awaiting approval...")
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: na | The session wrote no code: its only file call is the change record under docs/ [6], and its message [7] says "I haven't changed `greet.py`".

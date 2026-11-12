@@ -9,3 +9,5 @@ red-first: pass | the suite ran at [9] and reported `Ran 6 tests ... FAILED (fai
 change-line: pass | no pull request was opened; the description in the last message [15] opens with `Change: docs/changes/2026-11-08-format.md` alone on its line, which is the record's path [7]
 record-check: na | the sheet shows no record at a last commit: no commit is known for this transcript
 outcome-filled: na | the record stays `status: open` [7][14] and no call marks a task done; the edits [13][14] change only Decisions and Outcome (Outcome does hold text after [14])
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: proportionate | Two one-line status notes, then one closing message [15] that states what changed, what was run and what was skipped in plain sentences; its only excess is that the three real-use lines and the test count appear both in the summary and in the requested pull request description. (where a summary repeats the requested description, the owner ruled 2026-11-12: verbose only when most of it is said again)

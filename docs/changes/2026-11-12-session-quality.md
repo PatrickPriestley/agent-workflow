@@ -261,6 +261,19 @@ record confirms it).
   print the diff. Rejected: the diff on the sheet, which can be longer than the session.
 - (Task 2.) `--store` sends the rubric score rows and not the votes: `judge_votes` takes a
   pass or a fail per vote, and a vote here is a label. The votes stay in `rubrics/`.
+- (After the labels.) The verbosity rubric is taken out, as C2 says: its judge was wrong on 3
+  of 14 labelled sessions, more than one in five, and the owner confirmed it on 2026-11-12
+  ("Take it out", in chat). `judge --rubrics` does not ask it and the report drops its rows,
+  whatever an earlier run left. It was not asked of another model first: C2 says not tuned.
+  Its text and the labels stay, and a label file's `verbosity:` line still loads and is still
+  checked, so the measurement can be read again and a later attempt has something to beat.
+  Rejected: deleting the labels with the rubric.
+- (After the labels.) With one rubric, a session it cannot be asked of (no commit, or a commit
+  the repository does not have) is not judged, and the run says why. Before, such a session
+  got a row with no verdict and an error, because the other rubric was still asked of it.
+  Rejected: a row that says only that nothing was asked.
+- (After the labels.) The grader stays `rubric/1`: the code-quality question, its input and
+  its counting did not change, and a new version would ask it of every session again.
 
 ## Tasks
 
@@ -417,3 +430,93 @@ Not done, and what these results are not:
   18 generated and fixture files were left out and some of the rest was cut.
 - What the run cost was not recorded; the votes hold no token counts.
 - The rubric rows were not sent to the store.
+
+### The two rubrics labelled, and verbosity taken out (2026-11-12)
+
+Labels (C3). Three model labellers made a blind first pass, before any of them or their
+caller had read a judge's answer for the session: one read the three task sessions (sheet
+and full diff) for both rubrics; two read the fifteen fixture sessions for verbosity, which
+have no commit here and so no diff to judge. The owner then ruled on what they left open:
+
+- `dd2defdb`, code quality: the labeller said `block`, for two gaps in `cmd_judge` it
+  reproduced (a run of errors was saved as judged and never asked again; rows judged without
+  `--store` could never be sent). The judge had said `approve`, on a part of the diff. Ruled:
+  `block`. Both gaps are closed by record `2026-11-12-judge-asks-again`.
+- Verbosity where a closing summary repeats the description the task asked for (the
+  labellers were torn on six sessions). Ruled: verbose only when most of the summary is said
+  again. That leaves three verbose (`95e399c5`, `d7098b89`, `da1017af`) and the rest
+  proportionate.
+
+The labels are in `grade/labels/`, each file's rubric lines under a comment that says how
+they were made. Four fixture sessions wrote no code and are `na` for verbosity.
+
+Sessions sent to a model for this (C6, the owner's choice each time): the eleven fixture
+sessions that wrote code, to Claude Haiku for verbosity, 33 calls, all 33 counted and served
+by Haiku. The fixtures are the made-up eval runs already in this repository.
+
+The measurement, `transcripts report DIR --labels plugins/change-record/grade/labels`, over
+the eleven fixture sessions and the three task sessions judged in task 2, before the removal:
+
+    | Step | Grader | Pass | Fail | N/A | Pass rate | Grader error |
+    | code-quality | rubric/1:sonnet | 2 | 1 | 11 | 67% | not yet checked (3 of 5 needed) |
+    | verbosity | rubric/1:haiku | 14 | 0 | 0 | 100% | 21% (3 of 14 wrong) |
+
+    | Step | Grader | Covered | Wrong | Error | False fail | False pass | False n/a | Both n/a |
+    | code-quality | rubric/1:sonnet | 3 | 1 | not yet checked | 0 | 1 | 0 | 0 |
+    | verbosity | rubric/1:haiku | 14 | 3 | 21% | 0 | 3 | 0 | 0 |
+
+The verbosity judge answered `proportionate` for all fourteen (the eleven fixtures and the
+three task sessions). Of its 42 votes, three said anything else: one `verbose` on `d7098b89`,
+which the label calls verbose, and one `verbose` on `a9637489` and one `terse` on `659da00f`,
+which it does not. It cannot tell the labelled classes apart, and the three it got wrong are
+every session the labels call verbose. 21% is over C2's one in five, so it is taken out.
+
+Shipped with the removal: `grade/rubric.py` (one rubric asked, `RETIRED` for the other, no
+message selection), `judge_rubrics` in `bin/transcripts` rewritten for one question,
+`grade/labels.py` (the sheet and a new label file offer one rubric; a `verbosity:` line still
+loads), `grade/report.py` (rows of a retired rubric are dropped), the README.
+`transcripts-judge.test.sh`: 278 assertions before, 284 now; 29 failed on the old code. The
+other suites pass unchanged (250, 168, 89).
+
+Guards: 16 broken by hand. 11 failed the suite. Four survivors were gaps in code this change
+rewrote and now have tests (the row names what was left out; a changed diff is judged again;
+another rubric version is not kept; "on a part" is printed). The fifth was a branch with no
+effect anyone can see, and is removed.
+
+Real use, on the same folder after the removal. This run was not planned: the folder held
+the three task sessions' rows but not their judge files, so `judge --rubrics` asked them
+again, 9 Sonnet calls on the three sessions the owner had already chosen, under the same
+redaction.
+
+    transcripts: 3 sessions to judge, at most 9 calls (3 votes each)
+    dd2defdb code-quality: approve (on a part)
+    6cc07e5f code-quality: approve
+    659da00f code-quality: block
+
+All nine answers counted, each served by Sonnet, and the three labels are the first run's.
+The eleven fixture sessions print `not judged: no commit recorded for the session`. A third
+run says `0 sessions to judge ... 3 already judged`. The report on that folder lists
+`code-quality` alone:
+
+    | code-quality | rubric/1:sonnet | 2 | 1 | 11 | 67% | not yet checked (3 of 5 needed) |
+    Rubric labels, code-quality: approve 2 (1 of them judged on a part of the diff), block 1.
+
+(The 11 not applicable are rows the removed code wrote for the fixtures; a folder judged
+from now on has none.)
+
+What the code-quality numbers say, and do not:
+
+- Three labelled sessions, two under the five the report needs, so its error is still "not
+  yet checked". One of three is a false pass, on the one session judged on a part of its
+  diff. If that rate held it would be over C2's line too; three sessions cannot say.
+- The `block` on `659da00f` agrees with the label, but in the second run both blocking votes
+  rest on "no tests in the diff", which is an artifact of that session being cut off at its
+  first commit. In the first run one vote named the real defect. Agreement on the label is
+  not agreement on the reason, and the report counts only the label.
+- More sessions with commits are needed: the store holds five, read with the key on the
+  owner's machine, and every new captured session adds one.
+
+Not done: task 3 (`transcripts propose`). C5 lets an edit be drafted only from a failure a
+label confirms. The labels confirm two code-quality blocks, both defects in this plugin's
+own code and both now fixed in their own records; neither is a failure of the `change`
+skill's text, so there is no confirmed skill failure to draft an edit from yet.

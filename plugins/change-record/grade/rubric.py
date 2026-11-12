@@ -1,13 +1,18 @@
-"""rubric: two judged rubrics for a session's code and prose (record
+"""rubric: a judged rubric for a session's code (record
 docs/changes/2026-11-12-session-quality.md, R4, R5 and its concerns C2, C4, C6, C7).
 
   code-quality  asked of the diff between the session's first and last commit, of Claude Sonnet
-  verbosity     asked of the messages the session wrote, with its counts, of Claude Haiku
 
-Each is asked three times in a fresh session with no tools (as grade/judge.py asks its
+It is asked three times in a fresh session with no tools (as grade/judge.py asks its
 questions), and answers with one of the rubric's labels and a reason. Two answers with the
 same label decide; anything else is undecided and writes no verdict. The rubric texts are in
 grade/rubrics/, adapted from Skill Doctor's scorers (MIT).
+
+A second rubric, verbosity, was asked of the session's messages, of Claude Haiku, until
+2026-11-12. Measured against 14 labelled sessions it answered proportionate every time and
+was wrong on 3, more than the one in five the record allows a judge (C2), so it is not asked
+and not reported, and it was not tuned. Its text stays in grade/rubrics/ and a label file may
+still carry its line: the labels are what it was measured against.
 
 A label is good or it is not: the first label of a rubric is a pass and the others a fail, so
 a verdict fits the store's score rows and can be checked against a person's label like any
@@ -24,11 +29,12 @@ import fields
 import judge
 
 RUBRIC = "rubric/1"  # bump when a rubric's text, its input or the counting changes
-QUESTIONS = ["code-quality", "verbosity"]
-MODEL = {"code-quality": "sonnet", "verbosity": "haiku"}
-DIFF_CAP = 60000      # characters of diff a judge sees (C4)
-MESSAGES_CAP = 40000  # characters of the session's messages a judge sees
-PASS, FAIL, NA, UNDECIDED = judge.PASS, judge.FAIL, judge.NA, judge.UNDECIDED
+QUESTIONS = ["code-quality"]  # what is asked and reported
+RETIRED = ["verbosity"]       # taken out (C2): labels for it still load, nothing else reads it
+MODEL = {"code-quality": "sonnet"}
+DIFF_CAP = 60000  # characters of diff a judge sees (C4)
+VOTES = judge.VOTES
+PASS, FAIL, UNDECIDED = judge.PASS, judge.FAIL, judge.UNDECIDED
 HERE = os.path.dirname(os.path.realpath(__file__))
 LEFT_OUT = re.compile(r"(?:^|/)(?:fixtures|testdata|results|node_modules|vendor|dist|build)/|(?:^|/)[^/]*expected[^/]*$"
                       r"|\.(?:lock|min\.js|map|gz|zip|png|jpg|jpeg|gif|pdf|ico|svg)$|(?:^|/)package-lock\.json$")
@@ -42,7 +48,7 @@ def load(question):
     return [w.strip() for w in m.group(1).split(",")], raw[end + 4:].strip()
 
 
-LABELS = {q: load(q)[0] for q in QUESTIONS}
+LABELS = {q: load(q)[0] for q in QUESTIONS + RETIRED}
 
 
 def verdict_of(question, label):
@@ -82,26 +88,12 @@ def select_diff(files):
     return "".join(kept), partial, left_out
 
 
-def select_messages(texts):
-    """(text, partial) of the session's messages, numbered; over the limit the first and the last are kept."""
-    shown = [f"[{i}] {t.strip()}" for i, t in enumerate((t for t in texts if t.strip()), 1)]
-    whole = "\n\n".join(shown)
-    if len(whole) <= MESSAGES_CAP:
-        return whole, False
-    half = MESSAGES_CAP // 2
-    return whole[:half] + f"\n\n[... {len(whole) - MESSAGES_CAP} characters of messages left out ...]\n\n" + whole[-half:], True
-
-
 def prompt_for(question, material, partial, context, redact):
     _, text = load(question)
-    tag = "diff" if question == "code-quality" else "messages"
-    parts = [system(question), "", text, ""]
-    if context:
-        parts += [context, ""]
+    parts = [system(question), "", text, "", context, ""]
     if partial:
-        parts += ["This is a part of a larger change: it did not fit, and what is shown was kept code first."
-                  if tag == "diff" else "These are the first and the last of the session's messages: the middle did not fit.", ""]
-    parts += [f"<{tag}>", material, f"</{tag}>", "",
+        parts += ["This is a part of a larger change: it did not fit, and what is shown was kept code first.", ""]
+    parts += ["<diff>", material, "</diff>", "",
               f'Answer with one line of JSON: {{"reason": "...", "label": {" or ".join(json.dumps(w) for w in LABELS[question])}}}.']
     return redact("\n".join(parts))
 
@@ -139,7 +131,7 @@ def judge_question(question, material, partial, context, redact, asker=None):
     asker = asker or judge.ask
     p = prompt_for(question, material, partial, context, redact)
     votes = []
-    for i in range(judge.VOTES):
+    for i in range(VOTES):
         v = asker("claude", p, model=MODEL[question], system=system(question), parse=parser(question))
         v["vote"] = i + 1
         votes.append(v)
@@ -147,8 +139,3 @@ def judge_question(question, material, partial, context, redact, asker=None):
     return {"label": label, "verdict": verdict_of(question, label) if label else UNDECIDED, "why": why,
             "model": MODEL[question], "partial": partial, "prompt": p,
             "prompt_sha256": hashlib.sha256(p.encode()).hexdigest(), "votes": votes}
-
-
-def not_asked(question, error):
-    """A question that could not be put: no verdict, said as an error like a field step's."""
-    return {"label": None, "verdict": NA, "why": error, "error": error, "model": MODEL[question], "partial": False, "votes": []}

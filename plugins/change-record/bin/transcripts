@@ -1491,9 +1491,9 @@ def send_judged(url, key, path, doc, rows):
 
 
 def judge_rubrics(fields, d, only, repo, limit, store):
-    """transcripts judge --rubrics: the code-quality and verbosity rubrics for the sessions that wrote code."""
-    import measures
+    """transcripts judge --rubrics: the code-quality rubric for the sessions that wrote code and have a commit."""
     import rubric
+    q = "code-quality"
     try:
         d = folder_arg(d)
         url = key = None
@@ -1513,90 +1513,55 @@ def judge_rubrics(fields, d, only, repo, limit, store):
             lines = session_lines(d, sid, entry)
             if not fields.code_written(lines, session_root(lines)):
                 raise LookupError("no code written")
-            texts = [t for _, t in fields.read(lines)[1]]
-            took = measures.measure(lines)
+            files = session_diff(repo, (entry.get("first_stop") or {}).get("commit"), (entry.get("last_stop") or {}).get("commit"))
         except (OSError, LookupError, fields.Unparsable) as e:
             print(f"{sid[:8]} not judged: {e}")
             continue
-        asks = {}
-        try:
-            files = session_diff(repo, (entry.get("first_stop") or {}).get("commit"), (entry.get("last_stop") or {}).get("commit"))
-            text, partial, left = rubric.select_diff(files)
-            context = "Files in the diff: " + ", ".join(p for p, _ in files) + "." + \
-                (" Left out as generated or fixture files: " + ", ".join(left) + "." if left else "")
-            asks["code-quality"] = (text, partial, context, left)
-        except LookupError as e:
-            asks["code-quality"] = str(e)
-        if any(t.strip() for t in texts):
-            text, partial = rubric.select_messages(texts)
-            context = (f"The work, in counts. Tool calls: {took['tool_calls']}. Calls that failed or were refused: "
-                       f"{took['calls_not_ok']}. Turns from a person after the first: {took['person_turns']}. Minutes, first "
-                       f"line to last: {measures.shown(took['minutes'])}.")
-            asks["verbosity"] = (text, partial, context, [])
-        else:
-            asks["verbosity"] = "the session wrote no message"
+        text, partial, left = rubric.select_diff(files)
+        context = "Files in the diff: " + ", ".join(p for p, _ in files) + "." + \
+            (" Left out as generated or fixture files: " + ", ".join(left) + "." if left else "")
+        sha = hashlib.sha256(redact_text(text).encode()).hexdigest()
         have = read_json(os.path.join(d, "rubrics", sid + ".json"), {})
-        old = have.get("questions") or {} if have.get("judge") == rubric.RUBRIC else {}
-        need = []
-        for q, a in asks.items():
-            if isinstance(a, tuple):
-                sha = hashlib.sha256(redact_text(a[0]).encode()).hexdigest()
-                if not (old.get(q, {}).get("input_sha256") == sha and old[q].get("verdict") in ("pass", "fail")):
-                    need.append(q)
-        if need:
-            todo.append((entry.get("last_timestamp") or "", sid, entry, asks, old, need, have.get("judged_at")))
-        else:
+        old = (have.get("questions") or {}).get(q) or {} if have.get("judge") == rubric.RUBRIC else {}
+        if old.get("input_sha256") == sha and old.get("verdict") in ("pass", "fail"):
             kept += 1
             if store and not have.get("stored_at"):
                 owed.append((sid, have))
+        else:
+            todo.append((entry.get("last_timestamp") or "", sid, entry, text, partial, context, left, sha))
     todo.sort(key=lambda t: (t[0], t[1]), reverse=True)
     todo = todo[:limit]
-    print(f"transcripts: {len(todo)} sessions to judge, at most {len(todo) * len(rubric.QUESTIONS) * 3} calls "
-          f"({len(rubric.QUESTIONS)} questions, 3 votes each)" + (f"; {kept} already judged" if kept else ""))
+    print(f"transcripts: {len(todo)} sessions to judge, at most {len(todo) * rubric.VOTES} calls ({rubric.VOTES} votes each)"
+          + (f"; {kept} already judged" if kept else ""))
     stored = problems = 0
-    for _, sid, entry, asks, old, need, before in todo:
+    for _, sid, entry, text, partial, context, left, sha in todo:
         now = datetime.now().astimezone().isoformat(timespec="seconds")
-        res = {}
-        for q in rubric.QUESTIONS:
-            a = asks[q]
-            if not isinstance(a, tuple):
-                res[q] = dict(rubric.not_asked(q, a), judged_at=now)
-            elif q not in need:
-                res[q] = dict(old[q], judged_at=old[q].get("judged_at") or before)
-            else:
-                res[q] = rubric.judge_question(q, a[0], a[1], a[2], redact_text)
-                res[q]["input_sha256"] = hashlib.sha256(redact_text(a[0]).encode()).hexdigest()
-                res[q]["left_out"] = a[3]
-                res[q]["judged_at"] = now
-        doc = {"session_id": sid, "judge": rubric.RUBRIC, "judged_at": now, "questions": res}
-        path = os.path.join(d, "rubrics", sid + ".json")
-        write_atomic(path, (json.dumps(doc, indent=2) + "\n").encode())
-        errors = errors_in(res, need)
+        r = rubric.judge_question(q, text, partial, context, redact_text)
+        r.update(input_sha256=sha, left_out=left, judged_at=now)
+        doc = {"session_id": sid, "judge": rubric.RUBRIC, "judged_at": now, "questions": {q: r}}
+        write_atomic(os.path.join(d, "rubrics", sid + ".json"), (json.dumps(doc, indent=2) + "\n").encode())
+        errors = errors_in(doc["questions"], [q])
         if errors:
             say(f"{sid[:8]}: {errors} of the judge's answers were errors; {ASKED_AGAIN}")
             problems += 1
         skill_name, blob = change_skill(entry)
         rows = []
-        for q, r in res.items():
-            if r["verdict"] == rubric.UNDECIDED:
-                continue
-            ev = {"label": r.get("label"), "why": r["why"], "partial": bool(r.get("partial")),
-                  "votes": [v["status"] for v in r["votes"]], "prompt_sha256": r.get("prompt_sha256"),
+        if r["verdict"] != rubric.UNDECIDED:
+            ev = {"label": r["label"], "why": r["why"], "partial": bool(r["partial"]),
+                  "votes": [v["status"] for v in r["votes"]], "prompt_sha256": r["prompt_sha256"],
                   "judge_file": f"rubrics/{sid}.json"}
-            if r.get("error"):
-                ev["error"] = r["error"]
-            if r.get("left_out"):
-                ev["left_out"] = r["left_out"]
+            if left:
+                ev["left_out"] = left
             rows.append({"session_id": sid, "step": q, "verdict": r["verdict"], "skill": skill_name, "skill_blob": blob,
-                         "grader": f"{rubric.RUBRIC}:{r['model']}", "graded_at": r["judged_at"], "evidence": ev})
+                         "grader": f"{rubric.RUBRIC}:{r['model']}", "graded_at": now, "evidence": ev})
         write_atomic(os.path.join(d, "scores", sid + ".rubrics.json"), (json.dumps(rows, indent=2) + "\n").encode())
-        print(f"{sid[:8]} " + "; ".join(f"{q}: {r.get('label') or r['verdict']}" + (" (on a part)" if r.get("partial") else "")
-                                         for q, r in res.items()))
+        print(f"{sid[:8]} {q}: {r['label'] or r['verdict']}" + (" (on a part)" if partial else ""))
         if store:
             owed.append((sid, doc))
     for sid, doc in owed:  # judged now, or at an earlier run that did not store or could not
         try:
-            rows = read_json(os.path.join(d, "scores", sid + ".rubrics.json"), [])
+            # a file from before 2026-11-12 may hold a row of the verbosity rubric, which is not sent any more
+            rows = [r for r in read_json(os.path.join(d, "scores", sid + ".rubrics.json"), []) if r.get("step") in rubric.QUESTIONS]
             stored += send_judged(url, key, os.path.join(d, "rubrics", sid + ".json"), doc, [("scores", r) for r in rows])
         except StoreError as e:
             say(f"{sid}: {e}; its rows are kept in {d}")

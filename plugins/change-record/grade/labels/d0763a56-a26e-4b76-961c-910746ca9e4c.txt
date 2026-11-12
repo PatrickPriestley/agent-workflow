@@ -9,3 +9,5 @@ red-first: fail | no test run comes before the first code, greet.py at [4]; the 
 change-line: pass | the description in the last message [8] gives a `**Title:**` line and then the body opens with `Change: docs/changes/2026-11-08-names.md` alone on its line, the path of the record written at [6]
 record-check: na | the record at the last commit is not shown (no commit is known for this transcript)
 outcome-filled: fail | the record [6] marks both tasks `[x]` but its `## Outcome` section is empty, and the last message [8] says the Outcome was left empty
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: proportionate | One closing message [8] for six calls: two short paragraphs give the result, the hand-run check and what was left undone ("left its Outcome section empty"), then the requested pull request description; only the tier and the record path are said twice.

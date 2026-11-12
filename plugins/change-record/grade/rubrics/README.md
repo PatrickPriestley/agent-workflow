@@ -1,5 +1,8 @@
-The two rubrics `transcripts judge --rubrics` asks (record
-`docs/changes/2026-11-12-session-quality.md`, R4 and C7).
+The rubric `transcripts judge --rubrics` asks, `code-quality.md`, and one it no longer asks,
+`verbosity.md` (record `docs/changes/2026-11-12-session-quality.md`, R4, C2 and C7). Verbosity
+was taken out on 2026-11-12: against 14 labelled sessions its judge answered `proportionate`
+every time and was wrong on 3. The file stays because the labels in `grade/labels/` were made
+against it.
 
 `code-quality.md` and `verbosity.md` are adapted from the scorers of Skill Doctor
 (`warpdotdev/common-skills`, `.agents/skills/skill-doctor/scorers/`, at `8792394`), which is

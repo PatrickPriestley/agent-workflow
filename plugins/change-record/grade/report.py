@@ -378,6 +378,8 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
     """
     red = redact or (lambda t: t)
     checked = checked or {"labels": {}, "problems": [], "files": 0, "here": {}}
+    # a rubric taken out is not reported, whatever rows an earlier run left (C2 of the session-quality record)
+    rows = [r for r in rows if not (str(r["grader"]).startswith("rubric/") and r["step"] in rubric.RETIRED)]
     rows = latest(rows, lambda r: (r["session_id"], r["step"], r["grader"]))
     everyone = sorted(set(entries) | {r["session_id"] for r in rows})
     if not everyone:

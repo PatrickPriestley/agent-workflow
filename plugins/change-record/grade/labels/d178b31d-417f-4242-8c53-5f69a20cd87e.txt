@@ -9,3 +9,5 @@ red-first: fail | tier 1; greet.py was written [7] before any test run; the only
 change-line: fail | no pull request call; the description in the last message [11] opens with a bold title and a paragraph, and `Change: docs/changes/2026-11-08-shout.md` sits alone on its line near the end, not at the opening
 record-check: na | the sheet says no commit is known and shows no record at the last commit
 outcome-filled: fail | the session ticked both tasks done [10] but the Outcome section written at [6] is empty and no later call fills it; [11] itself says Outcome is empty and status is still open
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: proportionate | Two one-line progress notes ([3], [5]) and a closing message [11] whose lead-in says only what the description does not ("I didn't run `python3 greet.py --shout Ada` by hand; the tests cover that path through `main`"), then the requested description; nothing is restated beyond the test count.

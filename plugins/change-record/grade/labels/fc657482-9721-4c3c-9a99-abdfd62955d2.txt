@@ -9,3 +9,5 @@ red-first: fail | tier 1; greet.py was written [5] before any test run; the only
 change-line: na | no pull request call, and the last message [10] holds no pull request description: the user asked for a commit, and the `Change:` line there is inside a suggested commit message
 record-check: na | the sheet says no commit is known and shows no record at the last commit; both commit attempts failed on the read-only .git [7][9]
 outcome-filled: pass | the record's one task is ticked `[x]` from [4] and the Outcome holds `Implemented; tests pass.` after the edit at [8]; status stayed open because the sed in [7] failed
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: proportionate | One closing message [10] that leads with the blocker ("built and its tests pass, but I couldn't commit it"), lists each file changed once, names the one thing left wrong (the record's `status:` still `open`) and gives the commit command to finish; nothing is restated.

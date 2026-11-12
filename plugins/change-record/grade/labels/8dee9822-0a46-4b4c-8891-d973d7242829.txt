@@ -9,3 +9,5 @@ red-first: na | no code was written (only README.md [6]), and the change is decl
 change-line: na | there is no record, so the description in the last message [7] has no record path to open with
 record-check: na | there is no record
 outcome-filled: na | there is no record
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: na | The session wrote no code: its only edit is the README.md typo [6], which is documentation.

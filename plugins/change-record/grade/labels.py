@@ -48,7 +48,7 @@ def stub(sid, sha, n):
     return (f"session: {sid}\ntranscript: sha256:{sha} lines:{n}\nlabelled-by:\n"
             "# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.\n"
             + "".join(f"{s}:\n" for s in fields.STEPS)
-            + "# The two rubrics, if you label them: " + "; ".join(f"{q} is {', '.join(rubric.LABELS[q])} or na" for q in rubric.QUESTIONS)
+            + "# Rubrics, if you label them: " + "; ".join(f"{q} is {', '.join(rubric.LABELS[q])} or na" for q in rubric.QUESTIONS)
             + ".\n" + "".join(f"{q}:\n" for q in rubric.QUESTIONS))
 
 
@@ -61,7 +61,7 @@ def parse(text):
             continue
         key, sep, value = ln.partition(":")
         key, value = key.strip(), value.strip()
-        if not sep or key not in ("session", "transcript", "labelled-by") + tuple(fields.STEPS) + tuple(rubric.QUESTIONS):
+        if not sep or key not in ("session", "transcript", "labelled-by") + tuple(fields.STEPS) + tuple(rubric.QUESTIONS + rubric.RETIRED):
             problems.append(f"unknown line {ln[:40]!r}")
         elif key in seen:
             problems.append(f"{key} is there twice")
@@ -86,18 +86,20 @@ def parse(text):
             problems.append(f"{s}: a verdict needs a one-line reason after |")
         else:
             steps[s] = (VERDICTS[word], reason)
-    said = {}  # the rubric labels as written: a rubric line is optional, and empty means not labelled
-    for q in rubric.QUESTIONS:
+    # the rubric labels as written: a rubric line is optional, and empty means not labelled. The line of
+    # a rubric taken out is read the same way; no grader has rows for it, so it is counted for nothing.
+    said = {}
+    for q in rubric.QUESTIONS + rubric.RETIRED:
         if q not in seen:
             continue
         word, bar, reason = seen[q].partition("|")
         word, reason = word.strip().lower(), reason.strip()
-        if not word:
-            steps[q] = (None, reason)
-        elif word not in rubric.LABELS[q] and word not in ("na", "n/a"):
+        if word and word not in rubric.LABELS[q] and word not in ("na", "n/a"):
             problems.append(f"{q}: unknown label {word!r} ({', '.join(rubric.LABELS[q])} or na)")
-        elif not reason:
+        elif word and not reason:
             problems.append(f"{q}: a label needs a one-line reason after |")
+        elif not word:
+            steps[q] = (None, reason)
         else:
             said[q] = "na" if word == "n/a" else word
             steps[q] = (NA if said[q] == "na" else rubric.verdict_of(q, word), reason)
@@ -401,13 +403,7 @@ def sheet(lines, sid, label_path, records=None, redact=None, commits=None):
             "Is the code the session produced sound: would a careful senior reviewer approve it, or block it for a defect "
             f"(a bug, a missed edge case, weak or missing tests, a pattern the code around it does not use)? Answer "
             f"`{'` or `'.join(rubric.LABELS['code-quality'])}`.", "",
-            "Label it `na` when the session wrote no code or has no commit.", "", f"The diff is not on this sheet. {diff}", "",
-            "### verbosity (a rubric; optional)", "",
-            "Was the prose the session wrote to a person in proportion to the work? Answer "
-            f"`{'`, `'.join(rubric.LABELS['verbosity'][:-1])}` or `{rubric.LABELS['verbosity'][-1]}`: padded and repeated is "
-            "verbose; silent through long work, or a last message that does not say what changed, is terse.", "",
-            "Label it `na` when the session wrote no code.", "",
-            "Its messages are the entries marked \"The session\" below.", ""]
+            "Label it `na` when the session wrote no code or has no commit.", "", f"The diff is not on this sheet. {diff}", ""]
     out += ["## The record at the session's last commit", ""]
     if records is None:
         out += ["Not shown: no commit is known for this transcript. The record's text is in the calls that wrote it, below.", ""]

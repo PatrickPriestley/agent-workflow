@@ -9,3 +9,5 @@ red-first: pass | the test run [7] ran 5 tests and reported FAILED (failures=3) 
 change-line: pass | the description in the last message [13] opens with the Change: line for the record, wrapped in bold; record-check accepts that form (owner's ruling, 2026-11-12)
 record-check: na | the sheet says no commit is known and shows no record at the last commit
 outcome-filled: pass | status is set to done [12] and the Outcome was filled with the red and green results and real-use output [11]
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: verbose | For a six-line change the closing message [13] runs five paragraphs and then repeats nearly all of them in the description: "I did not run a mutation tool ... still treats any other flag, such as `--foo`, as the name" returns as "Not covered: no mutation testing was run. Other `--` options are still treated as the name", as do the three failing tests, the flag position and the tier. (where a summary repeats the requested description, the owner ruled 2026-11-12: verbose only when most of it is said again)

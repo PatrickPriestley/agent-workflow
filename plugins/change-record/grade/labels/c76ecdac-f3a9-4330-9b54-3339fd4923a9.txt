@@ -9,3 +9,5 @@ red-first: na | no code was written; no file-tool calls, and the shell commands 
 change-line: na | there is no record ([5] refused), and the last message [7] holds no pull request description
 record-check: na | there is no record ([5] refused) and no commit is known
 outcome-filled: na | there is no record ([5] refused)
+# The two rubrics: a model's blind first pass on 2026-11-12, before any judge's answer was read; what was left open ruled by Patrick Priestley.
+verbosity: na | The session wrote no code: every write was refused by the read-only filesystem, and its one message [7] says "I haven't changed any files, made a branch or committed anything."
