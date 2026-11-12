@@ -7,6 +7,7 @@ approvers: [Patrick Priestley, 2026-11-12]
 plugin: plugins/change-record
 tasks:
   - name: counts
+    done: true
   - name: rubrics
     after: counts
   - name: edits
@@ -214,11 +215,28 @@ record confirms it).
   and are not turned into scores or averaged. Rejected: Skill Doctor's numbers, which give
   `verbose` twice the worth of `terse` with nothing behind the ratio.
 - Coverage is counted only over sessions captured since pull request #44, and the report says
-  how many it left out.
+  how many it left out. (Task 1 changed this: see the task's decisions below.)
 - A proposal is a file for the owner, and the loop closes through the eval suite: an edit is
   kept when the with-and-without comparison improves, not when the report's next pass rate
   does. Rejected: reading the effect of an edit from captured sessions, which the review of
   2026-11-11 found too few and too mixed to show it.
+- (Task 1.) Coverage reads the transcript as well as the index entry, with the capture hook's
+  own rule, so every session with a transcript is counted and none is left out. This replaces
+  the decision above. Rejected: a cut-off date for "captured since #44", which the index does
+  not record and a re-import would make wrong.
+- (Task 1.) A report with no score rows is no longer an error when the folder holds sessions:
+  it prints the counts and the coverage and says to run `grade` for the steps (R2). An empty
+  folder is still refused.
+- (Task 1.) Sessions are grouped by the skill version their score rows carry, or, with no
+  rows, by the `change` skill in their index entry; the least and the most name their session,
+  which is how "the sessions furthest from the middle" (C1) are listed.
+- (Task 1.) A turn from a person leaves out lines marked as the harness's, compaction
+  summaries, and messages that open with a tag (`<task-notification>`, `<command-name>`). A
+  person who opens a message with such a tag is missed. In the five stored sessions the rule
+  counts 46 typed turns and leaves out 134 lines for a tag, all of them notifications or
+  command output.
+- (Task 1.) A transcript with a line that is not JSON is left out of the counts and the report
+  says how many. Rejected: counting what could be read, which would understate without saying.
 
 ## Tasks
 
@@ -246,3 +264,70 @@ anything sent to the model unredacted, a proposal built on an unconfirmed failur
 rubric result shown without its "not yet checked".
 
 ## Outcome
+
+### Task 1, counts (2026-11-12)
+
+Shipped: `grade/measures.py`; the Counts and Skill coverage sections of `grade/report.py`;
+`skills_in` in `bin/transcripts`, which applies the capture hook's skill rule to a transcript
+(the hook's own code now calls the same function); fixtures `grade/fixtures/counts/`; the README.
+`store/schema.sql` is unchanged (R2). `transcripts-judge.test.sh` goes from 149 assertions to 167;
+the other suites pass unchanged (`transcripts-grade` 168, `transcripts` 250, `transcripts-store`
+82, `record-check` 85, `red-check` 107, `dispatch` 218, `evals/cases.test.cjs` 40).
+
+Red first: the test commit failed eleven assertions. Both expected reports were written by
+hand before the code and matched on its first run. Guards: 28 were broken by hand in a copy
+of the plugin, one at a time, and the suite run; 27 failed it. The one that did not (a skill
+version none of whose sessions has a transcript here printed an empty table) got a test, and
+all 28 now fail it.
+
+Real use, on the five sessions rebuilt from the store on 2026-11-11 (the folder still in this
+container; the store was not read again):
+
+    $ transcripts report <folder>
+    ## Counts
+    ... 5 of 5 sessions have a transcript here. ...
+    ### change-record:change, blob unknown
+    | Count | Sessions | Middle | Least | Most |
+    | Output tokens | 5 | 117,122 | 4 (883c53c9) | 764,268 (5ac54a69) |
+    | Tool calls | 5 | 90 | 0 (883c53c9) | 850 (5ac54a69) |
+    | Calls that failed or were refused | 5 | 2 | 0 (883c53c9) | 14 (5ac54a69) |
+    | Messages written | 5 | 32 | 1 (883c53c9) | 265 (5ac54a69) |
+    | Characters written | 5 | 6,337 | 2 (883c53c9) | 212,502 (5ac54a69) |
+    | Characters in the last message | 5 | 1,458 | 2 (883c53c9) | 3,415 (dd2defdb) |
+    | Turns from a person after the first | 5 | 0 | 0 (659da00f) | 41 (5ac54a69) |
+    | Minutes, first line to last | 5 | 52.5 | 0.1 (883c53c9) | 4,297.4 (5ac54a69) |
+
+    | Session | Output tokens | Tool calls | Failed or refused | Messages | Characters | Last message | Turns from a person | Minutes |
+    | 5ac54a69 | 764,268 | 850 | 14 | 265 | 212,502 | 1,458 | 41 | 4,297.4 |
+    | 659da00f | 79,910 | 50 | 1 | 15 | 3,620 | 198 | 0 | 78.8 |
+    | 883c53c9 | 4 | 0 | 0 | 1 | 2 | 2 | 0 | 0.1 |
+    | 6cc07e5f | 117,122 | 90 | 3 | 32 | 6,337 | 3,365 | 0 | 31.9 |
+    | dd2defdb | 121,959 | 115 | 2 | 47 | 7,977 | 3,415 | 0 | 52.5 |
+
+    ## Skill coverage
+    Of 5 sessions here, 4 used a skill and 1 used none. ...
+    | change-record:change | 3 |
+    | agent-review | 1 |
+    | change | 1 |
+    ... five more skills, one session each (the long session)
+    | none | 1 |
+
+The token figures are the once-per-message ones of Probed facts (121,959 where line by line
+gives 298,907). The three task sessions' index entries list no skill; the transcript rule
+finds the `change` skill in all three, which is the case the first decision on coverage would
+have left out. Error path, the same folder with its `scores/` removed:
+
+    $ transcripts report <folder without scores>; echo $?
+    # Change skill report
+    No score rows here: run `transcripts grade` for the steps. The counts and the coverage below need only ...
+    0
+
+Not done, and what the numbers do not say:
+
+- Five sessions, all under one skill version, one of them a single word and one three days
+  long. The middle of such a set means little; it is printed, not interpreted.
+- One skill shows under two names (`change-record:change` and `change`), as the transcripts
+  name it. They are not merged.
+- Input and cached tokens are not shown; only what the session wrote.
+- "Failed or refused" counts a test run that failed on purpose (red first) like any other
+  failed command.

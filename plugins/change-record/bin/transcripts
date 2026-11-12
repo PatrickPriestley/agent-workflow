@@ -281,20 +281,48 @@ def scan(lines, entry, cwd, root):
                 continue
             name, inp = b.get("name"), b["input"]
             fp = inp.get("file_path") or inp.get("notebook_path") or ""
-            if name == "Skill" and isinstance(inp.get("skill"), str):
-                skill(entry, inp["skill"], "Skill", find_skill_file(inp["skill"], root), root)
-            elif name == "Read" and SKILL_FILE.search(fp):
-                m = SKILL_FILE.search(fp)
-                full = fp if os.path.isabs(fp) else os.path.join(cwd or "", fp)
-                skill(entry, (m.group(1) + ":" if m.group(1) else "") + m.group(2), "Read", full, root)
-            elif name == "Bash" and isinstance(inp.get("command"), str):
-                for p in BASH_READ_SKILL.findall(inp["command"]):
-                    full = p if os.path.isabs(p) else os.path.join(cwd or "", p)
-                    m = SKILL_FILE.search(full)
-                    if m:
-                        skill(entry, (m.group(1) + ":" if m.group(1) else "") + m.group(2), "Bash", full, root)
-            elif name in ("Write", "Edit", "MultiEdit", "NotebookEdit") and RECORD.search(fp):
+            for used, how, full in skill_uses(name, inp, cwd):
+                skill(entry, used, how, find_skill_file(used, root) if how == "Skill" else full, root)
+            if name in ("Write", "Edit", "MultiEdit", "NotebookEdit") and RECORD.search(fp):
                 add(entry["records"]["written"], RECORD.search(fp).group(1))
+
+
+def skill_uses(name, inp, cwd):
+    """[(skill, how, the file's path or None)] for one tool call: the skill called with the Skill
+    tool, or its SKILL.md read with Read or printed by a shell command."""
+    fp = inp.get("file_path") or inp.get("notebook_path") or ""
+    if name == "Skill" and isinstance(inp.get("skill"), str):
+        return [(inp["skill"], "Skill", None)]
+    out = []
+    if name == "Read" and SKILL_FILE.search(fp):
+        m = SKILL_FILE.search(fp)
+        full = fp if os.path.isabs(fp) else os.path.join(cwd or "", fp)
+        out.append(((m.group(1) + ":" if m.group(1) else "") + m.group(2), "Read", full))
+    elif name == "Bash" and isinstance(inp.get("command"), str):
+        for p in BASH_READ_SKILL.findall(inp["command"]):
+            full = p if os.path.isabs(p) else os.path.join(cwd or "", p)
+            m = SKILL_FILE.search(full)
+            if m:
+                out.append(((m.group(1) + ":" if m.group(1) else "") + m.group(2), "Bash", full))
+    return out
+
+
+def skills_in(lines):
+    """The names of the skills a transcript shows used, by the rule the capture hook applies, in order."""
+    names = []
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(d, dict) or d.get("type") != "assistant" or d.get("isSidechain"):
+            continue
+        content = (d.get("message") or {}).get("content")
+        for b in content if isinstance(content, list) else []:
+            if isinstance(b, dict) and b.get("type") == "tool_use" and isinstance(b.get("input"), dict):
+                for used, _, _ in skill_uses(b.get("name"), b["input"], d.get("cwd")):
+                    add(names, used)
+    return names
 
 
 def add(lst, v):
@@ -1598,9 +1626,10 @@ def cmd_report(args):
     for fname, why in bad:
         say(f"{os.path.join(lab, fname)}: {why}; the file is rejected")
     checked = {"labels": found, "problems": bad, "files": len(found) + len({n for n, _ in bad}), "here": here}
-    text = report.build(rows, entries, judges, checked, read, redact_text)
+    text = report.build(rows, entries, judges, checked, read, redact_text, skills_in)
     if text is None:
-        say(f"no score rows in {d}/scores" + (" or the store" if store else "") + "; run transcripts grade first")
+        say(f"no score rows in {d}/scores" + (" or the store" if store else "") + " and no session in "
+            f"{d}/sessions; run transcripts grade first")
         return 1
     sys.stdout.write(text)
     return 1 if bad else 0

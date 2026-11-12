@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import fields
 import judge
 import labels
+import measures
 
 ORDER = fields.STEPS + judge.QUESTIONS
 MIN_COVERED = 5  # labelled sessions that must cover a step before its error is printed (R4)
@@ -312,8 +313,59 @@ def failed_step(r, cell, false_fail, votes, read, red):
     return out
 
 
-def build(rows, entries, judges, checked=None, read=None, redact=None):
-    """The report as Markdown, or None when there is no score row.
+def version_of(entry):
+    """The change skill and its blob as a session's index entry holds them, as transcripts grade names them."""
+    for sk in (entry or {}).get("skills") or []:
+        if sk.get("name") == "change" or str(sk.get("name") or "").endswith(":change"):
+            return sk["name"], sk.get("blob")
+    return "change-record:change", None
+
+
+def counts_section(groups, taken, total, label, unreadable=0):
+    """## Counts: per skill version a summary and a row per session. groups: [((skill, blob), [sessionId])]
+    in the report's order; taken: {sessionId: measures.measure(...)}, only for transcripts that are here."""
+    out = ["", "## Counts", "",
+           "What each session took, read from the transcripts in this folder and not from a grader: "
+           f"{len(taken)} of {total} sessions have a transcript here"
+           + (f" that can be read ({unreadable} holds a line that is not JSON)" if unreadable else "") + ". Output tokens are counted once per message, and "
+           "\"-\" means the transcript carries no token usage. Minutes run from a session's first line to its last, "
+           "waiting included. A turn from a person is a message a person typed after the first one; whether it was a "
+           "correction is not judged. No threshold is applied: the middle is the median, and the least and the most "
+           "name their session."]
+    for (skill, blob), sids in groups:
+        mine = [s for s in sids if s in taken]
+        if not mine:
+            continue
+        out += ["", f"### {label(skill, blob)}", "", "| Count | Sessions | Middle | Least | Most |", "|---|---|---|---|---|"]
+        out += [f"| {row} | {n} | {mid} | {least} | {most} |"
+                for row, n, mid, least, most in measures.summary({s: taken[s] for s in mine}, lambda sid: sid[:8])]
+        out += ["", "| Session | " + " | ".join(col for _, _, col in measures.COUNTS) + " |", "|---|" + "---|" * len(measures.COUNTS)]
+        out += [f"| {s[:8]} | " + " | ".join(measures.shown(taken[s][key]) for key, _, _ in measures.COUNTS) + " |" for s in mine]
+    return out
+
+
+def coverage_section(used):
+    """## Skill coverage. used: {sessionId: [skill names]} for every session here."""
+    none = sum(1 for names in used.values() if not names)
+    per = {}
+    for names in used.values():
+        for n in set(names):
+            per[n] = per.get(n, 0) + 1
+    out = ["", "## Skill coverage", "",
+           f"Of {len(used)} sessions here, {len(used) - none} used a skill and {none} used none. A session used a skill "
+           "when its index entry lists it, or its transcript shows the skill called or its file read, by the rule the "
+           "capture tool applies today.", "", "| Skill | Sessions |", "|---|---|"]
+    out += [f"| {n} | {c} |" for n, c in sorted(per.items(), key=lambda kv: (-kv[1], kv[0]))]
+    if none:
+        out.append(f"| none | {none} |")
+    return out
+
+
+def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of=None):
+    """The report as Markdown, or None when there is neither a score row nor a session.
+
+    skills_of(lines): the skills a transcript shows used, for the coverage; without it only the
+    index entries' lists count.
 
     checked: what the graders are checked against: {"labels": {sessionId: label}, "problems":
     [(label file, why it is rejected)], "files": how many label files there are, "here":
@@ -323,7 +375,8 @@ def build(rows, entries, judges, checked=None, read=None, redact=None):
     red = redact or (lambda t: t)
     checked = checked or {"labels": {}, "problems": [], "files": 0, "here": {}}
     rows = latest(rows, lambda r: (r["session_id"], r["step"], r["grader"]))
-    if not rows:
+    everyone = sorted(set(entries) | {r["session_id"] for r in rows})
+    if not everyone:
         return None
     measured = measure(rows, checked)
     s_time = {}
@@ -332,10 +385,29 @@ def build(rows, entries, judges, checked=None, read=None, redact=None):
         t = when((entries.get(sid) or {}).get("first_timestamp")) or when(r.get("graded_at"))
         if t and (sid not in s_time or t < s_time[sid]):
             s_time[sid] = t
+    for sid in everyone:
+        t = when((entries.get(sid) or {}).get("first_timestamp"))
+        if t and sid not in s_time:
+            s_time[sid] = t
     versions = {}
     for r in rows:
         versions.setdefault((r.get("skill") or "unknown", r.get("skill_blob")), []).append(r)
     far = datetime.max.replace(tzinfo=timezone.utc)
+
+    # what each session took and which skills it used: from the transcripts and the index entries, no grader
+    taken, used, unreadable = {}, {}, []
+    for sid in everyone:
+        lines = read(sid) if read else None
+        names = [sk.get("name") for sk in (entries.get(sid) or {}).get("skills") or [] if sk.get("name")]
+        if lines is not None:
+            try:
+                taken[sid] = measures.measure(lines)
+            except fields.Unparsable:
+                unreadable.append(sid)
+            names += [n for n in (skills_of(lines) if skills_of else []) if n not in names]
+        used[sid] = names
+    with_rows = {r["session_id"]: (r.get("skill") or "unknown", r.get("skill_blob")) for r in rows}
+    of = {sid: with_rows.get(sid) or version_of(entries.get(sid)) for sid in everyone}
 
     def v_sessions(vr):
         return sorted({r["session_id"] for r in vr})
@@ -354,6 +426,22 @@ def build(rows, entries, judges, checked=None, read=None, redact=None):
     def counts(vr, step, grader):
         sel = [r for r in vr if r["step"] == step and r["grader"] == grader]
         return tuple(sum(r["verdict"] == v for r in sel) for v in ("pass", "fail", "not_applicable"))
+
+    def by_start(sids):
+        return sorted(sids, key=lambda s: (s_time.get(s, far), s))
+
+    def taken_and_used():
+        seen, groups = [], []
+        for key in [k for k, _ in ordered] + sorted({v for v in of.values()} - set(versions), key=lambda v: (v[0], v[1] or "")):
+            if key not in seen:
+                seen.append(key)
+                groups.append((key, by_start(s for s in everyone if of[s] == key)))
+        return counts_section(groups, taken, len(everyone), label, len(unreadable)) + coverage_section(used)
+
+    if not rows:
+        return "\n".join(["# Change skill report", "",
+                          "No score rows here: run `transcripts grade` for the steps. The counts and the coverage below "
+                          "need only the transcripts and the index entries."] + taken_and_used()) + "\n"
 
     out = ["# Change skill report", "",
            f"Score rows from {len({r['session_id'] for r in rows})} sessions, grouped by skill version (the git blob of "
@@ -383,6 +471,8 @@ def build(rows, entries, judges, checked=None, read=None, redact=None):
             p, f, _ = counts(vr, step, grader)
             cells.append(f"{p} of {p + f}" if p + f else "-")
         out.append(f"| {step} | {grader} | " + " | ".join(cells) + " |")
+
+    out += taken_and_used()
 
     out += ["", "## Judge agreement", ""]
     a, n, s, paired = agreement(judges)

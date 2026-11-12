@@ -319,6 +319,30 @@ in `<DIR>` and the labels in `grade/labels/` (or `--labels DIR`); `--store` adds
 excerpt and no measured error unless their transcripts are in `<DIR>`. A rejected label file is
 listed, not counted, and makes the exit status 1.
 
+**What a session took, and which skills were used** (record
+`docs/changes/2026-11-12-session-quality.md`). The report also counts, from the transcripts in
+`<DIR>` and with no grader or model: output tokens, tool calls, calls that failed or were
+refused, messages written and their characters, the last message's characters, turns from a
+person after the first, and the minutes from a session's first line to its last. Per skill
+version it prints the middle (the median), the least and the most with their session, then a
+row per session. Nothing is stored and no threshold is applied: the numbers are there to be
+read, not to pass or fail. How each is counted:
+
+- Output tokens once per message. Claude Code writes one message on several lines, each with
+  the same usage, so adding line by line counts a message several times. A transcript with no
+  usage shows `-`.
+- A turn from a person is a message someone typed. A line the harness wrote, a compaction
+  summary and a notification or command wrapped in a tag are not. Whether a turn was a
+  correction is not judged.
+- Minutes include waiting: a session left overnight is long, not slow.
+- A subagent's lines kept inline are left out, as the graders leave them out.
+
+Skill coverage is how many sessions used each skill, and how many used none. A session used a
+skill when its index entry lists it or its transcript shows it, by the capture hook's own rule
+(the Skill tool, or the skill's file read or printed), so sessions captured before that rule
+knew a shell read are counted too. One skill can appear under two names, with and without its
+plugin. A folder with transcripts and no `scores/` still gives both sections.
+
 **Checking the graders against a person** (record `docs/changes/2026-11-11-grading-trust.md`).
 The graders can be wrong, so a set of sessions is labelled by hand and the graders are scored
 against it. The labels are in `grade/labels/<sessionId>.txt`, one file per session:

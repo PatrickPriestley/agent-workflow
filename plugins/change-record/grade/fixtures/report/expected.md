@@ -47,6 +47,72 @@ Passes of graded sessions, per skill version, oldest first (the date is the vers
 | decisions-alternative | judge/1:haiku | - | - | 1 of 2 |
 | outcome-real-output | judge/1:haiku | - | - | 1 of 1 |
 
+## Counts
+
+What each session took, read from the transcripts in this folder and not from a grader: 5 of 5 sessions have a transcript here. Output tokens are counted once per message, and "-" means the transcript carries no token usage. Minutes run from a session's first line to its last, waiting included. A turn from a person is a message a person typed after the first one; whether it was a correction is not judged. No threshold is applied: the middle is the median, and the least and the most name their session.
+
+### change-record:change, blob unknown
+
+| Count | Sessions | Middle | Least | Most |
+|---|---|---|---|---|
+| Output tokens | 0 | - | - | - |
+| Tool calls | 1 | 1 | 1 (c5000000) | 1 (c5000000) |
+| Calls that failed or were refused | 1 | 0 | 0 (c5000000) | 0 (c5000000) |
+| Messages written | 1 | 1 | 1 (c5000000) | 1 (c5000000) |
+| Characters written | 1 | 21 | 21 (c5000000) | 21 (c5000000) |
+| Characters in the last message | 1 | 21 | 21 (c5000000) | 21 (c5000000) |
+| Turns from a person after the first | 1 | 0 | 0 (c5000000) | 0 (c5000000) |
+| Minutes, first line to last | 1 | 0 | 0 (c5000000) | 0 (c5000000) |
+
+| Session | Output tokens | Tool calls | Failed or refused | Messages | Characters | Last message | Turns from a person | Minutes |
+|---|---|---|---|---|---|---|---|---|
+| c5000000 | - | 1 | 0 | 1 | 21 | 21 | 0 | 0 |
+
+### change-record:change, blob 11111111
+
+| Count | Sessions | Middle | Least | Most |
+|---|---|---|---|---|
+| Output tokens | 0 | - | - | - |
+| Tool calls | 2 | 3.5 | 3 (a2000000) | 4 (a1000000) |
+| Calls that failed or were refused | 2 | 1 | 1 (a1000000) | 1 (a1000000) |
+| Messages written | 2 | 1.5 | 1 (a2000000) | 2 (a1000000) |
+| Characters written | 2 | 73.5 | 68 (a2000000) | 79 (a1000000) |
+| Characters in the last message | 2 | 36.5 | 5 (a1000000) | 68 (a2000000) |
+| Turns from a person after the first | 2 | 0 | 0 (a1000000) | 0 (a1000000) |
+| Minutes, first line to last | 2 | 0.1 | 0.1 (a2000000) | 0.1 (a1000000) |
+
+| Session | Output tokens | Tool calls | Failed or refused | Messages | Characters | Last message | Turns from a person | Minutes |
+|---|---|---|---|---|---|---|---|---|
+| a1000000 | - | 4 | 1 | 2 | 79 | 5 | 0 | 0.1 |
+| a2000000 | - | 3 | 1 | 1 | 68 | 68 | 0 | 0.1 |
+
+### change-record:change, blob 22222222
+
+| Count | Sessions | Middle | Least | Most |
+|---|---|---|---|---|
+| Output tokens | 0 | - | - | - |
+| Tool calls | 2 | 3 | 3 (b3000000) | 3 (b3000000) |
+| Calls that failed or were refused | 2 | 0.5 | 0 (b4000000) | 1 (b3000000) |
+| Messages written | 2 | 1 | 1 (b3000000) | 1 (b3000000) |
+| Characters written | 2 | 20.5 | 5 (b4000000) | 36 (b3000000) |
+| Characters in the last message | 2 | 20.5 | 5 (b4000000) | 36 (b3000000) |
+| Turns from a person after the first | 2 | 0 | 0 (b3000000) | 0 (b3000000) |
+| Minutes, first line to last | 2 | 0.1 | 0.1 (b3000000) | 0.1 (b3000000) |
+
+| Session | Output tokens | Tool calls | Failed or refused | Messages | Characters | Last message | Turns from a person | Minutes |
+|---|---|---|---|---|---|---|---|---|
+| b3000000 | - | 3 | 1 | 1 | 36 | 36 | 0 | 0.1 |
+| b4000000 | - | 3 | 0 | 1 | 5 | 5 | 0 | 0.1 |
+
+## Skill coverage
+
+Of 5 sessions here, 4 used a skill and 1 used none. A session used a skill when its index entry lists it, or its transcript shows the skill called or its file read, by the rule the capture tool applies today.
+
+| Skill | Sessions |
+|---|---|
+| change-record:change | 4 |
+| none | 1 |
+
 ## Judge agreement
 
 The Haiku judge and opencode-go/kimi-k3.1-pro agree on 2 of 3 judgments (67%), over 2 sessions judged by both. Below 80%: per C3, the default judge should move to the other model family.
