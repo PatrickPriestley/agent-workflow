@@ -855,6 +855,139 @@ lacks "$(cat "$SLOG" 2>/dev/null)" "$TOKEN"
 it "the report reads the store's rows with the read key"
 has "$(cd "$TMPROOT" && AGENT_TRANSCRIPTS_URL="$URL" "$T" report "$TMPROOT/empty" --store 2>&1)" "| decisions-alternative | judge/1:haiku | 1 | 0 | 0 | 100% |"
 
+echo "a question left with no verdict is asked again, and --store sends what was judged before (record 2026-11-12-judge-asks-again)"
+# sent TABLE: how many inserts into TABLE the stand-in has taken so far
+sent() { py -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if json.loads(l)["path"]=="/rest/v1/"+sys.argv[2] and json.loads(l)["method"]=="POST"))' "$SLOG" "$1"; }
+qjson() { py -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["questions"][sys.argv[2]], sort_keys=True))' "$1" "$2"; }
+G1="$TMPROOT/again1"; fresh "$G1" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(FAKE_SCRIPT="error,error,error,error,error,error" judge "$G1" --repo-dir "$REPO")"; rc=$?
+it "a run in which every answer was an error leaves both questions undecided, says so and exits 1"
+assert_eq "1 undecided undecided" "$rc $(jv "$G1/judges/$J1.claude.json" decisions-alternative) $(jv "$G1/judges/$J1.claude.json" outcome-real-output)"
+has "$out" "${J1:0:8}: 6 of the judge's answers were errors; a question left with no verdict is asked again at the next run"
+rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(judge "$G1" --repo-dir "$REPO")"; rc=$?
+it "the next run asks that session again, and it has its verdicts"
+assert_eq "0 6 pass pass" "$rc $(calls) $(jv "$G1/judges/$J1.claude.json" decisions-alternative) $(jv "$G1/judges/$J1.claude.json" outcome-real-output)"
+lacks "$out" "already judged"
+G2="$TMPROOT/again2"; fresh "$G2" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(FAKE_SCRIPT="content,content,content,malformed,malformed,content" judge "$G2" --repo-dir "$REPO")"; rc=$?
+it "answers that are not votes, with none an error, leave the question undecided and the run exits 0"
+assert_eq "0 pass undecided" "$rc $(jv "$G2/judges/$J1.claude.json" decisions-alternative) $(jv "$G2/judges/$J1.claude.json" outcome-real-output)"
+kept="$(qjson "$G2/judges/$J1.claude.json" decisions-alternative)"
+rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(judge "$G2" --repo-dir "$REPO")"; rc=$?
+it "the next run asks only the question with no verdict: three calls, and the other's votes are as they were"
+assert_eq "0 3 pass" "$rc $(calls) $(jv "$G2/judges/$J1.claude.json" outcome-real-output)"
+assert_eq "$kept" "$(qjson "$G2/judges/$J1.claude.json" decisions-alternative)"
+lacks "$(cat "$FAKELOG")" "<decisions>"
+it "a session with a verdict for every question is still not asked again"
+before="$(calls)"; out="$(judge "$G2" --repo-dir "$REPO")"
+assert_eq "$before" "$(calls)"
+has "$out" "1 already judged"
+it "the agreement judge is asked again the same way"
+G3="$TMPROOT/again3"; fresh "$G3" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+judge "$G3" --repo-dir "$REPO" > /dev/null
+rm -f "$COUNTER"; : > "$FAKELOG"
+FAKE_SCRIPT="error,error,error,content,content,content" judge "$G3" --repo-dir "$REPO" --judge opencode > /dev/null; rc=$?
+assert_eq "1 undecided pass" "$rc $(jv "$G3/judges/$J1.opencode.json" decisions-alternative) $(jv "$G3/judges/$J1.opencode.json" outcome-real-output)"
+rm -f "$COUNTER"; : > "$FAKELOG"
+judge "$G3" --repo-dir "$REPO" --judge opencode > /dev/null; rc=$?
+assert_eq "0 3 pass" "$rc $(calls) $(jv "$G3/judges/$J1.opencode.json" decisions-alternative)"
+it "an error among the answers of a question that was decided is counted in its own run only"
+G5="$TMPROOT/again5"; fresh "$G5" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(FAKE_SCRIPT="content,content,error,malformed,malformed,content" judge "$G5" --repo-dir "$REPO")"; rc=$?
+assert_eq "1 pass undecided" "$rc $(jv "$G5/judges/$J1.claude.json" decisions-alternative) $(jv "$G5/judges/$J1.claude.json" outcome-real-output)"
+has "$out" "${J1:0:8}: 1 of the judge's answers were errors"
+rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(judge "$G5" --repo-dir "$REPO")"; rc=$?
+assert_eq "0 3 pass" "$rc $(calls) $(jv "$G5/judges/$J1.claude.json" outcome-real-output)"
+lacks "$out" "were errors"
+it "the rubric judge, which already asks again, exits 1 when an answer was an error"
+G4="$TMPROOT/again4"; keep "$G4" $Q1 "$A" "$C"; rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(FAKE_SCRIPT="error,error,error" judge "$G4" --rubrics --repo-dir "$REPO")"; rc=$?
+assert_eq "1 undecided pass" "$rc $(rq "$G4/rubrics/$Q1.json" code-quality verdict) $(rq "$G4/rubrics/$Q1.json" verbosity verdict)"
+has "$out" "${Q1:0:8}: 3 of the judge's answers were errors; a question left with no verdict is asked again at the next run"
+# gat FILE STEP: the time on a rubric score row
+gat() { py -c 'import json,sys; print(next(r["graded_at"] for r in json.load(open(sys.argv[1])) if r["step"]==sys.argv[2]))' "$1" "$2"; }
+t1="$(gat "$G4/scores/$Q1.rubrics.json" verbosity)"
+rm -f "$COUNTER"; : > "$FAKELOG"; sleep 1
+out="$(judge "$G4" --rubrics --repo-dir "$REPO")"; rc=$?
+assert_eq "0 3 pass" "$rc $(calls) $(rq "$G4/rubrics/$Q1.json" code-quality verdict)"
+it "an error among the answers of a rubric question that was decided is counted in its own run only"
+G6="$TMPROOT/again6"; keep "$G6" $Q1 "$A" "$C"; rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(FAKE_SCRIPT="content,content,error,malformed,malformed,content" judge "$G6" --rubrics --repo-dir "$REPO")"; rc=$?
+assert_eq "1 pass undecided" "$rc $(rq "$G6/rubrics/$Q1.json" code-quality verdict) $(rq "$G6/rubrics/$Q1.json" verbosity verdict)"
+has "$out" "${Q1:0:8}: 1 of the judge's answers were errors"
+rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(judge "$G6" --rubrics --repo-dir "$REPO")"; rc=$?
+assert_eq "0 3 pass" "$rc $(calls) $(rq "$G6/rubrics/$Q1.json" verbosity verdict)"
+lacks "$out" "were errors"
+it "a rubric question that was kept keeps the time it was judged, on its row too"
+assert_eq "$t1 True" "$(gat "$G4/scores/$Q1.rubrics.json" verbosity) $([ "$(gat "$G4/scores/$Q1.rubrics.json" code-quality)" != "$t1" ] && echo True)"
+
+S1="$TMPROOT/later1"; fresh "$S1" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+judge "$S1" --repo-dir "$REPO" > /dev/null
+s0="$(sent scores)"; v0="$(sent judge_votes)"; : > "$FAKELOG"
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S1" --repo-dir "$REPO" --store)"; rc=$?
+it "--store sends the rows of a session judged before without it, and asks no judge"
+assert_eq "0 0 2 6" "$rc $(calls) $(( $(sent scores) - s0 )) $(( $(sent judge_votes) - v0 ))"
+has "$out" "stored 8 rows"
+it "the rows carry the time the session was judged, not the time they were sent"
+assert_eq "True" "$(py -c '
+import json,sys
+doc=json.load(open(sys.argv[2])); rows=[json.loads(x["body"]) for x in map(json.loads, open(sys.argv[1])) if x["method"]=="POST"][-8:]
+print(all((r.get("graded_at") or r.get("judged_at"))==doc["judged_at"] and r["session_id"]==doc["session_id"] for r in rows))' "$SLOG" "$S1/judges/$J1.claude.json")"
+it "they are sent once: the next --store run sends nothing"
+s1="$(sent scores)"; v1="$(sent judge_votes)"
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S1" --repo-dir "$REPO" --store)"; rc=$?
+assert_eq "0 0 0" "$rc $(( $(sent scores) - s1 )) $(( $(sent judge_votes) - v1 ))"
+PORTR="$TMPROOT/port-refuse"; RLOG="$TMPROOT/store-refuse.log"; : > "$RLOG"
+python3 "$STANDIN" "$PORTR" "$RLOG" "$READKEY" --refuse judge_votes & PIDS="$PIDS $!"
+await_port "$PORTR"
+S2="$TMPROOT/later2"; fresh "$S2" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+out="$(AGENT_TRANSCRIPTS_URL="http://127.0.0.1:$(cat "$PORTR")" judge "$S2" --repo-dir "$REPO" --store)"; rc=$?
+it "a store that refuses part of a session's rows: exit 1, the rows kept"
+assert_eq 1 "$rc"
+has "$out" "its rows are kept in"
+s0="$(sent scores)"; v0="$(sent judge_votes)"; : > "$FAKELOG"
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S2" --repo-dir "$REPO" --store)"; rc=$?
+it "the next --store run sends all of them, and asks no judge"
+assert_eq "0 0 2 6" "$rc $(calls) $(( $(sent scores) - s0 )) $(( $(sent judge_votes) - v0 ))"
+S3="$TMPROOT/later3"; fresh "$S3" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+n0="$(wc -l < "$SLOG" | tr -d ' ')"
+FAKE_SCRIPT="content,content,content,malformed,malformed,content" AGENT_TRANSCRIPTS_URL="$URL" judge "$S3" --repo-dir "$REPO" --store > /dev/null
+rm -f "$COUNTER"; : > "$FAKELOG"; sleep 1
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S3" --repo-dir "$REPO" --store)"; rc=$?
+it "a question asked again is stored under its new time; the one kept is sent with its first time, which the store already has"
+assert_eq "0 3" "$rc $(calls)"
+has "$out" "stored 4 rows"
+assert_eq "1 2" "$(py -c '
+import json,sys
+rows=[json.loads(x["body"]) for x in list(map(json.loads, open(sys.argv[1])))[int(sys.argv[2]):] if x["method"]=="POST" and x["path"]=="/rest/v1/judge_votes"]
+print(len({r["judged_at"] for r in rows if r["question"]=="decisions-alternative"}), len({r["judged_at"] for r in rows if r["question"]=="outcome-real-output"}))' "$SLOG" "$n0")"
+it "the agreement judge's verdicts are not scores: --store sends its votes only, later too"
+S4="$TMPROOT/later4"; fresh "$S4" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
+judge "$S4" --repo-dir "$REPO" > /dev/null; judge "$S4" --repo-dir "$REPO" --judge opencode > /dev/null
+s0="$(sent scores)"; v0="$(sent judge_votes)"
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S4" --repo-dir "$REPO" --judge opencode --store)"; rc=$?
+assert_eq "0 0 6" "$rc $(( $(sent scores) - s0 )) $(( $(sent judge_votes) - v0 ))"
+it "--rubrics --store sends the rows of a session it has just judged"
+S5="$TMPROOT/later5"; keep "$S5" $Q1 "$A" "$C"; rm -f "$COUNTER"; : > "$FAKELOG"
+s0="$(sent scores)"
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S5" --rubrics --repo-dir "$REPO" --store)"; rc=$?
+assert_eq "0 2" "$rc $(( $(sent scores) - s0 ))"
+has "$out" "2 rows stored"
+it "--rubrics --store sends the rubric rows judged before without it"
+want="$(py -c 'import json,sys,glob; print(sum(len(json.load(open(f))) for f in glob.glob(sys.argv[1]+"/scores/*.rubrics.json")))' "$RA")"
+s0="$(sent scores)"; : > "$FAKELOG"
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$RA" --rubrics --repo-dir "$REPO" --store)"; rc=$?
+assert_eq "0 0 $want" "$rc $(calls) $(( $(sent scores) - s0 ))"
+has "$out" "$want rows stored"
+s1="$(sent scores)"
+out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$RA" --rubrics --repo-dir "$REPO" --store)"; rc=$?
+it "and sends them once"
+assert_eq "0 0" "$rc $(( $(sent scores) - s1 ))"
+
 if [ "${TRANSCRIPTS_LIVE_JUDGE:-}" = 1 ]; then
   echo "R10, live: the real Haiku judge on the two known-answer sessions"
   export PATH="$REAL_PATH"

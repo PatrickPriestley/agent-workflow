@@ -294,6 +294,12 @@ empty section fails, and the Outcome of a record that is not done is not applica
 asking. Every prompt, answer and verdict is kept in `<DIR>/judges/<sessionId>.claude.json`, the
 score rows in `<DIR>/scores/<sessionId>.judge.json` (grader `judge/1:haiku`); `--store` also
 inserts the rows into `scores` and each answer into `judge_votes`, with the read key.
+A session is judged once per record text. A question left `undecided` is asked again at the
+next run, and the questions that have a verdict are kept, with the time they were judged. A
+run in which an answer was an error (no `claude`, no answer in time, another model) says so
+and exits 1; answers the model gave that are not votes do not change the exit status. `--store`
+also sends the rows of sessions judged at an earlier run that did not store them, or could
+not: a judge file is marked `stored_at` when all of its rows went.
 `--verbose` prints each prompt and vote. `--transcript FILE --record FILE` judges one record and
 prints everything, writing nothing.
 
@@ -374,7 +380,8 @@ rows, to `<DIR>/scores/<sessionId>.rubrics.json` under the graders `rubric/1:son
 `proportionate` pass, the others fail), so it fits the store and the report's tables; the
 label itself is in the row and the report prints the labels, a verdict on a part counted
 apart. Labels carry no number and are never averaged into a grade. `--store` inserts the
-score rows with the read key; the votes stay in the folder.
+score rows with the read key, those of an earlier run that did not store them too; the votes
+stay in the folder. A run in which an answer was an error exits 1.
 
 To check a judge against a person, a label file may carry a line for each rubric
 (`code-quality: block | the new flag has no test`, `verbosity: na | wrote no code`); `transcripts

@@ -179,12 +179,17 @@ def decide(votes):
     return UNDECIDED, f"{len(counted)} of {len(votes)} answers counted as votes, and no two agree"
 
 
-def judge_record(kind, record_path, record_text, commands, outcome_state, redact, asker=ask):
+def judge_record(kind, record_path, record_text, commands, outcome_state, redact, asker=ask, keep=None):
     """Both questions for one record. outcome_state: "judge", "empty" or "not_done" (from the
-    outcome-filled step). Returns {question: {verdict, why, prompt, prompt_sha256, votes}}."""
+    outcome-filled step). Returns {question: {verdict, why, prompt, prompt_sha256, votes}}.
+    keep: the questions as an earlier run of the same record left them; one that votes decided
+    is returned as it is and not asked again."""
     out = {}
     for q in QUESTIONS:
         name = ASK[q][0]
+        if keep and (keep.get(q) or {}).get("verdict") in (PASS, FAIL) and keep[q].get("votes"):
+            out[q] = keep[q]
+            continue
         if q == "outcome-real-output" and outcome_state == "not_done":
             out[q] = {"verdict": NA, "why": "the record is not done", "votes": []}
             continue

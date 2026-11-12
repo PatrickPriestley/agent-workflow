@@ -1449,6 +1449,47 @@ def session_diff(repo, first, last):
     return files
 
 
+ASKED_AGAIN = "a question left with no verdict is asked again at the next run"
+
+
+def errors_in(questions, asked):
+    """How many of the answers to the questions just asked were errors: no judge, no answer in time, another model."""
+    return sum(1 for q in asked for v in questions[q]["votes"] if v["status"] == "error")
+
+
+def judged_rows(undecided, entry, doc):
+    """[(table, row)] for one judged record, as the store takes them. Each row carries the time
+    its question was judged, so a row sent again is the row the store has."""
+    sid, kind, model = doc["session_id"], doc["kind"], doc["model"]
+    skill_name, blob = change_skill(entry)
+    rows = []
+    for q, r in doc["questions"].items():
+        at = r.get("judged_at") or doc["judged_at"]
+        if kind == "claude" and r["verdict"] != undecided:  # the agreement judge's verdicts are a check on these, not scores
+            rows.append(("scores", {
+                "session_id": sid, "step": q, "verdict": r["verdict"], "skill": skill_name, "skill_blob": blob,
+                "grader": f"{doc['judge']}:{model}", "graded_at": at,
+                "evidence": {"why": r["why"], "record": doc["record"], "votes": [v["status"] for v in r["votes"]],
+                             "prompt_sha256": r.get("prompt_sha256"), "judge_file": f"judges/{sid}.{kind}.json"}}))
+    for q, r in doc["questions"].items():
+        for v in r["votes"]:
+            rows.append(("judge_votes", {
+                "session_id": sid, "question": q, "judge": f"{doc['judge']}:{kind}:{model}",
+                "vote": v["vote"], "status": v["status"], "verdict": v["verdict"], "reason": v["reason"],
+                "detail": v["detail"], "answer": v["answer"], "served_model": v["served_model"],
+                "prompt": r["prompt"], "prompt_sha256": r["prompt_sha256"], "record": doc["record"],
+                "record_sha256": doc["record_sha256"], "judged_at": r.get("judged_at") or doc["judged_at"]}))
+    return rows
+
+
+def send_judged(url, key, path, doc, rows):
+    """Insert one session's rows, then mark its judge file as stored; the number the store took as new."""
+    n = sum(insert(url, key, table, row) for table, row in rows)
+    doc["stored_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    write_atomic(path, (json.dumps(doc, indent=2) + "\n").encode())
+    return n
+
+
 def judge_rubrics(fields, d, only, repo, limit, store):
     """transcripts judge --rubrics: the code-quality and verbosity rubrics for the sessions that wrote code."""
     import measures
@@ -1465,7 +1506,7 @@ def judge_rubrics(fields, d, only, repo, limit, store):
         say(str(e))
         return 2
     sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
-    todo, kept = [], 0
+    todo, kept, owed = [], 0, []
     for sid in [s for s in sids if not only or s in only]:
         entry = read_json(os.path.join(d, "sessions", sid + ".json"), {})
         try:
@@ -1503,29 +1544,37 @@ def judge_rubrics(fields, d, only, repo, limit, store):
                 if not (old.get(q, {}).get("input_sha256") == sha and old[q].get("verdict") in ("pass", "fail")):
                     need.append(q)
         if need:
-            todo.append((entry.get("last_timestamp") or "", sid, entry, asks, old, need))
+            todo.append((entry.get("last_timestamp") or "", sid, entry, asks, old, need, have.get("judged_at")))
         else:
             kept += 1
+            if store and not have.get("stored_at"):
+                owed.append((sid, have))
     todo.sort(key=lambda t: (t[0], t[1]), reverse=True)
     todo = todo[:limit]
     print(f"transcripts: {len(todo)} sessions to judge, at most {len(todo) * len(rubric.QUESTIONS) * 3} calls "
           f"({len(rubric.QUESTIONS)} questions, 3 votes each)" + (f"; {kept} already judged" if kept else ""))
     stored = problems = 0
-    for _, sid, entry, asks, old, need in todo:
+    for _, sid, entry, asks, old, need, before in todo:
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         res = {}
         for q in rubric.QUESTIONS:
             a = asks[q]
             if not isinstance(a, tuple):
-                res[q] = rubric.not_asked(q, a)
+                res[q] = dict(rubric.not_asked(q, a), judged_at=now)
             elif q not in need:
-                res[q] = old[q]
+                res[q] = dict(old[q], judged_at=old[q].get("judged_at") or before)
             else:
                 res[q] = rubric.judge_question(q, a[0], a[1], a[2], redact_text)
                 res[q]["input_sha256"] = hashlib.sha256(redact_text(a[0]).encode()).hexdigest()
                 res[q]["left_out"] = a[3]
+                res[q]["judged_at"] = now
         doc = {"session_id": sid, "judge": rubric.RUBRIC, "judged_at": now, "questions": res}
-        write_atomic(os.path.join(d, "rubrics", sid + ".json"), (json.dumps(doc, indent=2) + "\n").encode())
+        path = os.path.join(d, "rubrics", sid + ".json")
+        write_atomic(path, (json.dumps(doc, indent=2) + "\n").encode())
+        errors = errors_in(res, need)
+        if errors:
+            say(f"{sid[:8]}: {errors} of the judge's answers were errors; {ASKED_AGAIN}")
+            problems += 1
         skill_name, blob = change_skill(entry)
         rows = []
         for q, r in res.items():
@@ -1539,17 +1588,19 @@ def judge_rubrics(fields, d, only, repo, limit, store):
             if r.get("left_out"):
                 ev["left_out"] = r["left_out"]
             rows.append({"session_id": sid, "step": q, "verdict": r["verdict"], "skill": skill_name, "skill_blob": blob,
-                         "grader": f"{rubric.RUBRIC}:{r['model']}", "graded_at": now, "evidence": ev})
+                         "grader": f"{rubric.RUBRIC}:{r['model']}", "graded_at": r["judged_at"], "evidence": ev})
         write_atomic(os.path.join(d, "scores", sid + ".rubrics.json"), (json.dumps(rows, indent=2) + "\n").encode())
         print(f"{sid[:8]} " + "; ".join(f"{q}: {r.get('label') or r['verdict']}" + (" (on a part)" if r.get("partial") else "")
                                          for q, r in res.items()))
         if store:
-            try:
-                for r in rows:
-                    stored += insert(url, key, "scores", r)
-            except StoreError as e:
-                say(f"{sid}: {e}; its rows are kept in {d}")
-                problems += 1
+            owed.append((sid, doc))
+    for sid, doc in owed:  # judged now, or at an earlier run that did not store or could not
+        try:
+            rows = read_json(os.path.join(d, "scores", sid + ".rubrics.json"), [])
+            stored += send_judged(url, key, os.path.join(d, "rubrics", sid + ".json"), doc, [("scores", r) for r in rows])
+        except StoreError as e:
+            say(f"{sid}: {e}; its rows are kept in {d}")
+            problems += 1
     if store:
         print(f"transcripts: {stored} rows stored")
     return 1 if problems else 0
@@ -1619,7 +1670,7 @@ def cmd_judge(args):
     repo = os.path.abspath(repo)
     sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
     sids = [s for s in sids if not only or s in only]
-    todo, skipped, already, problems = [], 0, 0, 0
+    todo, skipped, already, problems, owed = [], 0, 0, 0, []
     for sid in sids:
         entry = read_json(os.path.join(d, "sessions", sid + ".json"), {})
         rows = read_json(os.path.join(d, "scores", sid + ".json"))
@@ -1656,47 +1707,47 @@ def cmd_judge(args):
                 skipped += 1
                 continue
         have = read_json(os.path.join(d, "judges", f"{sid}.{kind}.json"), {})
+        keep = None
         if have.get("judge") == judge.JUDGE and have.get("record_sha256") == rsha:
-            already += 1
-            continue
+            if all(r["verdict"] != judge.UNDECIDED for r in have["questions"].values()):
+                already += 1
+                if store and not have.get("stored_at"):
+                    owed.append((sid, entry, have))
+                continue
+            # a question with no verdict is asked again; the others stay as they were judged
+            keep = {q: dict(r, judged_at=r.get("judged_at") or have["judged_at"]) for q, r in have["questions"].items()}
         outcome = next((r["verdict"] for r in rows if r.get("step") == "outcome-filled"), "not_applicable")
         state = {"pass": "judge", "fail": "empty"}.get(outcome, "not_done")
-        todo.append((entry.get("last_timestamp") or "", sid, entry, record, text, rsha, fields.commands_run(lines), state))
+        todo.append((entry.get("last_timestamp") or "", sid, entry, record, text, rsha, fields.commands_run(lines), state, keep))
     todo.sort(key=lambda t: (t[0], t[1]), reverse=True)
     judged = stored = 0
-    for _, sid, entry, record, text, rsha, commands, state in todo[:limit]:
-        res = judge.judge_record(kind, record, text, commands, state, redact_text)
+    for _, sid, entry, record, text, rsha, commands, state, keep in todo[:limit]:
+        res = judge.judge_record(kind, record, text, commands, state, redact_text, keep=keep)
         now = datetime.now().astimezone().isoformat(timespec="seconds")
+        asked = [q for q, r in res.items() if not (keep and r is keep.get(q))]
+        for q in asked:
+            res[q]["judged_at"] = now
         doc = {"session_id": sid, "judge": judge.JUDGE, "kind": kind, "model": judge.MODELS[kind], "record": record,
                "record_sha256": rsha, "judged_at": now, "questions": res}
         write_atomic(os.path.join(d, "judges", f"{sid}.{kind}.json"), (json.dumps(doc, indent=2) + "\n").encode())
         judged += 1
         show_judged(sid, res, verbose)
-        skill_name, blob = change_skill(entry)
-        grader = f"{judge.JUDGE}:{judge.MODELS[kind]}"
-        score_rows = [{"session_id": sid, "step": q, "verdict": r["verdict"], "skill": skill_name, "skill_blob": blob,
-                       "grader": grader, "graded_at": now,
-                       "evidence": {"why": r["why"], "record": record, "votes": [v["status"] for v in r["votes"]],
-                                    "prompt_sha256": r.get("prompt_sha256"), "judge_file": f"judges/{sid}.{kind}.json"}}
-                      for q, r in res.items() if r["verdict"] != judge.UNDECIDED]
-        if kind == "claude":  # the agreement judge's verdicts are a check on these, not scores
-            write_atomic(os.path.join(d, "scores", sid + ".judge.json"), (json.dumps(score_rows, indent=2) + "\n").encode())
+        errors = errors_in(res, asked)
+        if errors:
+            say(f"{sid[:8]}: {errors} of the judge's answers were errors; {ASKED_AGAIN}")
+            problems += 1
+        if kind == "claude":
+            write_atomic(os.path.join(d, "scores", sid + ".judge.json"),
+                         (json.dumps([r for t, r in judged_rows(judge.UNDECIDED, entry, doc) if t == "scores"], indent=2) + "\n").encode())
         if store:
-            try:
-                for r in score_rows if kind == "claude" else []:
-                    stored += insert(url, key, "scores", r)
-                for q, r in res.items():
-                    for v in r["votes"]:
-                        stored += insert(url, key, "judge_votes", {
-                            "session_id": sid, "question": q, "judge": f"{judge.JUDGE}:{kind}:{judge.MODELS[kind]}",
-                            "vote": v["vote"], "status": v["status"], "verdict": v["verdict"], "reason": v["reason"],
-                            "detail": v["detail"], "answer": v["answer"], "served_model": v["served_model"],
-                            "prompt": r["prompt"], "prompt_sha256": r["prompt_sha256"], "record": record,
-                            "record_sha256": rsha, "judged_at": now})
-            except StoreError as e:
-                say(f"{sid}: {e}; its rows are kept in {d}")
-                problems += 1
-                store = False
+            owed.append((sid, entry, doc))
+    for sid, entry, doc in owed:  # judged now, or at an earlier run that did not store or could not
+        try:
+            stored += send_judged(url, key, os.path.join(d, "judges", f"{sid}.{kind}.json"), doc, judged_rows(judge.UNDECIDED, entry, doc))
+        except StoreError as e:
+            say(f"{sid}: {e}; its rows are kept in {d}")
+            problems += 1
+            break
     left = max(0, len(todo) - limit)
     print(f"transcripts: {kind} judge ({judge.MODELS[kind]}) judged {judged} sessions into {d}/judges"
           + (f"; {already} already judged" if already else "") + (f"; {skipped} not judged" if skipped else "")
