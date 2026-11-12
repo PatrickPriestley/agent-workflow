@@ -25,6 +25,7 @@ import re
 from datetime import datetime, timezone
 
 import fields
+import rubric
 
 PASS, FAIL, NA = fields.PASS, fields.FAIL, fields.NA
 VERDICTS = {"pass": PASS, "fail": FAIL, "na": NA, "n/a": NA, "not_applicable": NA}
@@ -46,7 +47,9 @@ def transcript_hash(lines):
 def stub(sid, sha, n):
     return (f"session: {sid}\ntranscript: sha256:{sha} lines:{n}\nlabelled-by:\n"
             "# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.\n"
-            + "".join(f"{s}:\n" for s in fields.STEPS))
+            + "".join(f"{s}:\n" for s in fields.STEPS)
+            + "# The two rubrics, if you label them: " + "; ".join(f"{q} is {', '.join(rubric.LABELS[q])} or na" for q in rubric.QUESTIONS)
+            + ".\n" + "".join(f"{q}:\n" for q in rubric.QUESTIONS))
 
 
 def parse(text):
@@ -58,7 +61,7 @@ def parse(text):
             continue
         key, sep, value = ln.partition(":")
         key, value = key.strip(), value.strip()
-        if not sep or key not in ("session", "transcript", "labelled-by") + tuple(fields.STEPS):
+        if not sep or key not in ("session", "transcript", "labelled-by") + tuple(fields.STEPS) + tuple(rubric.QUESTIONS):
             problems.append(f"unknown line {ln[:40]!r}")
         elif key in seen:
             problems.append(f"{key} is there twice")
@@ -83,10 +86,25 @@ def parse(text):
             problems.append(f"{s}: a verdict needs a one-line reason after |")
         else:
             steps[s] = (VERDICTS[word], reason)
+    said = {}  # the rubric labels as written: a rubric line is optional, and empty means not labelled
+    for q in rubric.QUESTIONS:
+        if q not in seen:
+            continue
+        word, bar, reason = seen[q].partition("|")
+        word, reason = word.strip().lower(), reason.strip()
+        if not word:
+            steps[q] = (None, reason)
+        elif word not in rubric.LABELS[q] and word not in ("na", "n/a"):
+            problems.append(f"{q}: unknown label {word!r} ({', '.join(rubric.LABELS[q])} or na)")
+        elif not reason:
+            problems.append(f"{q}: a label needs a one-line reason after |")
+        else:
+            said[q] = "na" if word == "n/a" else word
+            steps[q] = (NA if said[q] == "na" else rubric.verdict_of(q, word), reason)
     if any(v for v, _ in steps.values()) and not seen.get("labelled-by"):
         problems.append("verdicts with no labelled-by: a person's name and the date")
     label = {"session": seen.get("session"), "sha256": m.group(1) if m else None, "lines": int(m.group(2)) if m else None,
-             "by": seen.get("labelled-by") or None, "steps": steps}
+             "by": seen.get("labelled-by") or None, "steps": steps, "rubric": said}
     return label, problems
 
 
@@ -125,19 +143,21 @@ def when(s):
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
-def latest_rows(rows):
-    """{step: row}: the field graders' latest row per step, from one session's score rows."""
+def latest_rows(rows, steps=None):
+    """{step: row}: the field (or rubric) graders' latest row per step, from one session's score rows."""
     best = {}
     for r in rows or []:
         s = r.get("step")
-        if s in fields.STEPS and str(r.get("grader") or "").startswith("fields/"):
+        if s in (steps or fields.STEPS) and str(r.get("grader") or "").startswith(("fields/", "rubric/")):
             if s not in best or when(r.get("graded_at")) >= when(best[s].get("graded_at")):
                 best[s] = r
     return best
 
 
-def compare(labels, here):
-    """The graders against the labels.
+def compare(labels, here, steps=None):
+    """The graders against the labels, over the field steps or, for a rubric judge, over steps.
+    A rubric's label and its judge agree when they give the same label, not merely the same
+    side: "verbose" where the label says "terse" is a false fail.
 
     labels: {sessionId: label}. here: {sessionId: {"sha256", "lines", "rows"}} for each session
     with a transcript: its hash and line count now, and its score rows (None if never graded).
@@ -146,7 +166,8 @@ def compare(labels, here):
     [{step, kind, session, label, reason, grader, why}], not_counted [(session, step or None,
     why)] and sessions, the ids with at least one step counted.
     """
-    counts = {s: dict(labelled=0, agree=0, false_fail=0, false_pass=0, false_na=0, both_na=0) for s in fields.STEPS}
+    steps = steps or fields.STEPS
+    counts = {s: dict(labelled=0, agree=0, false_fail=0, false_pass=0, false_na=0, both_na=0) for s in steps}
     disagreements, not_counted, counted = [], [], []
     for sid in sorted(set(labels) | set(here)):
         label, now = labels.get(sid), here.get(sid)
@@ -159,16 +180,20 @@ def compare(labels, here):
         elif label["sha256"] != now["sha256"]:
             not_counted.append((sid, None, f"stale label, made from a transcript of {label['lines']} lines (sha256 "
                                 f"{label['sha256'][:10]}); it now has {now['lines']} lines (sha256 {now['sha256'][:10]})"))
-        elif not latest_rows(now.get("rows")):
-            not_counted.append((sid, None, "labelled, but not graded; run transcripts grade"))
+        elif not latest_rows(now.get("rows"), steps):
+            if steps is fields.STEPS:
+                not_counted.append((sid, None, "labelled, but not graded; run transcripts grade"))
         else:
-            rows, any_counted = latest_rows(now["rows"]), False
-            for s in fields.STEPS:
+            rows, any_counted = latest_rows(now["rows"], steps), False
+            for s in steps:
+                if s not in label["steps"]:
+                    continue  # a rubric the label file has no line for
                 verdict, reason = label["steps"][s]
                 row = rows.get(s)
                 ev = (row or {}).get("evidence") or {}
                 if verdict is None:
-                    not_counted.append((sid, s, "not labelled yet"))
+                    if s in fields.STEPS:
+                        not_counted.append((sid, s, "not labelled yet"))
                 elif row is None:
                     not_counted.append((sid, s, "no score row"))
                 elif ev.get("error"):
@@ -177,15 +202,19 @@ def compare(labels, here):
                     any_counted = True
                     counts[s]["labelled"] += 1
                     got = row.get("verdict")
-                    kind = "agree" if got == verdict else "false_fail" if got == FAIL else "false_pass" if got == PASS else "false_na"
+                    same = got == verdict and (s in fields.STEPS or got == NA or ev.get("label") == label["rubric"].get(s))
+                    kind = "agree" if same else "false_fail" if got == FAIL else "false_pass" if got == PASS else "false_na"
                     counts[s][kind] += 1
                     counts[s]["both_na"] += got == verdict == NA
                     if kind != "agree":
-                        disagreements.append({"step": s, "kind": kind, "session": sid, "label": verdict, "reason": reason,
-                                              "grader": got, "why": ev.get("why") or ""})
+                        d = {"step": s, "kind": kind, "session": sid, "label": verdict, "reason": reason,
+                             "grader": got, "why": ev.get("why") or ""}
+                        if s not in fields.STEPS:  # show the labels themselves, not the side they fall on
+                            d.update(label_shown=label["rubric"].get(s), grader_shown=ev.get("label") or SHOWN.get(got, got))
+                        disagreements.append(d)
             if any_counted:
                 counted.append(sid)
-    disagreements.sort(key=lambda d: fields.STEPS.index(d["step"]))
+    disagreements.sort(key=lambda d: list(steps).index(d["step"]))
     return {"counts": counts, "disagreements": disagreements, "not_counted": not_counted, "sessions": counted}
 
 
@@ -325,7 +354,7 @@ def show_call(n, c, red):
     return out + [""]
 
 
-def sheet(lines, sid, label_path, records=None, redact=None):
+def sheet(lines, sid, label_path, records=None, redact=None, commits=None):
     """The sheet for one session, as Markdown.
 
     records: [(path, text or None, note)] for each record the session's calls or Change: lines
@@ -364,6 +393,21 @@ def sheet(lines, sid, label_path, records=None, redact=None):
            "## The steps", ""]
     for step, question, na, ptrs in QUESTIONS:
         out += [f"### {step}", "", question, "", f"Label it `na` when {na}.", ""] + [pointers[p] for p in ptrs] + [""]
+    first, last = commits or (None, None)
+    diff = (f"Read it in the repository: `git diff {first[:10]}..{last[:10]}`." if first and last and first != last else
+            f"Read it in the repository: `git show {last[:10]}`." if last else
+            "No commit is known for this session: the code is in the calls below.")
+    out += ["### code-quality (a rubric; optional)", "",
+            "Is the code the session produced sound: would a careful senior reviewer approve it, or block it for a defect "
+            f"(a bug, a missed edge case, weak or missing tests, a pattern the code around it does not use)? Answer "
+            f"`{'` or `'.join(rubric.LABELS['code-quality'])}`.", "",
+            "Label it `na` when the session wrote no code or has no commit.", "", f"The diff is not on this sheet. {diff}", "",
+            "### verbosity (a rubric; optional)", "",
+            "Was the prose the session wrote to a person in proportion to the work? Answer "
+            f"`{'`, `'.join(rubric.LABELS['verbosity'][:-1])}` or `{rubric.LABELS['verbosity'][-1]}`: padded and repeated is "
+            "verbose; silent through long work, or a last message that does not say what changed, is terse.", "",
+            "Label it `na` when the session wrote no code.", "",
+            "Its messages are the entries marked \"The session\" below.", ""]
     out += ["## The record at the session's last commit", ""]
     if records is None:
         out += ["Not shown: no commit is known for this transcript. The record's text is in the calls that wrote it, below.", ""]

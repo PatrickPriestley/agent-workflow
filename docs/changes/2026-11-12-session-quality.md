@@ -10,6 +10,7 @@ tasks:
     done: true
   - name: rubrics
     after: counts
+    done: true
   - name: edits
     after: rubrics
 ---
@@ -237,6 +238,29 @@ record confirms it).
   command output.
 - (Task 1.) A transcript with a line that is not JSON is left out of the counts and the report
   says how many. Rejected: counting what could be read, which would understate without saying.
+- (Task 2.) The rubric judge is its own grader, `rubric/1`, with rows under `rubric/1:sonnet`
+  and `rubric/1:haiku`, and its answers in `rubrics/`, not `judges/`. The Tasks list below says
+  `judge/2`; a new version of `judge` would have asked the two record questions of every
+  session again and split their rows for no change in them. Rejected: that.
+- (Task 2.) A label is a pass or a fail for the score row: `approve` and `proportionate`
+  pass, `block`, `verbose` and `terse` fail. The store allows a verdict nothing else, and the
+  report's tables and the error measure need a side. The label is kept in the row, the
+  report prints the labels, and a judge agrees with a person only on the same label.
+  Rejected: a change to the store's schema. This is the one place the decision above
+  ("kept as labels") bends: a pass rate is printed for a rubric, which is the share of
+  sessions with the good label and no more.
+- (Task 2.) `insufficient_evidence` is not a label. A session with no diff is not asked, and
+  says why, as C4 has it.
+- (Task 2.) The verbosity judge is shown four counts with the messages, since the rubric asks
+  whether the prose was in proportion to the work and the messages alone do not say what the
+  work was.
+- (Task 2.) Over the limit, a diff's generated and fixture files are left out and named, and
+  only a cut to code, tests or documentation marks the verdict as on a part. Rejected:
+  marking every diff with a fixture left out, which would mark most of them.
+- (Task 2.) The sheet states the two questions and gives the `git diff` to run; it does not
+  print the diff. Rejected: the diff on the sheet, which can be longer than the session.
+- (Task 2.) `--store` sends the rubric score rows and not the votes: `judge_votes` takes a
+  pass or a fail per vote, and a vote here is a label. The votes stay in `rubrics/`.
 
 ## Tasks
 
@@ -331,3 +355,65 @@ Not done, and what the numbers do not say:
 - Input and cached tokens are not shown; only what the session wrote.
 - "Failed or refused" counts a test run that failed on purpose (red first) like any other
   failed command.
+
+### Task 2, rubrics (2026-11-12)
+
+Shipped: `grade/rubric.py`; the two rubric files and Skill Doctor's licence notice in
+`grade/rubrics/`; `transcripts judge --rubrics`; an optional line for each rubric in a label
+file, read by `grade/labels.py` and stated on the sheet; the rubric judges' error and the
+labels line in the report; the README. `grade/judge.py`'s asker now takes a model, an
+instruction and a reader of the answer, with its old behaviour as the default.
+`transcripts-judge.test.sh` goes from 167 assertions to 238; the other suites pass unchanged.
+
+Red first: the test commit failed 43 assertions. Guards: 35 were broken by hand in a copy of
+the plugin, one at a time; 34 failed the suite. The one that did not (a label file with a
+step labelled and no rubric line) got a test, and all 35 now fail it.
+
+Real use. The owner chose what is sent ("Three task sessions", in chat, C6): the `store`, `grade`
+and `report` task sessions of `2026-11-09-skill-transcripts`, from the folder rebuilt on
+2026-11-11. A run with a stand-in for `claude` that answers nothing showed first what would
+go: prompts of 30,168, 25,060 and 55,031 characters to Sonnet and 5,545, 8,381 and 10,127 to
+Haiku, three times each. Then, for real:
+
+    $ transcripts judge <folder> --rubrics --repo-dir . --session 659da00f... --session 6cc07e5f... --session dd2defdb...
+    transcripts: 3 sessions to judge, at most 18 calls (2 questions, 3 votes each)
+    dd2defdb code-quality: approve (on a part); verbosity: proportionate
+    6cc07e5f code-quality: approve; verbosity: proportionate
+    659da00f code-quality: block; verbosity: proportionate
+
+All 18 answers counted as votes, each served by the model asked for (`claude-sonnet-5-5`,
+`claude-haiku-5-5`). Sixteen agreed with their question's verdict; two questions were decided
+two to one, both on `659da00f` (code quality: block, block, approve; verbosity: proportionate,
+proportionate, terse). The report on the same folder:
+
+    | code-quality | rubric/1:sonnet | 2 | 1 | 0 | 67% | not yet checked (0 of 5 needed) |
+    | verbosity | rubric/1:haiku | 3 | 0 | 0 | 100% | not yet checked (0 of 5 needed) |
+
+    Rubric labels, code-quality: approve 2 (1 of them judged on a part of the diff), block 1; verbosity: proportionate 3.
+
+What the one `block` rests on, since it is the first fail any judge here has given. Two
+reasons across the two votes. The first: the diff holds about 400 lines of push and
+materialize code and no test. True of the commit, and an artifact: that session was cut off
+at its first commit, and its tests came in a later one it never reached. The second names a
+defect: in `push_session`, after a change of redaction version, the state is saved with the
+new version after the first part, so a push that stops there leaves the session's other
+streams marked as sent and never sends them again under the new redaction. Read against the
+code on `main` (`bin/transcripts`, `push_session`), this is right: `fresh` is computed once,
+the saved state then carries the new version, and the next push resets no stream. It has not
+happened (the redaction version has never changed), and it is not fixed here; it needs its
+own change.
+
+Error path: with the stand-in that answers nothing, every question is undecided, no score row
+is written, and the next run asks again.
+
+Not done, and what these results are not:
+
+- No session is labelled for either rubric, so neither judge's error is known and the report
+  says "not yet checked". C3's ten sessions are the owner's next step, and until then a
+  verdict above is one model's reading.
+- Three sessions. The verbosity judge said `proportionate` three times; whether it can say
+  anything else on real sessions is not shown.
+- The code-quality judge reads a diff and nothing around it. `dd2defdb` was judged on a part:
+  18 generated and fixture files were left out and some of the rest was cut.
+- What the run cost was not recorded; the votes hold no token counts.
+- The rubric rows were not sent to the store.

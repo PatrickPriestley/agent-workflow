@@ -96,8 +96,8 @@ def vote(status, answer, verdict=None, reason=None, served=None, detail=None):
             "served_model": served, "detail": detail}
 
 
-def read_claude(stdout, rc):
-    """One `claude -p --output-format json` answer as a vote record."""
+def read_claude(stdout, rc, model="haiku", parse=None):
+    """One `claude -p --output-format json` answer as a vote record; it must come from the model asked for."""
     try:
         d = json.loads((stdout or "").strip().splitlines()[-1])
         if not isinstance(d, dict):
@@ -110,13 +110,13 @@ def read_claude(stdout, rc):
         return vote("refused", answer, served=served, detail="stop_reason refusal")
     if d.get("is_error") or rc != 0:
         return vote("error", answer, served=served, detail=f"exit {rc}, terminal_reason {d.get('terminal_reason')}")
-    if not served or not all("haiku" in m for m in served.split(",")):
-        return vote("error", answer, served=served, detail=f"served by {served or 'no model'}, not Haiku")
-    return read_text(answer, served)
+    if not served or not all(model in m for m in served.split(",")):
+        return vote("error", answer, served=served, detail=f"served by {served or 'no model'}, not {model.capitalize()}")
+    return read_text(answer, served, parse)
 
 
-def read_text(answer, served):
-    got = parse_answer(answer)
+def read_text(answer, served, parse=None):
+    got = (parse or parse_answer)(answer)
     if got:
         return vote("vote", answer, verdict=got[0], reason=got[1], served=served)
     if REFUSAL.search(answer or ""):
@@ -137,14 +137,16 @@ def clean_env():
     return env
 
 
-def ask(kind, prompt):
-    """One answer from the judge, as a vote record. Runs in a fresh empty directory."""
-    model = MODELS[kind]
+def ask(kind, prompt, model=None, system=None, parse=None):
+    """One answer from the judge, as a vote record. Runs in a fresh empty directory. model, system
+    and parse are the rubric judge's (grade/rubric.py): another Claude model, its own instruction
+    and its own reading of the answer."""
+    model = model or MODELS[kind]
     env = clean_env()
     with tempfile.TemporaryDirectory(prefix="transcripts-judge-") as cwd:
         if kind == "claude":
             cmd = ["claude", "-p", "--model", model, "--output-format", "json", "--tools", "",
-                   "--no-session-persistence", "--setting-sources", "", "--system-prompt", SYSTEM]
+                   "--no-session-persistence", "--setting-sources", "", "--system-prompt", system or SYSTEM]
             stdin = prompt
         else:
             agent = "transcriptsjudge-" + os.urandom(8).hex()
@@ -160,7 +162,7 @@ def ask(kind, prompt):
         except OSError as e:
             return vote("error", "", served=None, detail=f"{cmd[0]} did not start ({e})")
     if kind == "claude":
-        v = read_claude(r.stdout, r.returncode)
+        v = read_claude(r.stdout, r.returncode, model if model != MODELS["claude"] else "haiku", parse)
     else:
         v = read_opencode(r.stdout, r.returncode, model)
     if v["status"] == "error" and r.stderr.strip():

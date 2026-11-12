@@ -23,8 +23,9 @@ import fields
 import judge
 import labels
 import measures
+import rubric
 
-ORDER = fields.STEPS + judge.QUESTIONS
+ORDER = fields.STEPS + judge.QUESTIONS + rubric.QUESTIONS
 MIN_COVERED = 5  # labelled sessions that must cover a step before its error is printed (R4)
 # evidence keys that name one call. The lists of calls (probes, failing_runs) are empty whenever their step fails, and are
 # printed with the rest of the evidence.
@@ -96,7 +97,9 @@ def measure(rows, checked):
     With no field grader among the rows the comparison still runs, under the key None, so that
     what the labels could not be counted for is reported.
     """
-    graders = sorted({r["grader"] for r in rows if str(r["grader"]).startswith("fields/")}) or [None]
+    graders = sorted({r["grader"] for r in rows if str(r["grader"]).startswith(("fields/", "rubric/"))}) or [None]
+    if not any(g is None or g.startswith("fields/") for g in graders):
+        graders = [None] + graders
     out = {}
     for g in graders:
         mine = {}
@@ -104,13 +107,14 @@ def measure(rows, checked):
             if r["grader"] == g:
                 mine.setdefault(r["session_id"], []).append(r)
         here = {sid: {"sha256": sha, "lines": n, "rows": mine.get(sid)} for sid, (sha, n) in checked["here"].items()}
-        out[g] = labels.compare(checked["labels"], here)
+        asked = None if g is None or g.startswith("fields/") else [q for q in rubric.QUESTIONS if any(r["step"] == q for r in rows if r["grader"] == g)]
+        out[g] = labels.compare(checked["labels"], here, asked)
     return out
 
 
 def error_of(measured, step, grader):
     """(covered, wrong, counts) for a step and grader, or None where the labels do not cover the grader's steps."""
-    if grader not in measured or step not in fields.STEPS:
+    if grader not in measured or step not in measured[grader]["counts"]:
         return None
     c = measured[grader]["counts"][step]
     return c["labelled"] - c["both_na"], c["false_fail"] + c["false_pass"] + c["false_na"], c
@@ -161,8 +165,8 @@ def error_section(measured, checked, pairs, rows, red):
         for d in res["disagreements"]:
             found = True
             out.append(f"- {d['step']}, {g + ', ' if several else ''}{d['kind'].replace('_', ' ').replace(' na', ' n/a')}, "
-                       f"{name(d['session'])}: the label says {labels.SHOWN[d['label']]} ({red(d['reason'])}); the grader says "
-                       f"{labels.SHOWN.get(d['grader'], d['grader'])} ({red(d['why'])})")
+                       f"{name(d['session'])}: the label says {d.get('label_shown') or labels.SHOWN[d['label']]} ({red(d['reason'])}); "
+                       f"the grader says {d.get('grader_shown') or labels.SHOWN.get(d['grader'], d['grader'])} ({red(d['why'])})")
     if not found:
         out.append("None known: no counted label disagrees with a grader." if counted else
                    "None known, because no labelled session is counted: no verdict here has been checked.")
@@ -171,7 +175,7 @@ def error_section(measured, checked, pairs, rows, red):
     groups = {}
     for g, res in measured.items():
         for sid, step, why in res["not_counted"]:
-            groups.setdefault((fields.STEPS.index(step) if step else -1, g if several else None, step, why), []).append(sid)
+            groups.setdefault((step_key(step)[0] if step else -1, g if several else None, step, why), []).append(sid)
     for (_, g, step, why), sids in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
         lines.append(f"- {g + ', ' if g else ''}{step + ': ' if step else ''}{red(why)}, in {len(sids)} session{'s' if len(sids) != 1 else ''} "
                      f"({', '.join(s[:8] for s in sids)})")
@@ -460,6 +464,19 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
         for step, grader in [p for p in pairs_all if any(r["step"] == p[0] and r["grader"] == p[1] for r in vr)]:
             p, f, n = counts(vr, step, grader)
             out.append(f"| {step} | {grader} | {p} | {f} | {n} | {rate(p, f)} | {error_cell(measured, step, grader)} |")
+        said = []  # the rubrics' labels as labels: a pass or a fail above is which side a label falls on
+        for q in rubric.QUESTIONS:
+            got = [r["evidence"] for r in vr if r["step"] == q and str(r["grader"]).startswith("rubric/")
+                   and isinstance(r.get("evidence"), dict) and r["evidence"].get("label")]
+            per = {}
+            for ev in got:
+                per.setdefault(ev["label"], []).append(bool(ev.get("partial")))
+            if per:
+                said.append(f"{q}: " + ", ".join(
+                    f"{lab} {len(parts)}" + (f" ({sum(parts)} of them judged on a part of the diff)" if any(parts) else "")
+                    for lab, parts in sorted(per.items(), key=lambda kv: (-len(kv[1]), kv[0]))))
+        if said:
+            out += ["", "Rubric labels, " + "; ".join(said) + "."]
 
     out += ["", "## Pass rate over time", "",
             "Passes of graded sessions, per skill version, oldest first (the date is the version's first session).", ""]

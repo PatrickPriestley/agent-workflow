@@ -61,14 +61,26 @@ with open(os.environ["FAKELOG"], "a") as f:
 def section(tag):
     m = re.search(r"<%s>(.*?)</%s>" % (tag, tag), prompt, re.S)
     return m.group(1) if m else ""
-if "<decisions>" in prompt:
-    v = "pass" if "Rejected" in section("decisions") else "fail"
+asked = argv[argv.index("--model") + 1] if "--model" in argv else "haiku"
+v = "pass"
+if "<diff>" in prompt:  # the code-quality rubric: block a diff that holds HACK
+    label = mode if mode in ("approve", "block") else "block" if "HACK" in section("diff") else "approve"
+    js = json.dumps({"label": label, "reason": "the stand-in read the diff"})
+elif "<messages>" in prompt:  # the verbosity rubric: verbose on a repeated summary, terse on next to nothing
+    body = section("messages")
+    label = mode if mode in ("proportionate", "verbose", "terse") else \
+        "verbose" if "To summarize what I just said" in body else "terse" if len(body.strip()) < 60 else "proportionate"
+    js = json.dumps({"label": label, "reason": "the stand-in read the messages"})
 else:
-    v = "pass" if re.search(r"^\s*\$ ", section("outcome"), re.M) else "fail"
-js = json.dumps({"verdict": v, "reason": "the stand-in read the section"})
+    if "<decisions>" in prompt:
+        v = "pass" if "Rejected" in section("decisions") else "fail"
+    else:
+        v = "pass" if re.search(r"^\s*\$ ", section("outcome"), re.M) else "fail"
+    js = json.dumps({"verdict": v, "reason": "the stand-in read the section"})
 answers = {"content": js, "fenced": "```json\n" + js + "\n```", "prosejson": "I think so.\n" + js,
            "badverdict": json.dumps({"verdict": "maybe", "reason": "x"}), "malformed": "It passes, mostly.",
-           "empty": "", "twojson": js + "\n" + js, "extrakeys": json.dumps({"verdict": v, "reason": "r", "score": 1})}
+           "empty": "", "twojson": js + "\n" + js, "extrakeys": json.dumps({"verdict": v, "reason": "r", "score": 1}),
+           "badlabel": json.dumps({"label": "fine", "reason": "x"})}
 if kind == "opencode":
     if mode == "refused":
         print("I can't help with that.")
@@ -78,7 +90,7 @@ if kind == "opencode":
         print(answers.get(mode, js))
     sys.exit(0)
 out = {"type": "result", "subtype": "success", "is_error": False, "stop_reason": "end_turn", "terminal_reason": "completed",
-       "result": answers.get(mode, js), "modelUsage": {"claude-haiku-5-5": {"outputTokens": 20}}}
+       "result": answers.get(mode, js), "modelUsage": {"claude-%s-5-5" % asked: {"outputTokens": 20}}}
 rc = 0
 if mode == "refused":
     out.update(is_error=True, stop_reason="refusal", terminal_reason="api_error",
@@ -90,8 +102,8 @@ elif mode == "error":
 elif mode == "iserror":  # a well-formed answer, but the run says it failed
     out.update(is_error=True, terminal_reason="api_error")
     rc = 1
-elif mode == "sonnet":
-    out["modelUsage"] = {"claude-sonnet-5-5": {"outputTokens": 20}}
+elif mode in ("sonnet", "haiku"):  # served by another model than the one asked for
+    out["modelUsage"] = {"claude-%s-5-5" % mode: {"outputTokens": 20}}
 print(json.dumps(out))
 sys.exit(rc)
 PY
@@ -606,6 +618,216 @@ lacks "$r" "| d3000000 |"
 it "an empty folder is still refused: there is nothing to report"
 mkdir -p "$TMPROOT/empty2"; out="$(cd "$TMPROOT" && "$T" report "$TMPROOT/empty2" 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "no score rows in"
+
+echo "session-quality R4: the code-quality and verbosity rubrics, each with its own model, three votes"
+# three more commits: D a change a reviewer would block, E a small module beside a large fixture, F a large module
+(
+  cd "$REPO"
+  printf 'def greet(n):\n    try:\n        return n.upper()\n    except Exception:  # HACK\n        pass\n' > greet.py
+  git commit -qam "feat: never fail"
+  mkdir -p tests/fixtures; python3 -c 'print("x" * 70000)' > tests/fixtures/data.json
+  printf 'def shout(n):\n    return n.upper()\n' > shout.py
+  git add -A && git commit -qm "feat: shout module"
+  python3 -c 'print("\n".join("VALUE_%d = %d" % (i, i) for i in range(5000)))' > table.py
+  git add -A && git commit -qm "feat: table"
+)
+D="$(git -C "$REPO" rev-parse HEAD~2)"; E="$(git -C "$REPO" rev-parse HEAD~1)"; F="$(git -C "$REPO" rev-parse HEAD)"
+# talk SID HOUR CODE? TEXT: a session that writes greet.py when CODE is yes, and says TEXT
+talk() {
+  { printf '["call","r1","Bash",{"command":"python3 -m unittest"}]\n["result","r1","FAILED (failures=1)",false]\n'
+    [ "$3" = yes ] && printf '["call","c1","Write",{"file_path":"%s","content":"x"}]\n["result","c1","ok",false]\n' "$REPO/greet.py"
+    python3 -c 'import json,sys; print(json.dumps(["text", sys.argv[1]]))' "$4"
+  } | python3 "$GEN" "$W/$1.jsonl" "$1" "$REPO" "$2"
+}
+# keep AR SID FIRST LAST: archive the session and set the commits at its first and last stop
+keep() {
+  (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$1" "$T" archive --transcript "$W/$2.jsonl" < /dev/null > /dev/null 2>&1)
+  python3 - "$1/sessions/$2.json" "$3" "$4" <<'PY'
+import json, sys
+p, first, last = sys.argv[1:]
+e = json.load(open(p)); e["first_stop"] = {"branch": "x", "commit": first or None}; e["last_stop"] = {"branch": "x", "commit": last or None}
+json.dump(e, open(p, "w"), indent=2)
+PY
+}
+Q1=e1000000-0000-0000-0000-000000000001; Q2=e2000000-0000-0000-0000-000000000002; Q3=e3000000-0000-0000-0000-000000000003
+Q4=e4000000-0000-0000-0000-000000000004; Q5=e5000000-0000-0000-0000-000000000005; Q6=e6000000-0000-0000-0000-000000000006
+GOODTEXT="The --shout flag is in and the suite passes; write to $EMAIL if it breaks. Nothing else changed."
+talk $Q1 11 yes "$GOODTEXT"
+talk $Q2 12 yes "It works. To summarize what I just said: it works. To summarize what I just said again: it works."
+talk $Q3 13 yes "ok"
+talk $Q4 14 yes "The shout module is in beside its fixture, and the suite passes. Nothing else changed here."
+talk $Q5 15 yes "The table module is in with five thousand values, and the suite passes. Nothing else changed."
+talk $Q6 16 no "I read the code and changed nothing, as asked, so there is nothing for a reviewer to look at."
+RA="$TMPROOT/rubric-ar"
+keep "$RA" $Q1 "$A" "$C"; keep "$RA" $Q2 "$C" "$D"; keep "$RA" $Q3 "" ""; keep "$RA" $Q4 "$D" "$E"; keep "$RA" $Q5 "$E" "$F"; keep "$RA" $Q6 "$A" "$C"
+# rq FILE QUESTION KEY: a field of a question in a rubrics file; rr FILE STEP KEY: a field of a rubric score row's evidence
+rq() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["questions"][sys.argv[2]].get(sys.argv[3]))' "$1" "$2" "$3" 2>/dev/null || echo none; }
+rr() { python3 -c 'import json,sys; r=[x for x in json.load(open(sys.argv[1])) if x["step"]==sys.argv[2]]; print(r[0]["grader"], r[0]["verdict"], r[0]["evidence"].get(sys.argv[3]) if r else "none")' "$1" "$2" "$3" 2>/dev/null || echo no-row; }
+: > "$FAKELOG"; rm -f "$COUNTER"
+out="$(AGENT_TRANSCRIPTS="$RA" judge "$RA" --rubrics --repo-dir "$REPO")"; rc=$?
+it "judge --rubrics exits 0 and says how many calls it may make before it makes one"
+assert_eq 0 "$rc"
+has "$out" "5 sessions to judge, at most 30 calls (2 questions, 3 votes each)"
+it "a session that wrote no code is not judged"
+has "$out" "${Q6:0:8} not judged: no code written"
+it "a sound diff is approve and a diff a reviewer would block is block, each from three votes"
+assert_eq "approve pass 3" "$(rq "$RA/rubrics/$Q1.json" code-quality label) $(rq "$RA/rubrics/$Q1.json" code-quality verdict) $(py -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["questions"]["code-quality"]["votes"]))' "$RA/rubrics/$Q1.json")"
+assert_eq "block fail" "$(rq "$RA/rubrics/$Q2.json" code-quality label) $(rq "$RA/rubrics/$Q2.json" code-quality verdict)"
+it "prose in proportion, padded prose and next to none are proportionate, verbose and terse"
+assert_eq "proportionate verbose terse" "$(rq "$RA/rubrics/$Q1.json" verbosity label) $(rq "$RA/rubrics/$Q2.json" verbosity label) $(rq "$RA/rubrics/$Q3.json" verbosity label)"
+assert_eq "pass fail fail" "$(rq "$RA/rubrics/$Q1.json" verbosity verdict) $(rq "$RA/rubrics/$Q2.json" verbosity verdict) $(rq "$RA/rubrics/$Q3.json" verbosity verdict)"
+it "C2: code quality is asked of Sonnet and verbosity of Haiku"
+assert_eq "sonnet haiku" "$(py - "$FAKELOG" <<'PY'
+import json, sys
+calls = [json.loads(l) for l in open(sys.argv[1])]
+model = lambda c: c["argv"][c["argv"].index("--model") + 1]
+print(" ".join(sorted({model(c) for c in calls if tag in c["prompt"]})[0] if len({model(c) for c in calls if tag in c["prompt"]}) == 1 else "mixed" for tag in ("<diff>", "<messages>")))
+PY
+)"
+it "C4: the diff is the session's first commit to its last, and the judge sees the rubric with it"
+p1="$(rq "$RA/rubrics/$Q1.json" code-quality prompt)"
+has "$p1" "+    return n.upper()"
+has "$p1" "a careful senior reviewer"
+lacks "$p1" "HACK"
+it "C6: what goes to the judge is redacted"
+pv="$(rq "$RA/rubrics/$Q1.json" verbosity prompt)"
+has "$pv" "<redacted:email>"; lacks "$pv" "$EMAIL"
+it "the verbosity judge sees the session's counts beside its messages"
+has "$pv" "Tool calls: 2"
+it "C4: no commit, no code-quality verdict, said as an error; verbosity is still judged"
+assert_eq "not_applicable no commit recorded for the session" "$(rq "$RA/rubrics/$Q3.json" code-quality verdict) $(rq "$RA/rubrics/$Q3.json" code-quality error)"
+it "C4: over the limit, fixture files are left out and named; the code is judged whole, so it is no part"
+assert_eq "approve False" "$(rq "$RA/rubrics/$Q4.json" code-quality label) $(rq "$RA/rubrics/$Q4.json" code-quality partial)"
+has "$(rq "$RA/rubrics/$Q4.json" code-quality left_out)" "tests/fixtures/data.json"
+p4="$(rq "$RA/rubrics/$Q4.json" code-quality prompt)"
+has "$p4" "+def shout(n):"; lacks "$p4" "xxxxxxxxxxxxxxxxxxxxxxxx"
+it "C4: code that does not fit is cut, the verdict is marked as on a part, and the judge is told"
+assert_eq "True" "$(rq "$RA/rubrics/$Q5.json" code-quality partial)"
+has "$(rq "$RA/rubrics/$Q5.json" code-quality prompt)" "This is a part of a larger change"
+it "each verdict is a score row under the rubric's own grader, with its label"
+assert_eq "rubric/1:sonnet fail block" "$(rr "$RA/scores/$Q2.rubrics.json" code-quality label)"
+assert_eq "rubric/1:haiku fail verbose" "$(rr "$RA/scores/$Q2.rubrics.json" verbosity label)"
+assert_eq "rubric/1:sonnet pass True" "$(rr "$RA/scores/$Q5.rubrics.json" code-quality partial)"
+assert_eq "rubric/1:sonnet not_applicable no commit recorded for the session" "$(rr "$RA/scores/$Q3.rubrics.json" code-quality error)"
+it "a second run judges nothing again and makes no call"
+n1="$(calls)"; out="$(AGENT_TRANSCRIPTS="$RA" judge "$RA" --rubrics --repo-dir "$REPO")"
+assert_eq "$n1" "$(calls)"; has "$out" "0 sessions to judge"
+
+echo "session-quality R4: answers that do not count, and the limit"
+one() { rm -rf "$TMPROOT/r1"; keep "$TMPROOT/r1" $Q1 "$A" "$C"; : > "$FAKELOG"; rm -f "$COUNTER"; }
+one; out="$(FAKE_SCRIPT=haiku,haiku,haiku AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
+it "an answer served by another model than the one asked for is not a vote, and no verdict is written"
+assert_eq "undecided" "$(rq "$TMPROOT/r1/rubrics/$Q1.json" code-quality verdict)"
+assert_eq "no-row" "$(rr "$TMPROOT/r1/scores/$Q1.rubrics.json" code-quality label)"
+assert_eq "rubric/1:haiku pass proportionate" "$(rr "$TMPROOT/r1/scores/$Q1.rubrics.json" verbosity label)"
+one; out="$(FAKE_SCRIPT=badlabel,content,content AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
+it "a label the rubric does not have is malformed; two votes that agree still decide"
+assert_eq "malformed vote vote approve" "$(py -c 'import json,sys; q=json.load(open(sys.argv[1]))["questions"]["code-quality"]; print(" ".join(v["status"] for v in q["votes"]), q["label"])' "$TMPROOT/r1/rubrics/$Q1.json")"
+one; out="$(FAKE_SCRIPT=content,content,content,verbose,terse,proportionate AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
+it "three different labels decide nothing, though two of them are both a fail"
+assert_eq "undecided None" "$(rq "$TMPROOT/r1/rubrics/$Q1.json" verbosity verdict) $(rq "$TMPROOT/r1/rubrics/$Q1.json" verbosity label)"
+it "an undecided question is asked again on the next run"
+: > "$FAKELOG"; out="$(AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
+assert_eq "3 proportionate" "$(calls) $(rq "$TMPROOT/r1/rubrics/$Q1.json" verbosity label)"
+it "C2: --limit judges that many sessions, newest first"
+rm -rf "$TMPROOT/r2"; keep "$TMPROOT/r2" $Q1 "$A" "$C"; keep "$TMPROOT/r2" $Q2 "$C" "$D"; : > "$FAKELOG"
+out="$(AGENT_TRANSCRIPTS="$TMPROOT/r2" judge "$TMPROOT/r2" --rubrics --repo-dir "$REPO" --limit 1)"
+assert_eq "yes no" "$([ -f "$TMPROOT/r2/rubrics/$Q2.json" ] && echo yes || echo no) $([ -f "$TMPROOT/r2/rubrics/$Q1.json" ] && echo yes || echo no)"
+has "$out" "1 sessions to judge, at most 6 calls"
+
+echo "session-quality R4: what the judge is shown, at the edges"
+(
+  cd "$REPO"
+  mkdir -p docs; python3 -c 'print("\n".join("A line of documentation, number %d." % i for i in range(2500)))' > docs/big.md
+  printf 'def zeta(n):\n    return n\n' > zeta.py
+  git add -A && git commit -qm "feat: zeta, with a long document"
+)
+G="$(git -C "$REPO" rev-parse HEAD)"
+Q7=e7000000-0000-0000-0000-000000000007; Q8=e8000000-0000-0000-0000-000000000008; Q9=e9000000-0000-0000-0000-000000000009
+QA=ea000000-0000-0000-0000-00000000000a; QB=eb000000-0000-0000-0000-00000000000b
+talk $Q7 17 yes "The zeta module is in with its long document, and the suite passes. Nothing else changed here."
+talk $Q8 18 yes "FIRSTMARK $(python3 -c 'print("word " * 10000)') LASTMARK"
+talk $Q9 19 yes "The change is in one commit and the suite passes. Nothing else changed, and nothing waits on you."
+talk $QA 20 yes "The repository's first commit holds the greeting and its test. Nothing else changed in this one."
+talk $QB 21 yes "The commit this session ended on is not in the repository that is being read, as it happens."
+RE="$TMPROOT/rubric-edge"
+keep "$RE" $Q7 "$F" "$G"; keep "$RE" $Q8 "$A" "$C"; keep "$RE" $Q9 "$C" "$C"; keep "$RE" $QA "$A" "$A"
+keep "$RE" $QB "$A" "0000000000000000000000000000000000000000"; keep "$RE" $J4 "$A" "$C"; keep "$RE" $Q1 "$A" "$C"
+: > "$FAKELOG"; out="$(AGENT_TRANSCRIPTS="$RE" judge "$RE" --rubrics --repo-dir "$REPO")"
+it "under the limit the whole diff is judged, and it is no part"
+assert_eq "False" "$(rq "$RE/rubrics/$Q1.json" code-quality partial)"
+it "C4: over the limit the code is kept before the documentation, whatever order git gives them"
+p7="$(rq "$RE/rubrics/$Q7.json" code-quality prompt)"
+has "$p7" "+def zeta(n):"; lacks "$p7" "A line of documentation, number 2400."
+assert_eq "True" "$(rq "$RE/rubrics/$Q7.json" code-quality partial)"
+it "C4: a single file over the limit is shown from its start"
+has "$(rq "$RA/rubrics/$Q5.json" code-quality prompt)" "+VALUE_0 = 0"
+lacks "$(rq "$RA/rubrics/$Q5.json" code-quality prompt)" "+VALUE_4999 = 4999"
+it "messages over the limit are shown first and last, and the verdict is marked as on a part"
+p8="$(rq "$RE/rubrics/$Q8.json" verbosity prompt)"
+has "$p8" "FIRSTMARK"; has "$p8" "LASTMARK"; has "$p8" "characters of messages left out"
+assert_eq "True" "$(rq "$RE/rubrics/$Q8.json" verbosity partial)"
+it "a session that stopped twice on one commit is judged on that commit's own change"
+has "$(rq "$RE/rubrics/$Q9.json" code-quality prompt)" "+    return n.upper()"
+it "a session on the repository's first commit is judged on what that commit holds"
+has "$(rq "$RE/rubrics/$QA.json" code-quality prompt)" "+def greet(n):"
+it "a commit the repository does not have is said as an error, with no verdict"
+has "$(rq "$RE/rubrics/$QB.json" code-quality error)" "commit 0000000000 is not in"
+it "a session that wrote code and no message gets no verbosity verdict, and says why"
+assert_eq "not_applicable the session wrote no message" "$(rq "$RE/rubrics/$J4.json" verbosity verdict) $(rq "$RE/rubrics/$J4.json" verbosity error)"
+it "--rubrics takes neither the agreement judge nor a single transcript"
+(judge "$RE" --rubrics --judge opencode > /dev/null 2>&1); assert_eq 2 "$?"
+
+echo "session-quality R5: labels for the two rubrics, and each judge's error in the report"
+(cd "$TMPROOT" && "$T" sheet "$RA" --repo-dir "$REPO" --labels "$RA/labels" > /dev/null 2>&1)
+it "the sheet asks the two rubric questions and the label file has a line for each"
+has "$(cat "$RA/sheets/$Q1.md" 2>&1)" "### code-quality"
+has "$(cat "$RA/sheets/$Q1.md" 2>&1)" "git diff ${A:0:10}..${C:0:10}"
+has "$(cat "$RA/labels/$Q1.txt" 2>&1)" "verbosity:"
+# fill SID CODE-QUALITY VERBOSITY: write the two rubric labels, the seven steps left unlabelled
+fill() { python3 - "$RA/labels/$1.txt" "$2" "$3" <<'PY'
+import re, sys
+p, cq, vb = sys.argv[1:]
+s = open(p).read()
+s = re.sub(r"^labelled-by:.*$", "labelled-by: A Labeller, 2026-11-12", s, flags=re.M)
+s = re.sub(r"^code-quality:.*$", "code-quality: %s | made-up reason for the code" % cq, s, flags=re.M)
+s = re.sub(r"^verbosity:.*$", "verbosity: %s | made-up reason for the prose" % vb, s, flags=re.M)
+open(p, "w").write(s)
+PY
+}
+fill $Q1 approve verbose; fill $Q2 block terse
+r="$(report "$RA" 2>&1)"; rc=$?
+it "the report lists the rubric steps with their own graders, and their error as not yet checked under five labelled sessions"
+assert_eq 0 "$rc"
+has "$r" "| code-quality | rubric/1:sonnet | 3 | 1 | 1 | 75% | not yet checked (2 of 5 needed) |"
+has "$r" "| verbosity | rubric/1:haiku | 3 | 2 | 0 | 60% | not yet checked (2 of 5 needed) |"
+it "the labels are shown as labels, a verdict on a part counted apart"
+has "$r" "code-quality: approve 3 (1 of them judged on a part of the diff), block 1"
+has "$r" "verbosity: proportionate 3, terse 1, verbose 1"
+it "a judge that says proportionate where the label says verbose is a false pass; verbose where it says terse is a false fail"
+has "$r" "verbosity, rubric/1:haiku, false pass, ${Q1:0:8}"
+has "$r" "the label says verbose (made-up reason for the prose); the grader says proportionate"
+has "$r" "verbosity, rubric/1:haiku, false fail, ${Q2:0:8}"
+has "$r" "the label says terse (made-up reason for the prose); the grader says verbose"
+it "a rubric label the rubric does not have rejects the file"
+fill $Q1 fine verbose
+r="$(report "$RA" 2>&1)"; rc=$?
+assert_eq 1 "$rc"
+has "$r" "$Q1.txt: code-quality: unknown label 'fine' (approve, block or na)"
+it "a rubric label with no reason rejects the file; na is a label; a line left empty is simply not labelled"
+fill $Q1 approve verbose; sed -i.bak 's/^verbosity: verbose .*/verbosity: verbose/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
+has "$(report "$RA" 2>&1)" "$Q1.txt: verbosity: a label needs a one-line reason after |"
+fill $Q1 na verbose; sed -i.bak 's/^verbosity: verbose .*/verbosity:/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
+r="$(report "$RA" 2>&1)"; rc=$?
+assert_eq 0 "$rc"
+has "$r" "code-quality, rubric/1:sonnet, false pass, ${Q1:0:8}"
+has "$r" "the label says na (made-up reason for the code); the grader says approve"
+lacks "$r" "verbosity, rubric/1:haiku, false pass, ${Q1:0:8}"
+it "a label file written before the rubrics, with no line for them, still loads and is counted for neither"
+grep -v '^code-quality:\|^verbosity:\|^# The two rubrics' "$RA/labels/$Q2.txt" | sed 's/^red-first:.*/red-first: pass | made-up: a step labelled, the rubrics not/' > "$RA/labels/$Q2.tmp"; mv "$RA/labels/$Q2.tmp" "$RA/labels/$Q2.txt"
+r="$(report "$RA" 2>&1)"; rc=$?
+assert_eq 0 "$rc"
+has "$r" "| code-quality | rubric/1:sonnet | 3 | 1 | 1 | 75% | not yet checked (1 of 5 needed) |"
 
 echo "R11: scores and votes to the store, with the read key only"
 PORTF="$TMPROOT/port"; SLOG="$TMPROOT/store.log"; : > "$SLOG"

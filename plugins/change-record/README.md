@@ -343,6 +343,47 @@ skill when its index entry lists it or its transcript shows it, by the capture h
 knew a shell read are counted too. One skill can appear under two names, with and without its
 plugin. A folder with transcripts and no `scores/` still gives both sections.
 
+**Two judged rubrics: code quality and verbosity** (the same record, task 2).
+`transcripts judge [DIR] --rubrics [--session ID]... [--repo-dir DIR] [--limit N] [--store]` asks
+two questions no count can answer, of every session in the folder that wrote code:
+
+| Rubric | Asked of | Model | Labels |
+|---|---|---|---|
+| `code-quality` | the diff between the session's first and last commit, read from `--repo-dir` | Claude Sonnet | `approve`, `block` |
+| `verbosity` | the messages the session wrote, with its counts | Claude Haiku | `proportionate`, `verbose`, `terse` |
+
+Each is asked three times in a fresh session with no tools, as the record questions are, and
+two answers with the same label decide; otherwise the question is undecided, no verdict is
+written, and the next run asks again. It prints how many sessions it will judge and the most
+calls that can take before it makes one; `--limit` (20) and `--session` choose what is sent.
+The rubric texts are in `grade/rubrics/`, adapted from Skill Doctor's scorers (MIT; the notice
+is beside them).
+
+What a judge is sent, after the redaction `push` applies: for code quality, the rubric, the
+names of the files in the diff, and the diff; for verbosity, the rubric, four counts and the
+session's messages. Nothing else of the transcript goes. A diff over 60,000 characters is
+shown code first, then tests, then the rest, whole files, with generated and fixture files
+left out and named; when something else had to be cut, the verdict is marked as on a part.
+Messages over 40,000 characters are shown first and last, and marked the same way. A session
+with no commit, or whose commit `--repo-dir` does not have, gets no code-quality verdict and
+says why.
+
+The answers go to `<DIR>/rubrics/<sessionId>.json` (the prompt, the three votes) and, as score
+rows, to `<DIR>/scores/<sessionId>.rubrics.json` under the graders `rubric/1:sonnet` and
+`rubric/1:haiku`. A row's verdict is which side its label falls on (`approve` and
+`proportionate` pass, the others fail), so it fits the store and the report's tables; the
+label itself is in the row and the report prints the labels, a verdict on a part counted
+apart. Labels carry no number and are never averaged into a grade. `--store` inserts the
+score rows with the read key; the votes stay in the folder.
+
+To check a judge against a person, a label file may carry a line for each rubric
+(`code-quality: block | the new flag has no test`, `verbosity: na | wrote no code`); `transcripts
+sheet` leaves both lines empty and its sheet states the two questions and how to read the
+session's diff. A judge agrees with a label when it gives the same label, so `verbose` where
+the label says `terse` is wrong. The report shows each judge's error like a field step's, and
+"not yet checked" until five labelled sessions cover it. No session is labelled for the
+rubrics yet, and until ten are (the record's C3) their results say nothing about the judges.
+
 **Checking the graders against a person** (record `docs/changes/2026-11-11-grading-trust.md`).
 The graders can be wrong, so a set of sessions is labelled by hand and the graders are scored
 against it. The labels are in `grade/labels/<sessionId>.txt`, one file per session:
