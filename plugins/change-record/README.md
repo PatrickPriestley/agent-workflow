@@ -160,7 +160,7 @@ child's transcript entry names its parent.
     transcripts grade --transcript FILE [--cwd DIR]
     transcripts judge [DIR] [--session ID]... [--repo-dir DIR] [--judge claude|opencode] [--limit N] [--store] [--verbose]
     transcripts judge --transcript FILE --record FILE [--judge claude|opencode]
-    transcripts report [DIR] [--store]
+    transcripts report [DIR] [--store] [--labels DIR]
     transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR]
     transcripts sheet --transcript FILE... --out DIR [--labels DIR]
     transcripts accuracy [DIR] [--labels DIR]
@@ -288,12 +288,21 @@ disabled (as `agent-review` runs it), for up to 10 sessions the Haiku judge judg
 record. It writes `<DIR>/judges/<sessionId>.opencode.json` and no score rows. It needs
 `opencode` installed and logged in to OpenCode Go.
 
-**The report.** `transcripts report` prints, in Markdown, every step's pass rate per skill
-version (the skill's git blob, so two versions are never counted together), oldest first, a
-table of each step's rate across versions, the agreement between the two judges (or that the
-check has not run yet), and proposed skill edits, from failed sessions only, each citing the
-session and step. It reads `<DIR>/scores/` and `<DIR>/judges/`; `--store` adds the store's
-`scores`, `judge_votes` and `sessions` rows, with the read key.
+**The report.** `transcripts report [DIR] [--store] [--labels DIR]` prints, in Markdown, every
+step's pass rate per skill version (the skill's git blob, so two versions are never counted
+together), oldest first, with the grader's measured error beside it; a table of each step's
+rate across versions; the agreement between the two judges (or that the check has not run
+yet); the graders' error against the label files (below), with every known false verdict and
+what was not counted and why; and, for each session and step whose latest row is a fail, what
+the session did: the grader's reason, the rest of its evidence, and the calls it cites, each
+with a short excerpt from the transcript, redacted as `push` redacts. It proposes no edit. A
+step's error is printed once five labelled sessions cover it, a session covering a step when
+its label or the grader says pass or fail; until then the step is "not yet checked", which says
+nothing for or against its verdicts. It reads `<DIR>/scores/`, `<DIR>/judges/`, the transcripts
+in `<DIR>` and the labels in `grade/labels/` (or `--labels DIR`); `--store` adds the store's
+`scores`, `judge_votes` and `sessions` rows, with the read key, and those sessions have no
+excerpt and no measured error unless their transcripts are in `<DIR>`. A rejected label file is
+listed, not counted, and makes the exit status 1.
 
 **Checking the graders against a person** (record `docs/changes/2026-11-11-grading-trust.md`).
 The graders can be wrong, so a set of sessions is labelled by hand and the graders are scored

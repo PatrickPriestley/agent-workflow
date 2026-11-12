@@ -12,6 +12,7 @@ tasks:
     done: true
   - name: evidence
     after: labels
+    done: true
 ---
 # The graders' error rate is measured, and the report shows evidence in place of fixed advice
 
@@ -192,6 +193,36 @@ record confirms it).
 - (Task 2.) CI runs `accuracy` on the fixture sessions from inside `bin/transcripts-grade.test.sh`,
   not as its own workflow step: the suite already runs on every push, and the workflow file is
   task 1's.
+- (Task 3.) A labelled session covers a step when its label or the grader says pass or fail.
+  Where both say not applicable it is counted apart, as "both n/a", and not toward the five R4
+  asks for. Rejected: counting every labelled session, R4's plain reading. On the fixtures,
+  which have no commits, `outcome-filled` is not applicable in every row, so labels of `na`
+  would have printed "0% error" for a grader that was never put to the test.
+- (Task 3.) The error is wrong verdicts over covered sessions, a false n/a counted as wrong,
+  measured for each field grader on its own rows and over every skill version together.
+  Rejected: an error per skill version, which would need five labelled sessions for each
+  version; and one comparison over the latest field row of any grader, which would print one
+  grader's mistakes on another's line.
+- (Task 3.) The judge's two steps have no labels (R1 labels the seven field steps), so the
+  report marks them "not yet checked (no labels)". Checking the judge stays with the agreement
+  check until a later record gives it labels.
+- (Task 3.) For a failed `red-first` or `probe-before-record` the report also lists the shell
+  commands before the call the row cites, one line each with how the command ended. The row
+  cites only the first code write or record write, and the first report's errors were in how
+  the grader read shell commands. Rejected: adding the ids of those commands to the grader's
+  evidence, which changes every score row and belongs with a change to the graders.
+- (Task 3.) A failed step that a counted label calls pass or not applicable is marked "a known
+  false fail" where it is shown, and every disagreement is listed once under Grader error (C4).
+- (Task 3.) `report` takes `--labels DIR` (default the plugin's `grade/labels`). A rejected
+  label file is named on stderr, listed in the report, not counted, and makes the exit status
+  1, as `accuracy` does; a labels folder that is not there is exit 2. Sessions whose rows come
+  only from the store have no transcript in the folder, so they get no excerpt and no label is
+  counted for them. Rejected: fetching transcripts from the store for the report, which is
+  what `materialize` is for.
+- (Task 3.) The report lists, labels or no labels, the rows whose grader said it could not
+  read what it needed ("Rows that are no verdict"), so that the limit task 2 found is on the
+  page before anyone has labelled. `labels.compare` gained one count, `both_na`; the table
+  `accuracy` prints is unchanged.
 
 ## Tasks
 
@@ -476,4 +507,235 @@ A malformed file is the other error path, here with a verdict misspelt:
 
     $ transcripts accuracy --transcript plugins/change-record/grade/fixtures/*.jsonl.gz --labels $U/labels > /dev/null; echo $?
     transcripts: $U/labels/95e399c5-a1ef-4de4-8612-001551b4f84d.txt: red-first: unknown verdict 'passed' (pass, fail or na); the file is rejected
+    1
+
+### Task 3, evidence (2026-11-11)
+
+Shipped: `transcripts report` prints each field grader's measured error beside every pass rate,
+or "not yet checked" with how many of the five needed sessions cover the step (R4); a Grader
+error section with the counts, every known false verdict, what was not counted and why, and
+the rows whose grader could not grade; and, for each failed step, the grader's reason, the
+rest of its evidence, the call it cites with an excerpt, and the shell commands before it,
+redacted as `push` redacts (R5). The fixed table of advice and the "Proposed skill edits"
+section are gone. Not done here: the labelling, which is the owner's, so on the real labels
+every step is still "not yet checked"; and task 1.
+
+The limit task 2 found stands, and the report now shows it. On sessions with no commit the
+grader cannot grade `tier-declared` or `record-check`, and the report lists those rows as no
+verdict; `outcome-filled` is not applicable there without saying so in its row, which the
+report shows only as "both n/a" once a label says `na`. Those three steps are measured only on
+the store's sessions, graded with `--repo-dir`.
+
+Guards: 35 were broken by hand, one at a time, and the suite run. Thirteen survived the first
+round. Ten got a test (each text the report takes from a row, a label, a vote or a transcript
+is redacted; a false n/a counts as wrong; only commands before the cited call are listed; a
+vote not counted is shown as such), and one was code that could not run, a branch that
+excerpted lists of cited calls, which are empty whenever their step fails; it is removed. Two
+survive with a reason. Dropping `grader not in measured` changes nothing unless a grader
+that is not a field grader writes a row for a field step, which none does. Dropping the sort
+that picks a session's latest judge file changes nothing unless one session has two judge runs
+by one model, which only the store's rows can hold, and the stand-in store's test has no
+failed judged step. Not covered by a test: the cut to the last ten shell commands, seen in the
+real use below.
+
+Real use, in this session's container. `$U` is a scratch folder; `$U/ar` is an archive made
+from the fifteen fixture transcripts with `transcripts archive --transcript`, then graded:
+
+    $ transcripts grade $U/ar --repo-dir . | tail -1
+    transcripts: graded 15 sessions into $U/ar/scores, 13 with problems
+
+The 13 are the sessions with a record: no commit is recorded for them. The report, with the
+real label files, none of which holds a verdict yet (long lines cut where marked):
+
+    $ transcripts report $U/ar; echo $?
+    # Change skill report
+
+    Score rows from 15 sessions, grouped by skill version (the git blob of the skill file), oldest first; two versions are never counted together. A pass  [cut]
+
+    ## change-record:change, blob unknown
+
+    Sessions: 15, from 2026-11-08 to 2026-11-08.
+
+    | Step | Grader | Pass | Fail | N/A | Pass rate | Grader error |
+    |---|---|---|---|---|---|---|
+    | tier-declared | fields/1 | 1 | 0 | 14 | 100% | not yet checked (0 of 5 needed) |
+    | probe-before-record | fields/1 | 2 | 9 | 4 | 18% | not yet checked (0 of 5 needed) |
+    | record-before-code | fields/1 | 7 | 2 | 6 | 78% | not yet checked (0 of 5 needed) |
+    | red-first | fields/1 | 6 | 5 | 4 | 55% | not yet checked (0 of 5 needed) |
+    | change-line | fields/1 | 11 | 0 | 4 | 100% | not yet checked (0 of 5 needed) |
+    | record-check | fields/1 | 0 | 0 | 15 | - | not yet checked (0 of 5 needed) |
+    | outcome-filled | fields/1 | 0 | 0 | 15 | - | not yet checked (0 of 5 needed) |
+
+    ## Pass rate over time
+
+    Passes of graded sessions, per skill version, oldest first (the date is the version's first session).
+
+    | Step | Grader | unknown (2026-11-08) |
+    |---|---|---|
+    | tier-declared | fields/1 | 1 of 1 |
+    | probe-before-record | fields/1 | 2 of 11 |
+    | record-before-code | fields/1 | 7 of 9 |
+    | red-first | fields/1 | 6 of 11 |
+    | change-line | fields/1 | 11 of 11 |
+    | record-check | fields/1 | - |
+    | outcome-filled | fields/1 | - |
+
+    ## Judge agreement
+
+    The agreement check has not run yet: no session here has been judged by both the Haiku judge and opencode-go/kimi-k3.1-pro. On the owner's machine, ru [cut]
+
+    ## Grader error
+
+    Each field grader's latest row for a session and step, against a person's label of that session. 0 sessions are counted, of 15 with a transcript here  [cut]
+
+    | Step | Grader | Covered | Wrong | Error | False fail | False pass | False n/a | Both n/a |
+    |---|---|---|---|---|---|---|---|---|
+    | tier-declared | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | probe-before-record | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | record-before-code | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | red-first | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | change-line | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | record-check | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | outcome-filled | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+
+    ### Known false verdicts
+
+    None known, because no labelled session is counted: no verdict here has been checked.
+
+    ### Not counted
+
+    - not labelled yet, in 15 sessions (4c14e156, 74a1b42a, 831141da, 8dee9822, 95e399c5, 9d1fcbcc, a9637489, bdd53cec, c76ecdac, d0763a56, d178b31d, d709 [cut]
+
+    ### Rows that are no verdict
+
+    - tier-declared, fields/1: no commit recorded for the session, in 13 sessions (4c14e156, 74a1b42a, 95e399c5, 9d1fcbcc, a9637489, bdd53cec, c76ecdac, d [cut]
+    - record-check, fields/1: no commit recorded for the session, in 13 sessions (4c14e156, 74a1b42a, 95e399c5, 9d1fcbcc, a9637489, bdd53cec, c76ecdac, d0 [cut]
+
+    ## Failed steps
+
+    Each session and step whose latest row, whatever the grader, is a fail, per skill version, newest first: the grader's reason, the rest of its evidence [cut]
+    ### change-record:change, blob unknown
+
+    #### probe-before-record, 74a1b42a (74a1b42a-7e7f-4485-b437-49a6abb8aea9)
+
+    fields/1 says fail: no probe ran before the record was first written
+
+    Its error on this step: not yet checked (0 of 5 needed).
+
+    Its evidence: record docs/changes/2026-11-08-audit-log.md; probes none.
+
+    first_record_write, **[6] Write** `toolu_016npPvJHuo6a3AjHKdFivZ5` /tmp/claude-eval-AyNeGG/home/cwd/docs/changes/2026-11-08-audit-log.md:
+
+        ---
+        id: 2026-11-08-audit-log
+        tier: 2
+        status: open
+        [... 61 more lines]
+
+    Result:
+
+        File created successfully at: /tmp/claude-eval-AyNeGG/home/cwd/docs/changes/2026-11-08-audit-log.md (file state is current in your context — no ne [cut]
+
+    Shell commands before [6]:
+
+    - [4] `cd /tmp/claude-eval-AyNeGG/home/cwd; git ls-files; cat greet.py; ls tests docs 2>&1; cat tests/*.py | head -40; P=/home/ [...]`: flagged as an  [cut]
+    - [5] `ls -la /srv/audit 2>&1 | head; echo "AUDIT_LOG=$AUDIT_LOG"; cd /tmp/claude-eval-AyNeGG/home/cwd; cat docs/changes/README [...]`: flagged as an  [cut]
+
+    [... fifteen more failed steps, the same way: 492 lines in all ...]
+    0
+
+The same folder with made-up labels: a copy of `grade/labels/` in `$U/labels`, six sessions
+labelled as the grader says but for two verdicts chosen to disagree. The first table, the
+Grader error section from its table on, and the failed step that a label contradicts:
+
+    $ transcripts report $U/ar --labels $U/labels
+    [...]
+    | Step | Grader | Pass | Fail | N/A | Pass rate | Grader error |
+    |---|---|---|---|---|---|---|
+    | tier-declared | fields/1 | 1 | 0 | 14 | 100% | not yet checked (0 of 5 needed) |
+    | probe-before-record | fields/1 | 2 | 9 | 4 | 18% | 20% (1 of 5 wrong) |
+    | record-before-code | fields/1 | 7 | 2 | 6 | 78% | not yet checked (4 of 5 needed) |
+    | red-first | fields/1 | 6 | 5 | 4 | 55% | 20% (1 of 5 wrong) |
+    | change-line | fields/1 | 11 | 0 | 4 | 100% | 0% (0 of 5 wrong) |
+    | record-check | fields/1 | 0 | 0 | 15 | - | not yet checked (0 of 5 needed) |
+    | outcome-filled | fields/1 | 0 | 0 | 15 | - | not yet checked (0 of 5 needed) |
+    [...]
+    | Step | Grader | Covered | Wrong | Error | False fail | False pass | False n/a | Both n/a |
+    |---|---|---|---|---|---|---|---|---|
+    | tier-declared | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | probe-before-record | fields/1 | 5 | 1 | 20% | 1 | 0 | 0 | 1 |
+    | record-before-code | fields/1 | 4 | 0 | not yet checked | 0 | 0 | 0 | 2 |
+    | red-first | fields/1 | 5 | 1 | 20% | 1 | 0 | 0 | 1 |
+    | change-line | fields/1 | 5 | 0 | 0% | 0 | 0 | 0 | 1 |
+    | record-check | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 0 |
+    | outcome-filled | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 6 |
+
+    ### Known false verdicts
+
+    - probe-before-record, false fail, 9d1fcbcc (9d1fcbcc-08bd-4fdd-bf4f-f50256030b31): the label says pass (made up, to show a disagreement); the grader says fail (no probe ran before the record was first written)
+    - red-first, false fail, 95e399c5 (95e399c5-a1ef-4de4-8612-001551b4f84d): the label says pass (made up, to show a disagreement); the grader says fail (no test ran before the code)
+
+    ### Not counted
+
+    - not labelled yet, in 9 sessions (4c14e156, 831141da, 8dee9822, bdd53cec, c76ecdac, d178b31d, d7098b89, da1017af, fc657482)
+    - tier-declared: the grader could not grade it (no commit recorded for the session), in 6 sessions (74a1b42a, 95e399c5, 9d1fcbcc, a9637489, d0763a56, e36a6ed7)
+    - record-check: the grader could not grade it (no commit recorded for the session), in 6 sessions (74a1b42a, 95e399c5, 9d1fcbcc, a9637489, d0763a56, e36a6ed7)
+    [...]
+    #### red-first, 95e399c5 (95e399c5-a1ef-4de4-8612-001551b4f84d)
+
+    fields/1 says fail: no test ran before the code
+
+    Its error on this step: 20% (1 of 5 wrong). A person's label says pass (made up, to show a disagreement): this fail is a known false fail.
+
+    Its evidence: record docs/changes/2026-11-08-shout.md; test_runs_before_code 0; denied_test_runs 6; failing_runs none.
+
+    first_code_write (greet.py), **[24] Write** `toolu_01Gb3Yth4CJz8fnP2dzPqCjy` /tmp/claude-0/-home-user-agent-workflow/5ac54a69-3ba4-5369-bb2d-6980aeb1a0d6/scratchpad/realuse/worktrees/shout/greet.py:
+
+        import sys
+
+
+        def greet(name):
+        [... 20 more lines]
+
+    Result:
+
+        The file /tmp/claude-0/-home-user-agent-workflow/5ac54a69-3ba4-5369-bb2d-6980aeb1a0d6/scratchpad/realuse/worktrees/shout/greet.py has been updated successfully. (file state is current in your cont [cut]
+
+    Shell commands before [24]:
+
+    - [... 5 earlier ones are left out]
+    - [11] `python3 --version`: ran; its result is `Python 3.13.18`
+    - [12] `python3 -m unittest discover -s tests -t . 2>&1`: denied or refused
+    - [13] `python3 greet.py Ada; python3 greet.py --shout Ada; python3 greet.py`: denied or refused
+    - [15] `python3 -I -m unittest discover -s tests -t .`: denied or refused
+    - [16] `python3 -I greet.py Ada`: denied or refused
+    - [17] `python3 -I greet.py --shout Ada`: denied or refused
+    - [18] `python3 -m unittest discover -s tests -t . -v`: denied or refused
+    - [21] `python3 -m unittest tests.test_greet 2>&1`: denied or refused
+    - [22] `git add tests/test_greet.py && git commit -q -m "test(greet): --shout upper-cases the greeting; default unchanged [...]`: denied or refused
+    - [23] `git add tests/test_greet.py`: denied or refused
+    [...]
+
+Error path, a stale label: the same labels against a copy of the archive in which the
+transcript of 9d1fcbcc, whose made-up label disagreed with the grader, has one more line.
+
+    $ f=$U/ar2/parts/9d1fcbcc-08bd-4fdd-bf4f-f50256030b31/main/g1-000001.jsonl; tail -1 $f >> $f
+    $ transcripts report $U/ar2 --labels $U/labels | grep -n "probe-before-record | fields/1\|stale\|sessions are counted\|false fail, 9d1f" | cut -c1-150; echo $?
+    12:| probe-before-record | fields/1 | 2 | 9 | 4 | 18% | not yet checked (4 of 5 needed) |
+    26:| probe-before-record | fields/1 | 2 of 11 |
+    39:Each field grader's latest row for a session and step, against a person's label of that session. 5 sessions are counted, of 15 with a transcript here a
+    44:| probe-before-record | fields/1 | 4 | 0 | not yet checked | 0 | 0 | 0 | 1 |
+    58:- stale label, made from a transcript of 60 lines (sha256 7a69b0509f); it now has 61 lines (sha256 434648073d), in 1 session (9d1fcbcc)
+    0
+
+Its disagreement is in no count and no list, and the step drops back to not yet checked. A
+malformed label file, here a verdict misspelt in a second copy of the labels:
+
+    $ transcripts report $U/ar --labels $U/labels2 | grep -n "red-first | fields/1\|rejected\|sessions are counted\|false fail, 95e3" | cut -c1-150; echo $?
+    transcripts: $U/labels2/95e399c5-a1ef-4de4-8612-001551b4f84d.txt: red-first: unknown verdict 'passed' (pass, fail or na); the file is rejected
+    14:| red-first | fields/1 | 6 | 5 | 4 | 55% | not yet checked (4 of 5 needed) |
+    28:| red-first | fields/1 | 6 of 11 |
+    39:Each field grader's latest row for a session and step, against a person's label of that session. 5 sessions are counted, of 15 with a transcript here a
+    46:| red-first | fields/1 | 4 | 0 | not yet checked | 0 | 0 | 0 | 1 |
+    57:- 95e399c5-a1ef-4de4-8612-001551b4f84d.txt is rejected: red-first: unknown verdict 'passed' (pass, fail or na)
     1

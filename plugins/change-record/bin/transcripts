@@ -1536,18 +1536,23 @@ def cmd_judge(args):
 
 
 def cmd_report(args):
-    d, store, i = None, False, 0
+    d, store, lab, i = None, False, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade", "labels"), 0
     while i < len(args):
         if args[i] == "--store":
             store, i = True, i + 1
+        elif args[i] == "--labels" and i + 1 < len(args):
+            lab, i = args[i + 1], i + 2
         elif d is None and not args[i].startswith("--"):
             d, i = args[i], i + 1
         else:
-            say("usage: transcripts report [DIR] [--store]")
+            say("usage: transcripts report [DIR] [--store] [--labels DIR]")
             return 2
     _, judge, report = load_grade_modules()
+    import labels
     try:  # the report only reads, so DIR may be anywhere, a repository's fixtures included
         d = os.path.abspath(d) if d else folder_arg(None)
+        if not os.path.isdir(lab):
+            raise PermissionError(f"no labels folder at {os.path.abspath(lab)}")
         url = key = None
         if store:
             url = store_url()
@@ -1569,6 +1574,17 @@ def cmd_report(args):
         j = read_json(p)
         if isinstance(j, dict) and j.get("session_id"):
             judges.append(j)
+
+    def read(sid):  # a session's transcript as DIR holds it, or None; the store's rows bring none
+        try:
+            return session_lines(d, sid, read_json(os.path.join(d, "sessions", sid + ".json"), {}) or {})
+        except (OSError, LookupError):
+            return None
+    here = {}
+    for sid in sorted(set(entries) | {r["session_id"] for r in rows}):
+        lines = read(sid)
+        if lines is not None:
+            here[sid] = labels.transcript_hash(lines)
     if store:
         try:
             rows += read_rows(url, key, "/rest/v1/scores?select=*&order=session_id,step,graded_at")
@@ -1578,12 +1594,16 @@ def cmd_report(args):
         except StoreError as e:
             say(str(e))
             return 1
-    text = report.build(rows, entries, judges)
+    found, bad = labels.load(lab)
+    for fname, why in bad:
+        say(f"{os.path.join(lab, fname)}: {why}; the file is rejected")
+    checked = {"labels": found, "problems": bad, "files": len(found) + len({n for n, _ in bad}), "here": here}
+    text = report.build(rows, entries, judges, checked, read, redact_text)
     if text is None:
         say(f"no score rows in {d}/scores" + (" or the store" if store else "") + "; run transcripts grade first")
         return 1
     sys.stdout.write(text)
-    return 0
+    return 1 if bad else 0
 
 
 def votes_to_judges(votes, judge):

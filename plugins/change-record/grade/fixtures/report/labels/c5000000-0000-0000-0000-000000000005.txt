@@ -1,0 +1,10 @@
+session: c5000000-0000-0000-0000-000000000005
+transcript: sha256:d067a77add6aae615b33d18fbf64b2a5e891edcc98b3964d11ca023fb154a5b4 lines:3
+labelled-by: A Labeller, 2026-11-11
+tier-declared: fail | made up: code with no record and no Tier: 0
+probe-before-record:
+record-before-code:
+red-first: na | made up: nothing to judge
+change-line: na | made up: nothing to judge
+record-check:
+outcome-filled: na | made up: nothing to judge

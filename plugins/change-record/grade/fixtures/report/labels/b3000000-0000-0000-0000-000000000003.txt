@@ -1,0 +1,10 @@
+session: b3000000-0000-0000-0000-000000000003
+transcript: sha256:c57a0e2615082e34b05c8aab6185acffdfe0c3d04549a439a63116f3aea1648f lines:7
+labelled-by: A Labeller, 2026-11-11
+tier-declared: pass | made up: tier 2
+probe-before-record: na | made up: nothing to judge
+record-before-code: na | made up: nothing to judge
+red-first: pass | made up: a run failed before the code
+change-line: pass | made up: the last message is the Change: line
+record-check: na | made up: nothing to judge
+outcome-filled: na | made up: nothing to judge

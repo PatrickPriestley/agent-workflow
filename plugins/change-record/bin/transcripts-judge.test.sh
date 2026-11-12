@@ -3,7 +3,8 @@
 # docs/changes/2026-11-09-skill-transcripts.md, R10, R11 and C3): the Haiku judge's two
 # questions with three votes, malformed and refused answers not counted, votes and prompts kept
 # per session, redaction of what a judge sees, the agreement judge against a stand-in for
-# OpenCode, scores and votes to the store with the read key, and the report from known rows.
+# OpenCode, scores and votes to the store with the read key, and the report from known rows,
+# labels and transcripts (record docs/changes/2026-11-11-grading-trust.md, R4 and R5).
 # Stand-ins for `claude` and `opencode` answer from what the prompt holds. Fixtures use made-up
 # addresses and tokens only. Needs bash, git and python3. TRANSCRIPTS_LIVE_JUDGE=1 also runs
 # the real Haiku judge on the two known-answer sessions (needs `claude` logged in).
@@ -356,28 +357,214 @@ r="$(cd "$TMPROOT" && "$T" report "$AR10" 2>&1)"
 has "$r" "The agreement judge ran on 1 sessions, but no question got a verdict from both judges"
 lacks "$r" "has not run yet"
 
-echo "R11: the report from known score rows"
-rep="$(cd "$TMPROOT" && "$T" report "$RFIX" 2>&1)"; rc=$?
+echo "R11, and grading-trust R4 and R5: the report from known score rows, labels and transcripts"
+# report DIR: the report on a folder, with the label files kept in it
+report() { local d="$1"; shift; (cd "$TMPROOT" && "$T" report "$d" --labels "$d/labels" "$@"); }
+# copy NAME: a copy of the report fixtures to change
+copy() { rm -rf "$TMPROOT/$1"; cp -R "$RFIX" "$TMPROOT/$1"; mkdir -p "$TMPROOT/$1/labels" "$TMPROOT/$1/projects/made-up"; }
+R1=a1000000-0000-0000-0000-000000000001; R3=b3000000-0000-0000-0000-000000000003; R4=b4000000-0000-0000-0000-000000000004
+R5=c5000000-0000-0000-0000-000000000005
+rep="$(report "$RFIX" 2>&1)"; rc=$?
 it "exits 0 and matches the stored expected report"
-diffout="$(diff <(printf '%s\n' "$rep") "$RFIX/expected.md" 2>/dev/null || echo "the report differs from expected.md, or expected.md is missing")"
+diffout="$(diff <(printf '%s\n' "$rep") "$RFIX/expected.md" 2>/dev/null | head -30 || echo "expected.md is missing")"
 assert_eq "0 " "$rc $diffout"
-it "a row re-graded from fail to pass proposes no edit: proposals come from failed sessions only"
-lacks "$rep" "b3000000 (b3000000-0000-0000-0000-000000000003): no test ran before the code"
+it "R4: a step covered by five labelled sessions has its measured error beside its pass rate"
+has "$rep" "| tier-declared | fields/1 | 2 | 0 | 0 | 100% | 20% (1 of 5 wrong) |"
+it "R4: a step covered by fewer than five is not yet checked, with how many cover it"
+has "$rep" "| red-first | fields/1 | 1 | 1 | 0 | 50% | not yet checked (4 of 5 needed) |"
+it "R4: sessions where label and grader both say not applicable do not count toward the five"
+has "$rep" "| outcome-filled | fields/1 | 0 | 0 | not yet checked | 0 | 0 | 0 | 1 |"
+it "R4: the judge's steps have no labels, and say so"
+has "$rep" "| decisions-alternative | judge/1:haiku | 1 | 1 | 0 | 50% | not yet checked (no labels) |"
+it "C4: every known false verdict is listed with its session"
+has "$rep" "- red-first, false fail, b4000000 ($R4): the label says pass"
+has "$rep" "- tier-declared, false pass, a1000000 ($R1): the label says fail"
+it "R5: a failed step shows the session, the grader's reason and the rest of its evidence"
+has "$rep" "#### red-first, a1000000 ($R1)"
+has "$rep" "fields/1 says fail: no test ran before the code"
+has "$rep" "test_runs_before_code 0; denied_test_runs 1"
+it "R5: and the call it cites, with an excerpt of what the call wrote and what came back"
+has "$rep" 'first_code_write (greet.py), **[5] Write** `c1` /work/made-up/greet.py:'
+has "$rep" "        return n.upper() if shout else n"
+it "R5: and the shell commands before it, with how each ended"
+has "$rep" '- [3] `python3 -m unittest discover -s tests`: never answered'
+it "R5: a failed step a label calls a pass is marked as a known false fail"
+has "$rep" "this fail is a known false fail"
+it "R5: a judge's failed step shows its votes"
+has "$rep" "- vote 1, fail: No Decision names what it rejected."
+it "R5: the excerpts are redacted as push redacts: no address, no token"
+lacks "$rep" "$EMAIL"
+lacks "$rep" "$TOKEN"
+has "$rep" "Bearer <redacted:token>"
+has "$rep" "as <redacted:email> asked"
+it "R5: no line of the fixed table of advice remains, and no edit is proposed"
+for old in "make the tier the first thing written" "say that the record is created only after a probe has run" \
+  "say that no file outside docs/changes/ and the tests is" "require the failing test run's output to be seen" \
+  "give the exact first line of the PR body to copy" "list the sections and frontmatter fields record-check requires" \
+  "say that a record is not done until its Outcome holds" "ask for each Decision to name the alternative it rejected" \
+  "ask for the Outcome to quote the commands run" "review this step against the failures below" "Proposed skill edits"; do
+  lacks "$rep" "$old"
+  lacks "$(cat "$here/../grade/report.py")" "$old"
+done
+it "a row re-graded from fail to pass is no failed step"
+lacks "$rep" "#### red-first, b3000000"
+it "R4: a label whose transcript has since grown is stale: reported, and not counted"
+copy stale; tail -1 "$TMPROOT/stale/projects/made-up/$R1.jsonl" >> "$TMPROOT/stale/projects/made-up/$R1.jsonl"
+r="$(report "$TMPROOT/stale" 2>&1)"; rc=$?
+has "$r" "stale label, made from a transcript of 9 lines"
+has "$r" "| tier-declared | fields/1 | 2 | 0 | 0 | 100% | not yet checked (4 of 5 needed) |"
+lacks "$r" "- tier-declared, false pass, a1000000"
+has "$r" "4 sessions are counted"
+assert_eq 0 "$rc"
+it "R4: a malformed label file is named on stderr, listed, not counted, and the exit status is 1"
+copy badlabel; python3 -c 'import sys; p=sys.argv[1]; s=open(p).read(); n=s.replace("tier-declared: fail", "tier-declared: failed"); assert n != s; open(p,"w").write(n)' "$TMPROOT/badlabel/labels/$R1.txt"
+r="$(report "$TMPROOT/badlabel" 2>"$TMPROOT/badlabel.err")"; rc=$?
+assert_eq 1 "$rc"
+has "$(cat "$TMPROOT/badlabel.err")" "$R1.txt: tier-declared: unknown verdict 'failed' (pass, fail or na); the file is rejected"
+has "$r" "$R1.txt is rejected: tier-declared: unknown verdict 'failed'"
+has "$r" "not yet checked (4 of 5 needed) |"
+has "$r" "4 sessions are counted, of 5 with a transcript here and 5 label files"
+it "R4: with no label filled in, every step is not yet checked, and the report says no session is counted"
+copy nolabel; for f in "$TMPROOT"/nolabel/labels/*.txt; do sed -E -e 's/^(labelled-by:).*/\1/' -e 's/^([a-z]+-[a-z-]+:) ?[a-z]+ \|.*/\1/' "$f" > "$f.new" && mv "$f.new" "$f"; done
+r="$(report "$TMPROOT/nolabel" 2>&1)"; rc=$?
+assert_eq 0 "$rc"
+has "$r" "| tier-declared | fields/1 | 2 | 0 | 0 | 100% | not yet checked (0 of 5 needed) |"
+has "$r" "0 sessions are counted"
+has "$r" "not labelled yet, in 5 sessions"
+lacks "$r" "% ("
+it "R4: a labels folder that is not there is an error, not an unchecked report"
+(report "$TMPROOT/nolabel" --labels "$TMPROOT/no-such-labels" > /dev/null 2>&1); assert_eq 2 "$?"
+it "R4: a step the grader could not grade is not counted, and the reason is given"
+copy cannot; python3 - "$TMPROOT/cannot/scores/$R5.json" <<'PY2'
+import json, sys
+p = sys.argv[1]; rows = json.load(open(p))
+for r in rows:
+    if r["step"] == "tier-declared":
+        r["verdict"] = "not_applicable"; r["evidence"] = {"why": "the record cannot be read: no commit for the session", "error": "no commit for the session"}
+json.dump(rows, open(p, "w"))
+PY2
+r="$(report "$TMPROOT/cannot" 2>&1)"
+has "$r" "- tier-declared: the grader could not grade it (no commit for the session), in 1 session (c5000000)"
+has "$r" "| tier-declared | fields/1 | 4 | 1 | not yet checked | 0 | 1 | 0 | 0 |"
+it "R4: a row whose grader could not read what it needed is listed as no verdict, labels or no labels"
+has "$r" "- tier-declared, fields/1: no commit for the session, in 1 session (c5000000): its not applicable there is no verdict"
+has "$rep" "None: no row here says its grader could not read what it needed."
+it "R5: a failed step whose transcript is not here names the calls and says they are not shown"
+copy gone; rm "$TMPROOT/gone/projects/made-up/$R5.jsonl"
+r="$(report "$TMPROOT/gone" 2>&1)"
+has "$r" 'The transcript is not here, so the calls are named and not shown: first_code_write `c1`.'
+it "R5: a cited call the transcript does not hold is said to be missing, not left out"
+copy nocall; sed 's/"id":"c1"/"id":"c9"/' "$TMPROOT/nocall/projects/made-up/$R5.jsonl" > "$TMPROOT/nocall/x" && mv "$TMPROOT/nocall/x" "$TMPROOT/nocall/projects/made-up/$R5.jsonl"
+r="$(report "$TMPROOT/nocall" 2>&1)"
+has "$r" 'first_code_write (greet.py), `c1`: not among the calls of the transcript here.'
+it "R5: a denied command before the cited call is shown as denied"
+copy denied; python3 - "$TMPROOT/denied/projects/made-up/$R1.jsonl" <<'PY2'
+import json, sys
+p = sys.argv[1]; lines = open(p).read().splitlines()
+r1 = next(i for i, l in enumerate(lines) if '"id":"r1"' in l)
+d = json.loads(lines[r1]); d["type"] = "user"
+d["message"] = {"role": "user", "content": [{"tool_use_id": "r1", "type": "tool_result", "content": "Permission to use Bash has been denied.", "is_error": True}]}
+lines.insert(r1 + 1, json.dumps(d, separators=(",", ":")))
+open(p, "w").write("\n".join(lines) + "\n")
+PY2
+has "$(report "$TMPROOT/denied" 2>&1)" '- [3] `python3 -m unittest discover -s tests`: denied or refused'
+it "R4: a not applicable where the label says pass is a false n/a, and counts as wrong"
+copy falsena; sed 's/^change-line: na .*/change-line: pass | made up: its last message opens with the Change: line/' "$TMPROOT/falsena/labels/$R4.txt" > "$TMPROOT/falsena/x" && mv "$TMPROOT/falsena/x" "$TMPROOT/falsena/labels/$R4.txt"
+r="$(report "$TMPROOT/falsena" 2>&1)"
+has "$r" "| change-line | fields/1 | 4 | 1 | not yet checked | 0 | 0 | 1 | 0 |"
+has "$r" "- change-line, false n/a, b4000000 ($R4): the label says pass"
+it "R5: every text the report takes from a row, a label, a vote or a transcript is redacted"
+# leak: the address or the token put into each such text of a copy, and the labels' hashes made to match again
+copy leak; python3 - "$TMPROOT/leak" "$EMAIL" "$TOKEN" <<'PY2'
+import glob, hashlib, json, os, sys
+d, email, token = sys.argv[1:]
+def edit(path, fn):
+    out = []
+    for raw in open(path).read().splitlines():
+        o = json.loads(raw); fn(o); out.append(json.dumps(o, separators=(",", ":")))
+    open(path, "w").write("\n".join(out) + "\n")
+def blocks(o):
+    c = o["message"]["content"]
+    return c if isinstance(c, list) else []
+def a1(o):  # the cited Write's content and result; a shell command after the code
+    for b in blocks(o):
+        if b.get("id") == "c1":
+            b["input"]["content"] = "# for " + email + "\n" + b["input"]["content"]
+        if b.get("tool_use_id") == "c1":
+            b["content"] = "File created successfully, and " + email + " was told"
+def b4(o):  # the cited Edit's new text; the result of a shell command before it
+    for b in blocks(o):
+        if b.get("id") == "c1":
+            b["input"]["new_string"] += "  # " + email
+        if b.get("tool_use_id") == "r1":
+            b["content"] += ", mailed to " + email
+def c5(o):  # the cited call made a shell command
+    for b in blocks(o):
+        if b.get("id") == "c1":
+            b["name"], b["input"] = "Bash", {"command": "curl -H 'Authorization: Bearer " + token + "' https://x.example.org > greet.py"}
+t = lambda s: os.path.join(d, "projects", "made-up", s + "-0000-0000-0000-00000000000" + s[1] + ".jsonl")
+edit(t("a1000000"), a1); edit(t("b4000000"), b4); edit(t("c5000000"), c5)
+with open(t("a1000000"), "a") as f:
+    f.write(json.dumps({"sessionId": "a1000000-0000-0000-0000-000000000001", "type": "assistant", "cwd": "/work/made-up", "message": {
+        "role": "assistant", "content": [{"type": "tool_use", "id": "z9", "name": "Bash", "input": {"command": "echo after-the-code"}}]}}) + "\n")
+for p in glob.glob(os.path.join(d, "scores", "*.json")):
+    rows = json.load(open(p))
+    for r in rows:
+        if r["verdict"] == "fail" and r["step"] == "change-line":
+            r["evidence"]["why"] += ", written for " + email
+            r["evidence"]["source"] = "pull request by " + email
+    json.dump(rows, open(p, "w"))
+p = os.path.join(d, "judges", "b3000000-0000-0000-0000-000000000003.claude.json"); j = json.load(open(p))
+j["questions"]["decisions-alternative"]["votes"][2] = {"vote": 3, "status": "malformed", "detail": "no JSON, but " + email, "verdict": None, "reason": None}
+json.dump(j, open(p, "w"))
+for p in glob.glob(os.path.join(d, "labels", "*.txt")):
+    sid = os.path.basename(p)[:-4]; data = open(os.path.join(d, "projects", "made-up", sid + ".jsonl"), "rb").read()
+    out = []
+    for ln in open(p).read().splitlines():
+        if ln.startswith("transcript:"):
+            ln = "transcript: sha256:%s lines:%d" % (hashlib.sha256(data).hexdigest(), len(data.splitlines()))
+        if ln.startswith("red-first: pass | made up: run-tests.sh"):
+            ln += ", as " + email + " saw"
+        out.append(ln)
+    open(p, "w").write("\n".join(out) + "\n")
+PY2
+r="$(report "$TMPROOT/leak" 2>&1)"
+lacks "$r" "$EMAIL"
+lacks "$r" "$TOKEN"
+it "the leak fixture did put them where the report reads: each place shows its placeholder"
+has "$r" "    # for <redacted:email>"
+has "$r" "    File created successfully, and <redacted:email> was told"
+has "$r" "    +     return n.title()  # <redacted:email>"
+has "$r" "and ends \`done, mailed to <redacted:email>\`"
+has "$r" "    curl -H 'Authorization: Bearer <redacted:token>' https://x.example.org > greet.py"
+has "$r" "says fail: the PR description opens with 'Summary', written for <redacted:email>"
+has "$r" "source pull request by <redacted:email>."
+has "$r" "edited, as <redacted:email> saw); the grader says fail"
+has "$r" "edited, as <redacted:email> saw): this fail is a known false fail."
+has "$r" "5 sessions are counted"
+it "R5: a vote that was not counted is shown as not counted, with why"
+has "$r" "- vote 3, not counted (malformed): no JSON, but <redacted:email>"
+it "R5: only the shell commands before the cited call are listed"
+lacks "$r" "after-the-code"
 it "with no session judged by both, the report says the agreement check has not run yet"
-NOAG="$TMPROOT/noag"; cp -r "$RFIX" "$NOAG" 2>/dev/null || mkdir -p "$NOAG"; rm -f "$NOAG"/judges/*.opencode.json
-has "$(cd "$TMPROOT" && "$T" report "$NOAG" 2>&1)" "The agreement check has not run yet"
+copy noag; rm -f "$TMPROOT"/noag/judges/*.opencode.json
+has "$(report "$TMPROOT/noag" 2>&1)" "The agreement check has not run yet"
 it "a pair judged on two different records is not compared"
-OTH="$TMPROOT/other"; cp -r "$RFIX" "$OTH" 2>/dev/null || mkdir -p "$OTH"
-python3 -c 'import json,sys; p=sys.argv[1]; j=json.load(open(p)); j["record_sha256"]="cd"*32; json.dump(j,open(p,"w"))' "$OTH/judges/b4000000-0000-0000-0000-000000000004.opencode.json" 2>/dev/null
-has "$(cd "$TMPROOT" && "$T" report "$OTH" 2>&1)" "agree on 1 of 2 judgments (50%), over 1 sessions judged by both"
-it "a step a newer grader passed proposes no edit, whatever an older grader said"
-python3 - "$OTH/scores/a1000000-0000-0000-0000-000000000001.json" 2>/dev/null <<'PY2'
+copy other; OTH="$TMPROOT/other"
+python3 -c 'import json,sys; p=sys.argv[1]; j=json.load(open(p)); j["record_sha256"]="cd"*32; json.dump(j,open(p,"w"))' "$OTH/judges/$R4.opencode.json" 2>/dev/null
+has "$(report "$OTH" 2>&1)" "agree on 1 of 2 judgments (50%), over 1 sessions judged by both"
+it "a step a newer grader passed is no failed step, whatever an older grader said"
+python3 - "$OTH/scores/$R1.json" 2>/dev/null <<'PY2'
 import json, sys
 p = sys.argv[1]; rows = json.load(open(p))
 r = dict([x for x in rows if x["step"] == "red-first"][0], grader="fields/2", verdict="pass", graded_at="2026-11-11T00:00:00+00:00")
 json.dump(rows + [r], open(p, "w"))
 PY2
-lacks "$(cd "$TMPROOT" && "$T" report "$OTH" 2>&1)" "a1000000 (a1000000-0000-0000-0000-000000000001): no test ran before the code"
+r="$(report "$OTH" 2>&1)"
+lacks "$r" "#### red-first, a1000000"
+it "R4: each grader's error is measured on its own rows"
+has "$r" "| red-first | fields/2 | 1 | 1 | not yet checked | 0 | 1 | 0 | 0 |"
+has "$r" "| red-first | fields/1 | 4 | 1 | not yet checked | 1 | 0 | 0 | 1 |"
 it "a folder with no score rows is an error"
 mkdir -p "$TMPROOT/empty"; (cd "$TMPROOT" && "$T" report "$TMPROOT/empty" > /dev/null 2>&1); assert_eq 1 "$?"
 

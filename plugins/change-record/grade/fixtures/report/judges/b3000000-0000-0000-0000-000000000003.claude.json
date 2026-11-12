@@ -8,7 +8,27 @@
   "judged_at": "2026-11-10T21:00:00+00:00",
   "questions": {
     "decisions-alternative": {
-      "verdict": "fail"
+      "verdict": "fail",
+      "votes": [
+        {
+          "vote": 1,
+          "status": "vote",
+          "verdict": "fail",
+          "reason": "No Decision names what it rejected."
+        },
+        {
+          "vote": 2,
+          "status": "vote",
+          "verdict": "pass",
+          "reason": "One Decision rejects a config file, as jane.doe@example.org asked."
+        },
+        {
+          "vote": 3,
+          "status": "vote",
+          "verdict": "fail",
+          "reason": "The Decisions state choices only."
+        }
+      ]
     },
     "outcome-real-output": {
       "verdict": "pass"

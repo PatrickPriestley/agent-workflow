@@ -1,0 +1,10 @@
+session: b4000000-0000-0000-0000-000000000004
+transcript: sha256:5bf0b8e2c3b69cab10e514814db205e7d946ec48c1e7c4d05c94c129d0acc51c lines:7
+labelled-by: A Labeller, 2026-11-11
+tier-declared: pass | made up: tier 1
+probe-before-record: na | made up: nothing to judge
+record-before-code: na | made up: nothing to judge
+red-first: pass | made up: run-tests.sh printed a failed test before greet.py was edited
+change-line: na | made up: nothing to judge
+record-check: na | made up: nothing to judge
+outcome-filled: na | made up: nothing to judge

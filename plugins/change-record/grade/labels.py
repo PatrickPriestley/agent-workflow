@@ -141,11 +141,12 @@ def compare(labels, here):
 
     labels: {sessionId: label}. here: {sessionId: {"sha256", "lines", "rows"}} for each session
     with a transcript: its hash and line count now, and its score rows (None if never graded).
-    Returns counts {step: {labelled, agree, false_fail, false_pass, false_na}}, disagreements
+    Returns counts {step: {labelled, agree, false_fail, false_pass, false_na, both_na}} (both_na: the
+    agreements where label and grader both say not applicable), disagreements
     [{step, kind, session, label, reason, grader, why}], not_counted [(session, step or None,
     why)] and sessions, the ids with at least one step counted.
     """
-    counts = {s: dict(labelled=0, agree=0, false_fail=0, false_pass=0, false_na=0) for s in fields.STEPS}
+    counts = {s: dict(labelled=0, agree=0, false_fail=0, false_pass=0, false_na=0, both_na=0) for s in fields.STEPS}
     disagreements, not_counted, counted = [], [], []
     for sid in sorted(set(labels) | set(here)):
         label, now = labels.get(sid), here.get(sid)
@@ -178,6 +179,7 @@ def compare(labels, here):
                     got = row.get("verdict")
                     kind = "agree" if got == verdict else "false_fail" if got == FAIL else "false_pass" if got == PASS else "false_na"
                     counts[s][kind] += 1
+                    counts[s]["both_na"] += got == verdict == NA
                     if kind != "agree":
                         disagreements.append({"step": s, "kind": kind, "session": sid, "label": verdict, "reason": reason,
                                               "grader": got, "why": ev.get("why") or ""})

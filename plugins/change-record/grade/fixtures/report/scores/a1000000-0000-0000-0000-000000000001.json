@@ -19,6 +19,16 @@
     "skill_blob": "1111111111111111111111111111111111111111",
     "grader": "fields/1",
     "evidence": {
+      "record": "docs/changes/2026-11-08-shout.md",
+      "test_runs_before_code": 0,
+      "denied_test_runs": 1,
+      "failing_runs": [],
+      "first_code_write": {
+        "call": "c1",
+        "files": [
+          "greet.py"
+        ]
+      },
       "why": "no test ran before the code"
     },
     "graded_at": "2026-11-10T20:00:00+00:00"

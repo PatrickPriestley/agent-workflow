@@ -1,0 +1,10 @@
+session: a1000000-0000-0000-0000-000000000001
+transcript: sha256:ea8ec1d822370c6cfdbb596a2cf55f5181116d145567dc3d9687b1e6c55bd506 lines:9
+labelled-by: A Labeller, 2026-11-11
+tier-declared: fail | made up: the record's frontmatter holds no tier
+probe-before-record: na | made up: nothing to judge
+record-before-code: na | made up: nothing to judge
+red-first: fail | made up: the only test run before greet.py was never answered
+change-line: pass | made up: the description opens with the Change: line
+record-check: na | made up: nothing to judge
+outcome-filled: na | made up: nothing to judge
