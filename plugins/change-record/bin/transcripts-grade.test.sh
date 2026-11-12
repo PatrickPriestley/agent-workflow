@@ -114,6 +114,9 @@ EOF
   git commit -qam "feat: shout"
   mine_record 2026-11-10-mine done "Shipped; output pasted." > docs/changes/2026-11-10-mine.md
   mine_record 2026-11-10-open open "" > docs/changes/2026-11-10-open.md
+  # two open records whose task is ticked [x], one with an empty Outcome and one filled (record 2026-11-12-grader-fixes)
+  mine_record 2026-11-10-ticked open "" | sed 's/^1\. x$/- [x] x/' > docs/changes/2026-11-10-ticked.md
+  mine_record 2026-11-10-ticked-filled open "Shipped; output pasted." | sed 's/^1\. x$/- [x] x/' > docs/changes/2026-11-10-ticked-filled.md
   git add -A && git commit -qm "docs(change): mine"
 )
 A="$(git -C "$REPO" rev-parse HEAD~2)"; B="$(git -C "$REPO" rev-parse HEAD~1)"; C="$(git -C "$REPO" rev-parse HEAD)"
@@ -422,6 +425,223 @@ it "a tier 0 session declares it, and red-first does not apply to it"
 assert_eq "pass not_applicable" "$(v 22222222-0000-0000-0000-000000000004 tier-declared) $(v 22222222-0000-0000-0000-000000000004 red-first)"
 it "a session whose written and named records disagree is tied to neither"
 has "$(ev 22222222-0000-0000-0000-000000000005 record-check)" '"record": null'
+
+echo "Rulings (record 2026-11-12-grader-fixes): what a probe is"
+R=55555555-0000-0000-0000-0000000000
+# probecase ID COMMAND RESULT: a session that ran one command and then wrote its record
+probecase() { mkcase "$1" <<EOF
+["call","p1","Bash",{"command":$2}]
+["result","p1",$3,false,"a"]
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+EOF
+}
+probecase ${R}01 '"cat docs/changes/TEMPLATE.md | head -30; python3 --version"' '"Python 3.13.1"'
+probecase ${R}02 '"git --version && node -V"' '"git version 2.43.0"'
+probecase ${R}03 '"git checkout -q -b shout; python3 -m unittest discover -s tests -t . 2>&1 | tail -3"' '"Ran 1 test in 0.000s\n\nOK"'
+probecase ${R}04 '"ls -la /srv/audit 2>&1 | head; echo \"AUDIT_LOG=$AUDIT_LOG\""' '"ls: cannot access /srv/audit: No such file or directory\nAUDIT_LOG="'
+probecase ${R}05 '"printenv AUDIT_LOG"' '""'
+probecase ${R}06 '"test -d /srv/audit && echo there"' '""'
+probecase ${R}07 '"ls -la; cat greet.py; ls '"$REPO"'/tests; cat /srv/audit/log | head; env LC_ALL=C sort greet.py"' '"greet.py"'
+probecase ${R}08 '"OUT=/srv/x; echo $OUT; echo \"exit $?\"; echo $HOME $PWD; export LOG_DIR=/srv/y && echo $LOG_DIR"' '"/srv/x"'
+probecase ${R}09 '"ls /tmp/scratch ~/.claude/plugins/cache/change-record/skills/change/references /opt/plugins/change-record"' '"probing.md"'
+probecase ${R}10 '"git worktree --help | head -20"' '"usage: git worktree add"'
+probecase ${R}11 '"env"' '"AUDIT_LOG=/srv/audit/log"'
+probecase ${R}12 '"echo \"AUDIT_LOG=$AUDIT_LOG\""' '"AUDIT_LOG="'
+out="$(grade)"
+it "--version alone is no probe, after an interpreter or any other command"
+assert_eq "fail fail" "$(v ${R}01 probe-before-record) $(v ${R}02 probe-before-record)"
+it "a run of the existing tests before the record is a probe"
+assert_eq pass "$(v ${R}03 probe-before-record)"
+it "a look at the environment is a probe: a path outside the working tree, a variable, printenv, test -d, env"
+assert_eq "pass pass pass pass pass" "$(v ${R}04 probe-before-record) $(v ${R}05 probe-before-record) $(v ${R}06 probe-before-record) $(v ${R}11 probe-before-record) $(v ${R}12 probe-before-record)"
+it "listing or reading files is no probe, in the working tree or out of it"
+assert_eq fail "$(v ${R}07 probe-before-record)"
+it "a variable the command set itself, the exit status and the shell's own variables are no look at the environment"
+assert_eq fail "$(v ${R}08 probe-before-record)"
+it "a temporary folder and a plugin's or skill's own folder are not the environment"
+assert_eq fail "$(v ${R}09 probe-before-record)"
+it "a path counts only when it is absolute and outside the working tree (the suite's own tree is in a temporary folder, so asked directly)"
+look() { PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import fields; print(fields.environment_look(sys.argv[4:], sys.argv[2], sys.argv[3]))' "$here/../grade" "$@"; }
+assert_eq "True False False False False" "$(look /work/repo /work/repo ls /srv/audit) $(look /work/repo /work/repo ls /work/repo/tests) $(look /work/repo /work/repo ls /work/repo) $(look /work/repo /work/repo ls tests) $(look /srv /work/repo ls audit)"
+it "--help is still a probe"
+assert_eq pass "$(v ${R}10 probe-before-record)"
+it "the rows carry the new grader's name"
+has "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["grader"])' "$AR/scores/${R}01.json")" "fields/2"
+
+echo "Rulings: a shell write the shell refused did not happen"
+GONE=docs/changes/2026-11-10-refused.md
+mkcase ${R}20 <<EOF
+["call","w1","Bash",{"command":"git checkout -q -b names; cat > $GONE <<'EOF2'\n---\nid: x\nEOF2"}]
+["result","w1","Exit code 1\nfatal: Unable to create '$REPO/.git/index.lock': Read-only file system\n/bin/bash: line 33: $GONE: Read-only file system",true,"b"]
+EOF
+mkcase ${R}21 <<EOF
+["call","w1","Bash",{"command":"echo 'X = 1' > greet.py | cat"}]
+["result","w1","/bin/bash: line 1: greet.py: Permission denied",false,"a"]
+EOF
+mkcase ${R}22 <<EOF
+["call","w1","Bash",{"command":"echo 'X = 1' >> greet.py && cat /srv/audit/greet.py"}]
+["result","w1","Exit code 1\ncat: /srv/audit/greet.py: No such file or directory",true,"b"]
+EOF
+mkcase ${R}23 <<EOF
+["call","w1","Bash",{"command":"cp /tmp/new_greet.py greet.py"}]
+["result","w1","Exit code 1\ncp: cannot create regular file 'greet.py': Permission denied",true,"b"]
+EOF
+mkcase ${R}24 <<EOF
+["call","w1","Bash",{"command":"echo 'X = 1' > greet.py"}]
+["result","w1","zsh: read-only file system: greet.py",true,"b"]
+EOF
+mkcase ${R}25 <<EOF
+["call","w1","Bash",{"command":"ls greet.py; echo 'X = 1' > greet.py"}]
+["result","w1","ls: cannot access 'greet.py': No such file or directory",false,"a"]
+EOF
+mkcase ${R}26 <<EOF
+["call","w1","Bash",{"command":"echo 'X = 1' >> greet.py && cp /srv/audit/greet.py /tmp/x.py"}]
+["result","w1","Exit code 1\ncp: cannot stat '/srv/audit/greet.py': No such file or directory",true,"b"]
+EOF
+out="$(grade --session ${R}20 --session ${R}21 --session ${R}22 --session ${R}23 --session ${R}24 --session ${R}25 --session ${R}26)"
+it "a record whose redirect was refused (Read-only file system) was not written: the session has no record"
+has "$(ev ${R}20 record-check)" '"record": null'
+assert_eq "not_applicable not_applicable" "$(v ${R}20 probe-before-record) $(v ${R}20 tier-declared)"
+it "a refused code write is no code, flagged or not"
+assert_eq not_applicable "$(v ${R}21 tier-declared)"
+it "a write in a command that failed later still counts, though another path of that name was refused"
+assert_eq fail "$(v ${R}22 tier-declared)"
+it "a write the writing command (cp) or zsh refused is no code either"
+assert_eq "not_applicable not_applicable" "$(v ${R}23 tier-declared) $(v ${R}24 tier-declared)"
+it "a line from a command that only looked (ls: No such file) refuses nothing: the write after it counts"
+assert_eq fail "$(v ${R}25 tier-declared)"
+it "a writing command's complaint about a longer path that ends the same way refuses nothing"
+assert_eq fail "$(v ${R}26 tier-declared)"
+
+echo "Rulings: where the description in a last message starts"
+# lastcase ID TEXT: a session that wrote its record and ended on this message
+lastcase() { mkcase "$1" <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["text",$2]
+EOF
+}
+lastcase ${R}30 '"The flag is in.\n\nHere is the pull request description I would open:\n\n---\n\n**Add --shout to greet.py**\n\nIt prints the greeting in upper case.\n\n- one\n- two\n\nChange: '"$REC"'\n\nTests pass.\n\n---\n"'
+lastcase ${R}31 '"Built, not committed.\n\nTo finish, run:\n```\ngit add -A && git commit -m \"greet: add --names-file\n\nChange: '"$REC"'\n\nMore.\"\n```\n"'
+lastcase ${R}32 '"Done.\n\n## Pull request description (approval PR, record only)\n\n---\n\n**Title:** docs(change): agree the design\n\nChange: '"$REC"'\n\nBody.\n"'
+lastcase ${R}33 '"Done.\n\n**Pull request description I would open**\n\n```\nChange: '"$REC"'\n\nBody.\n```\n"'
+lastcase ${R}34 '"Change: '"$REC"'\n\nAdds the flag.\n"'
+lastcase ${R}35 '"Done.\n\n---\n\n## Pull request description\n\n**Change: '"$REC"'**\n\nBody.\n"'
+lastcase ${R}36 '"Done.\n\nPR body:\n\nSummary of the work.\n\nChange : '"$REC"'\n"'
+out="$(grade)"
+it "a description that opens with a title and a paragraph, the Change: line further down, fails"
+assert_eq fail "$(v ${R}30 change-line)"
+has "$(ev ${R}30 change-line)" "does not open with the Change: line"
+it "a Change: line in a suggested commit message, with no description named, does not apply"
+assert_eq not_applicable "$(v ${R}31 change-line)"
+it "after the line that names the description, a Title: line, a rule or a code fence may come first"
+assert_eq "pass pass pass" "$(v ${R}32 change-line) $(v ${R}33 change-line) $(v ${R}35 change-line)"
+it "a last message that opens with the Change: line passes"
+assert_eq pass "$(v ${R}34 change-line)"
+it "a named description whose only Change: line is malformed and not at its opening fails"
+assert_eq fail "$(v ${R}36 change-line)"
+
+echo "Rulings: ticked tasks count as done; a missing commit is no verdict"
+mkcase ${R}40 <<EOF
+["call","w1","Write",{"file_path":"$REPO/docs/changes/2026-11-10-ticked.md","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+EOF
+mkcase ${R}41 <<EOF
+["call","w1","Write",{"file_path":"$REPO/docs/changes/2026-11-10-ticked-filled.md","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+EOF
+mkcase ${R}42 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+EOF
+setstops ${R}42 "" ""
+out="$(grade --session ${R}40 --session ${R}41 --session ${R}42)"
+it "an open record with a task ticked [x] and an empty Outcome fails outcome-filled"
+assert_eq fail "$(v ${R}40 outcome-filled)"
+it "an open record with a task ticked [x] and its Outcome filled passes"
+assert_eq pass "$(v ${R}41 outcome-filled)"
+it "with no commit for the session, outcome-filled and record-check say so as an error, like tier-declared"
+has "$(ev ${R}42 outcome-filled)" '"error": "no commit recorded for the session"'
+has "$(ev ${R}42 record-check)" '"error": "no commit recorded for the session"'
+has "$(ev ${R}42 tier-declared)" '"error": "no commit recorded for the session"'
+it "a transcript graded on its own (no commit at all) carries the error on all three"
+out="$("$T" grade --transcript "$W/${R}42.jsonl" --cwd "$REPO" 2>&1)"
+assert_eq 3 "$(printf '%s' "$out" | python3 -c 'import json,sys; print(sum(1 for r in map(json.loads, sys.stdin) if r["step"] in ("tier-declared","record-check","outcome-filled") and r["evidence"].get("error") == "no commit for the session"))' 2>&1)"
+
+echo "Found on the store sessions: a file written from an inline Python script, and a session with several records"
+mkcase ${R}50 <<EOF
+["call","w1","Bash",{"command":"python3 - <<'PY'\np='$REC'\ns=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nPY"}]
+["result","w1","",false,"a"]
+["call","c1","Write",{"file_path":"$REPO/greet.py","content":"x"}]
+["result","c1","ok",false,"a"]
+EOF
+mkcase ${R}51 <<EOF
+["call","w1","Bash",{"command":"cat > /tmp/patch.py <<'PY'\nopen('greet.py','w').write('x')\nPY\necho python && cat > notes.txt <<'PY'\nopen('greet.py','w')\nPY"}]
+["result","w1","",false,"a"]
+["call","w2","Bash",{"command":"python3 - <<'PY'\ns=open('greet.py').read()\nprint(len(s))\nPY"}]
+["result","w2","12",false,"a"]
+EOF
+mkcase ${R}52 <<EOF
+["call","w1","Bash",{"command":"python3 -c \"open('greet.py','w').write('x')\""}]
+["result","w1","",false,"a"]
+EOF
+mkcase ${R}53 <<EOF
+["call","w1","Bash",{"command":"python3 - <<'PY'\nfrom pathlib import Path\nPath('greet.py').write_text('x')\nPY"}]
+["result","w1","",false,"a"]
+EOF
+mkcase ${R}54 <<EOF
+["call","w1","Bash",{"command":"python3 - <<'PY'\np='greet.py'\ns=open(p).read()\nassert 'zzz' in s\nopen(p,'w').write(s)\nPY"}]
+["result","w1","Exit code 1\nTraceback (most recent call last):\nAssertionError",true,"b"]
+EOF
+mkcase ${R}55 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","w2","Write",{"file_path":"$REPO/docs/changes/2026-11-10-open.md","content":"x"}]
+["result","w2","File created successfully",false,"a"]
+["call","c1","Write",{"file_path":"$REPO/greet.py","content":"x"}]
+["result","c1","ok",false,"a"]
+["text","Both are in. The first was a typo fix, which the skill would call \`Tier: 0\`."]
+EOF
+out="$(grade --session ${R}50 --session ${R}51 --session ${R}52 --session ${R}53 --session ${R}54 --session ${R}55)"
+it "a record rewritten by an inline Python script (open(p, 'w')) is the session's record, written before its code"
+has "$(ev ${R}50 record-check)" "\"record\": \"$REC\""
+assert_eq "pass pass" "$(v ${R}50 tier-declared) $(v ${R}50 record-before-code)"
+it "a script only saved to a file, and one that only reads, write nothing"
+assert_eq not_applicable "$(v ${R}51 tier-declared)"
+it "python -c with open(..., 'w'), and Path(...).write_text, write code"
+assert_eq "fail fail" "$(v ${R}52 tier-declared) $(v ${R}53 tier-declared)"
+it "an inline script that failed is not counted as having written"
+assert_eq not_applicable "$(v ${R}54 tier-declared)"
+it "a session that wrote two records is tied to neither, and says so as an error: no verdict on the record's steps"
+has "$(ev ${R}55 tier-declared)" '"error": "the session wrote or named 2 records; the graders tie a session to one"'
+assert_eq "not_applicable not_applicable not_applicable" "$(v ${R}55 tier-declared) $(v ${R}55 record-check) $(v ${R}55 outcome-filled)"
+has "$(ev ${R}55 outcome-filled)" '"error": "the session wrote or named 2 records'
+has "$(ev ${R}55 change-line)" '"error": "the session wrote or named 2 records'
+has "$(ev ${R}55 probe-before-record)" '"error": "the session wrote or named 2 records'
+it "and its red-first is still graded: a Tier: 0 said in passing exempts no session that has records"
+assert_eq fail "$(v ${R}55 red-first)"
+
+echo "Rulings: the fixture sessions the first measurement got wrong"
+out="$("$T" accuracy --transcript "$FIX"/*.jsonl.gz "$FIX"/evals/*.jsonl.gz 2>&1)"
+it "probe-before-record and change-line agree with every label"
+has "$out" "| probe-before-record | 15 | 15 | 0 | 0 | 0 |"
+has "$out" "| change-line | 15 | 15 | 0 | 0 | 0 |"
+it "outcome-filled without a commit is listed as not graded, not as a false n/a"
+lacks "$out" "outcome-filled, false n/a"
+has "$out" "outcome-filled: the grader could not grade it (no commit for the session)"
+
+echo "Rulings: the sheet's questions say what the owner ruled"
+rm -rf "$TMPROOT/sheet-r"; "$T" sheet --transcript "$W/$D2.jsonl" --out "$TMPROOT/sheet-r/out" --labels "$TMPROOT/sheet-r/labels" > /dev/null 2>&1
+sheet="$(cat "$TMPROOT/sheet-r/out/$D2.md" 2>&1)"
+it "tier-declared is na only when the session also does not say Tier: 0"
+has "$sheet" 'Label it `na` when the session wrote no record and no code and does not say `Tier: 0`.'
+it "the probe question names a look at the environment and a run of the existing tests, and rules out --version and reading files"
+has "$sheet" 'a look at the real environment, a run of the existing tests'
+has "$sheet" '`--version` alone, and listing or reading files, do not count'
+it "the change-line question allows bold, and outcome-filled counts ticked tasks"
+has "$sheet" 'bold or not'
+has "$sheet" 'ticked `[x]`'
 
 echo "Error paths: a transcript grade cannot parse, a record missing at the last commit"
 mkcase 33333333-0000-0000-0000-000000000001 <<EOF

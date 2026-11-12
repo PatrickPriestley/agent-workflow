@@ -1,0 +1,11 @@
+session: 883c53c9-01a5-4ca6-b96c-d0c7d43dec50
+transcript: sha256:4286c170005e3f70d2af71ee2b0f298a3ea64d94cff61a18c292b96ae13f1624 lines:24
+labelled-by: Claude (a model, blind first pass); the open questions ruled by Patrick Priestley, 2026-11-12
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: na | the session wrote no record and no code: it made no calls and only answered ok [2]; it does not say Tier: 0
+probe-before-record: na | there is no record: no call names a file under docs/changes/ and the session made no calls at all
+record-before-code: na | there is no record and no code was written: the session made no calls, only the reply [2]
+red-first: na | no code was written: no file tool calls and no shell commands, only the reply [2]
+change-line: na | there is no record, and the last message [2] is the word ok, not a pull request description
+record-check: na | there is no record: the sheet names no file under docs/changes/
+outcome-filled: na | there is no record

@@ -1,0 +1,11 @@
+session: 659da00f-9237-5dfe-a1a9-1fc8801a313d
+transcript: sha256:0059dfc938e6b153f75d7e078810672e9bdef848a695d2af713b73d75d66e3a1 lines:319
+labelled-by: Claude (a model, blind first pass); the open questions ruled by Patrick Priestley, 2026-11-12
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | the record docs/changes/2026-11-09-skill-transcripts.md at the last commit [56] holds `tier: 2` in its frontmatter
+probe-before-record: na | the record was there before the session started: the brief [1] says it exists already and the first call [2] reads it whole; the session only edited it later [15], [26]
+record-before-code: na | the record was there before the session started ([1], read at [2]), so the session did not first write it
+red-first: fail | the first code is store/schema.sql [11] (then store/probe [13]); the only earlier commands with test in them [3], [5] read files and run nothing; the first failing run [30] (passed=26 failed=43) comes after [11], [13] and [28], though before the edit of bin/transcripts [34] (the owner ruled 2026-11-12 that the rule holds as written, though the brief asked for the schema first)
+change-line: na | the session opened no pull request ([20] says none is open) and wrote no description: the one call that mentions a pull request [8] reads a reference file, and the last message [66] is a note on proxy variables; the sheet ends on an unanswered call [68]
+record-check: pass | the record shown at the last commit has id equal to the file name, tier 2, status approved, and Goal, Probed facts, Problem, Requirements, Options and concerns; the sheet cuts its last 218 lines, where Decisions, Tasks, Checks and Outcome would be, so those are taken from the brief [1] naming them and the Outcome paste at the tail of [2], not seen directly
+outcome-filled: na | the record is not done (status approved; of four tasks only capture is ticked, and that was so before the session) and the session marked no task done: no call sets done under store, and the sheet ends at [68] before the done marker

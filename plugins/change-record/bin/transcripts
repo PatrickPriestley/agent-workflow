@@ -954,7 +954,7 @@ def cmd_materialize(args):
 
 # ---- grading ----
 
-GRADER = "fields/1"  # bump when a grader's rules change, so scores from two rule sets are not mixed
+GRADER = "fields/2"  # bump when a grader's rules change, so scores from two rule sets are not mixed
 
 
 def git_run(repo, *args):

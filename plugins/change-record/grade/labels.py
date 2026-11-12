@@ -219,9 +219,10 @@ def table(res, n_here, n_labels):
 QUESTIONS = [  # (step, the question, when it does not apply, which pointers help)
     ("tier-declared", "Did the session declare a tier? Yes if its record's frontmatter holds tier 0, 1 or 2, or, with no "
      "record, if its own text or pull request description says `Tier: 0`.",
-     "the session wrote no record and no code", ("tier", "records")),
+     "the session wrote no record and no code and does not say `Tier: 0`", ("tier", "records")),
     ("probe-before-record", "Before it first wrote its record, did the session try out what the change depends on: "
-     "inline code, a module, a scratch script, `--help`, a request to another system?",
+     "inline code, a module, a scratch script, `--help`, a request to another system, a look at the real environment, "
+     "a run of the existing tests? `--version` alone, and listing or reading files, do not count.",
      "there is no record, the session did not write it, or it was there before the session started", ("records", "shell")),
     ("record-before-code", "Was the record first written before the first code? Code is any file in the working tree "
      "outside docs/, documentation, tests, fixtures and backups.",
@@ -231,12 +232,14 @@ QUESTIONS = [  # (step, the question, when it does not apply, which pointers hel
      "was denied, refused or never answered did not run; a run that stopped on a syntax or import error is no failed test.",
      "no code was written, or the change is tier 0", ("tests", "writes")),
     ("change-line", "Does the pull request description the session opened or wrote (else the description in its last "
-     "message) open with `Change: <the record's path>`, alone on its line?",
+     "message) open with `Change: <the record's path>`, alone on its line, bold or not? In a last message the "
+     "description starts at the line that names it, and a `Title:` line may come before the `Change:` line.",
      "there is no record, or nothing the session opened or wrote is a pull request description", ("pr", "last")),
     ("record-check", "Does the record, as it stood at the session's last commit, hold what `record-check` asks of its "
      "tier: the frontmatter fields and every section?",
      "there is no record, or the record at the last commit is not shown below", ("records",)),
-    ("outcome-filled", "If the record is done, or the session marked a task done, does its Outcome hold anything?",
+    ("outcome-filled", "If the record is done, or the session marked a task done (`done: true` in the frontmatter, or "
+     "an item ticked `[x]` under Tasks), does its Outcome hold anything?",
      "there is no record, it cannot be read, or it is not done and no task was marked done", ("records",)),
 ]
 QUIET = ("Read", "Glob", "Grep", "LS", "TodoWrite", "TodoRead", "ToolSearch", "TaskCreate", "TaskUpdate", "TaskList")

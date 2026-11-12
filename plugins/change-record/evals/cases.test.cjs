@@ -316,7 +316,8 @@ test('R9: probe-before-record gives probed-before-record\'s verdicts on its fixt
     pairs.push([`probe ${i} first`,cs.join('')+R,cs.map(c=>ok(c)).join('')+r]);
     pairs.push([`probe ${i} after`,R+cs.join(''),r+cs.map(c=>ok(c)).join('')]);
   });
-  agree(pairs,'probe-before-record',re,{'probe 7 first':['pass','a scratch script that is run is a probe; which dependency it probes is for the reader, since no field grader knows the change\'s']});
+  agree(pairs,'probe-before-record',re,{'probe 7 first':['pass','a scratch script that is run is a probe; which dependency it probes is for the reader, since no field grader knows the change\'s'],
+    'probe 5 first':['pass','a run of the tests before the record is a probe by the owner\'s ruling of 2026-11-12 (record 2026-11-12-grader-fixes); the eval grader asks for a probe of fileinput itself']});
 });
 test('R9: tier-declared reads Tier: 0 as declares-tier-0 does',()=>{
   const re=grader('tier-0-no-record','declares-tier-0.md').re;

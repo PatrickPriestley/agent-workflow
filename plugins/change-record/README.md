@@ -245,14 +245,15 @@ verdict per step, pass, fail or not applicable, with its evidence:
 | Step | Passes when |
 |---|---|
 | `tier-declared` | the record at the session's last commit has tier 0, 1 or 2, or, with no record, the session declares `Tier: 0` (it fails when code was written with neither) |
-| `probe-before-record` | a probe (inline code, a module, a scratch script, `--help`, a request to another system) ran before the session first wrote its record |
+| `probe-before-record` | a probe (inline code, a module, a scratch script, `--help`, a request to another system, a run of the tests, a look at the real environment) ran before the session first wrote its record |
 | `record-before-code` | the record was written before the first code |
 | `red-first` | a test run, before the first code, ran and reported a failed test |
-| `change-line` | the pull request it opened, or the description it wrote, opens with `Change: <record>` |
+| `change-line` | the pull request it opened, or the description in its last message, opens with `Change: <record>`, bold or not |
 | `record-check` | `record-check` passes on the session's first to last commit |
-| `outcome-filled` | a record that is done, or a task the session marked done, has an Outcome |
+| `outcome-filled` | a record that is done, or a task the session marked done (`done: true`, or `[x]` under Tasks), has an Outcome |
 
 A call counts only when its own result shows it ran: a denied, refused or unanswered call did
+nothing, and a shell write the shell refused (a read-only file system, a permission) wrote
 nothing. A failure counts from the error flag or from the result's text. Code is any file in
 the session's working tree outside `docs/`, documentation, tests, fixtures and backups. The
 record is the one the session wrote and named, from its own acts, never from a prompt. Steps a
@@ -262,6 +263,20 @@ current directory by default), which must hold the session's commits. Rows go to
 `<DIR>/scores/<sessionId>.json`; on your own machine `--store` also inserts them into `scores`
 with the read key. `--transcript FILE` grades one file without commits and prints the rows,
 as `evals/cases.test.cjs` does to run the eval graders' fixtures through the same code.
+
+The rules above are the owner's rulings of 2026-11-12 (record
+`docs/changes/2026-11-12-grader-fixes.md`), and the graders that follow them are `fields/2`;
+rows of `fields/1` are kept apart in the report. Where a rule needs a line drawn: `--version`
+alone is no probe, and listing or reading files is none. A look at the environment is
+`printenv`, `env` alone, `echo` of a variable in capitals the command did not set itself, or
+`ls`, `stat`, `test`, `find` and the like on an absolute path outside the working tree,
+temporary folders and a plugin's or skill's own folder. In a last message the description
+starts at the line that names it (a heading, a bold line or a line ending in a colon that says
+pull request or PR, and description or body); only blank lines, a rule, a code fence and a
+`Title:` line may stand before the `Change:` line. A message that names no description and
+does not open with the line is not applicable. `tier-declared`, `record-check` and
+`outcome-filled` need the session's last commit; without it the row is not applicable with an
+`error`, which `accuracy` and the report list as "could not grade" and count nowhere.
 
 **The judge.** Two steps no regex settles are judged by a model, after `grade`: whether the
 record's Decisions name a rejected alternative (`decisions-alternative`) and whether its

@@ -18,6 +18,15 @@ Rules every grader shares:
     text alone (a run piped through `tail` exits 0).
   * Code is any file under the session's working tree except docs/, *.md and the like, test
     files and folders, and backups; a file outside the tree is not code.
+  * A shell write the shell refused (a read-only file system, a permission) did not happen. A
+    file an inline Python script opened for writing was written, if the script did not fail.
+  * A session that wrote or named several records is tied to none: its record steps are not
+    applicable with an `error`.
+  * A step that needs the session's commit, where there is none, is not applicable with an
+    `error` in its evidence: no verdict, and counted nowhere.
+
+The owner's rulings of 2026-11-12 (records 2026-11-11-grading-trust and 2026-11-12-grader-fixes)
+set what a probe is, where a description starts and what counts as a task marked done.
 """
 import json
 import os
@@ -269,6 +278,31 @@ def shell_writes(cmd, base):
     return [(p, b) for p, b in out if not unexpanded(p)]
 
 
+INLINE_PY = re.compile(r"^[^\n]*\bpython[\d.]*(?=\s)[^\n;|&]*<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n\s*\2\s*(?:\n|$)", re.M | re.S)
+
+
+def inline_writes(cmd):
+    """The files an inline Python script opens for writing: python - <<EOF or python -c, with
+    open(X, 'w'|'a'|'x') or X.write_text(, where X is a string or a name set to one in the
+    script. A script only saved to a file is not run, and writes nothing."""
+    bodies = [m.group(3) for m in INLINE_PY.finditer(cmd)]
+    for argv, _ in simple_commands(cmd):
+        argv = unwrap(argv)
+        if argv and re.fullmatch(r"python[\d.]*", os.path.basename(argv[0])) and "-c" in argv[1:-1]:
+            bodies.append(argv[argv.index("-c") + 1])
+    out = []
+    for body in bodies:
+        names = dict(re.findall(r"^\s*([A-Za-z_]\w*)\s*=\s*['\"]([^'\"\n]+)['\"]\s*$", body, re.M))
+        targets = re.findall(r"\bopen\(\s*([^,()]+?)\s*,\s*['\"][wax]", body)
+        targets += re.findall(r"([A-Za-z_]\w*|['\"][^'\"\n]+['\"])\)?\.write_text\(", body)
+        for t in (t.strip() for t in targets):
+            if t[:1] in "'\"" and t[-1:] == t[:1]:
+                out.append(t[1:-1])
+            elif t in names:
+                out.append(names[t])
+    return out
+
+
 INTERPRETERS = re.compile(r"^(?:python(?:\d(?:\.\d+)?)?|node|nodejs|deno|bun|ruby|perl|php)$")
 
 
@@ -304,17 +338,64 @@ TEST_FAILED = re.compile(
     r"|^--- FAIL|^FAIL\s|test result: FAILED|\b[1-9]\d* failures?\b|^\s*FAIL\b|Tests?:\s+[1-9]\d* failed", re.M)
 
 
-def probe_command(argv, base, root):
-    """A command that tries something out: an interpreter on inline code, stdin, a module or a
-    script outside the working tree's code, pydoc, --help or --version, or a request to another
-    system. Running a test suite, or the repository's own program, is not a probe."""
-    argv = unwrap(argv)
-    if not argv or is_test_command(argv):
+SHELL_VARS = {"PWD", "OLDPWD", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "LANG", "PATH", "HOSTNAME",
+              "RANDOM", "SECONDS", "LINENO", "PIPESTATUS", "IFS", "UID", "PPID", "BASH_VERSION"}
+ENV_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]+)")
+LOOKS = {"ls", "stat", "test", "[", "file", "find", "du", "df", "readlink"}
+NOT_ENVIRONMENT = {"skills", "plugins", ".claude"}  # a plugin's or skill's own folder is not what a change depends on
+TEMP = ("/tmp", "/var/tmp", "/private/tmp", "/private/var/folders", "/var/folders", "/dev", "/proc")
+
+
+def assigned_names(cmd):
+    """The variables a command sets itself: NAME=... at the start of a command, or after export."""
+    return set(re.findall(r"(?:^\s*|[;&|(]\s*|\b(?:export|local|declare|readonly)\s+)([A-Za-z_][A-Za-z0-9_]*)=",
+                          strip_heredocs(cmd), re.M))
+
+
+def environment_look(argv, base, root, assigned=()):
+    """A look at the real environment (the owner's ruling, record 2026-11-12-grader-fixes): a value
+    read from it (printenv, env alone, echo or printf of a variable in capitals the command did
+    not set itself, the shell's own left out), or a path looked at outside the working tree, a
+    temporary folder and a plugin's or skill's folder (ls, stat, test, [, file, find, du, df,
+    readlink). Reading a file there (cat, head) is not one."""
+    if not argv:
         return False
     b, rest = os.path.basename(argv[0]), argv[1:]
+    if b == "printenv" or (b == "env" and not rest):
+        return True
+    if b in ("echo", "printf"):
+        return any(n not in SHELL_VARS and n not in assigned for a in rest for n in ENV_VAR.findall(a))
+    if b in LOOKS:
+        for a in rest:
+            if a.startswith("-") or unexpanded(a) or not a.startswith(("/", "~")):
+                continue
+            path = os.path.normpath(os.path.expanduser(a))
+            if path == "/" or rel(path, base, root) is not None or path == os.path.normpath(root or "/"):
+                continue
+            if any(path == t or path.startswith(t + "/") for t in TEMP) or NOT_ENVIRONMENT & set(path.split("/")):
+                continue
+            return True
+    return False
+
+
+def probe_command(argv, base, root, assigned=()):
+    """A command that tries something out: an interpreter on inline code, stdin, a module or a
+    script outside the working tree's code, pydoc, --help, a request to another system, a run
+    of the tests, or a look at the real environment. --version alone, listing or reading files
+    and running the repository's own program are not probes."""
+    if environment_look(argv, base, root, assigned):
+        return True
+    argv = unwrap(argv)
+    if not argv:
+        return False
+    if is_test_command(argv):
+        return True
+    b, rest = os.path.basename(argv[0]), argv[1:]
+    if any(a in ("--version", "-V") for a in rest[:2]):
+        return False
     if b in ("pydoc", "pydoc3", "curl", "wget", "http", "https", "claude") or (b == "gh" and rest[:1] == ["api"]):
         return True
-    if any(a in ("--help", "-h", "--version", "-V") for a in rest[:2]):
+    if any(a in ("--help", "-h") for a in rest[:2]):
         return True
     if INTERPRETERS.match(b):
         opts = [a for a in rest if a.startswith("-")]
@@ -330,6 +411,18 @@ def probe_command(argv, base, root):
 # ---- the session's acts -------------------------------------------------------------------
 
 FILE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+REFUSAL = r"(?:read-only file system|permission denied|no such file or directory|is a directory|operation not permitted|no space left on device)"
+
+
+def refused(path, result):
+    """True when a command's result has a line in which the shell, or the command that writes
+    (tee, cp, mv, install, sed), says it could not write that path."""
+    if not path or not result:
+        return False
+    p = re.escape(path)
+    return bool(re.search(r"(?im)^(?:\S*sh|tee|cp|mv|install|g?sed)(?:: line \d+)?: (?:[^\n]*[\s'\"`\u2018])?" + p
+                          + r"['\"`\u2019]?: " + REFUSAL + r"\s*$", result)
+                or re.search(r"(?im)^\S*zsh(?::\d+)?: " + REFUSAL + ": " + p + r"\s*$", result))
 
 
 def writes(call, root):
@@ -340,7 +433,11 @@ def writes(call, root):
     if call.name in FILE_TOOLS:
         return [rel(inp.get("file_path") or inp.get("notebook_path") or "", base, root)]
     if call.name == "Bash":
-        return [rel(p, b, root) for p, b in shell_writes(str(inp.get("command") or ""), base)]
+        cmd = str(inp.get("command") or "")
+        found = [(p, b) for p, b in shell_writes(cmd, base) if not refused(p, call.result)]
+        if not call.is_error:  # a script that failed may have stopped before it wrote
+            found += [(p, base) for p in inline_writes(cmd)]
+        return [rel(p, b, root) for p, b in found]
     if call.name.startswith("mcp__") and call.name.endswith(("create_or_update_file", "push_files")):
         paths = [inp.get("path")] + [f.get("path") for f in inp.get("files") or [] if isinstance(f, dict)]
         return [p.lstrip("/") for p in paths if isinstance(p, str) and p]
@@ -410,6 +507,32 @@ def frontmatter(text):
     return fields, done
 
 
+def ticked(text):
+    """How many items under ## Tasks are ticked [x]."""
+    m = re.search(r"^## Tasks[ \t]*\n(.*?)(?=^## |\Z)", text or "", re.M | re.S)
+    return len(re.findall(r"^\s*(?:[-*+]|\d+[.)])\s+\[[xX]\]", m.group(1), re.M)) if m else 0
+
+
+DESCRIPTION = re.compile(r"(?i)\b(?:pull[- ]request|PR)\b.*\b(?:description|body)\b|\b(?:description|body)\b.*\b(?:pull[- ]request|PR)\b")
+FILLER = re.compile(r"(?i)^(?:[-*_]{3,}|`{3,}\w*|~{3,}\w*|[*_]*Title[*_]*\s*:.*)$")
+
+
+def names_description(line):
+    """True for a line of a message that names a pull request description: a heading, a bold line
+    or a line ending in a colon that says pull request (or PR) and description (or body)."""
+    s = line.strip()
+    return bool(DESCRIPTION.search(s)) and (s.startswith("#") or s.endswith(":") or re.fullmatch(r"(\*\*|__).+\1", s) is not None)
+
+
+def at_opening(lines, i):
+    """True when nothing but blank lines, rules, code fences and a Title: line stands between
+    line i and the start of the message or the line that names the description."""
+    j = i - 1
+    while j >= 0 and (not lines[j].strip() or FILLER.match(lines[j].strip())):
+        j -= 1
+    return j < 0 or names_description(lines[j])
+
+
 def outcome_lines(text):
     m = re.search(r"^## Outcome[ \t]*\n(.*?)(?=^## |\Z)", text or "", re.M | re.S)
     body = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.S) if m else ""
@@ -448,6 +571,10 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
                 named.append(m.group(1))
     record = choose_record(written, named)
     base_ev = {"record": record, "records_written": written, "records_named": named}
+    # a session that wrote or named several records is tied to none: its record steps get no verdict
+    several = len(set(written) | set(named)) if record is None else 0
+    none_why = f"the session wrote or named {several} records; the graders tie a session to one" if several > 1 else "no record"
+    none_ev = {"error": none_why} if several > 1 else {}
 
     code_calls = [c for c, ws in wrote if any(kind(w) == "code" for w in ws)]
     first_code = code_calls[0].n if code_calls else None
@@ -486,6 +613,8 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
         else:
             tier = frontmatter(last_text)[0].get("tier")
             put("tier-declared", PASS if tier in ("0", "1", "2") else FAIL, f"tier {tier or 'missing'}", tier=tier)
+    elif several > 1:
+        put("tier-declared", NA, none_why, **none_ev)
     elif tier0:
         put("tier-declared", PASS, "no record, and the session declares Tier: 0", tier="0")
     elif first_code is not None:
@@ -512,7 +641,7 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
     # probe-before-record and record-before-code: only for a record this session wrote first
     if not record:
         for s in ("probe-before-record", "record-before-code"):
-            put(s, NA, "no record")
+            put(s, NA, none_why, **none_ev)
     elif not record_writes:
         for s in ("probe-before-record", "record-before-code"):
             put(s, NA, "the session did not write the record")
@@ -521,7 +650,8 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
             put(s, NA, "the record was there when the session started")
     else:
         probes = [c for c in calls if c.n < first_record and c.ran and (
-            (c.name == "Bash" and any(probe_command(av, c.cwd or root, root) for av, _ in simple_commands(str(c.input.get("command") or ""))))
+            (c.name == "Bash" and any(probe_command(av, c.cwd or root, root, assigned_names(str(c.input.get("command") or "")))
+                                      for av, _ in simple_commands(str(c.input.get("command") or ""))))
             or c.name in ("WebFetch", "WebSearch") or c.name.startswith("mcp__"))]
         put("probe-before-record", PASS if probes else FAIL,
             f"{len(probes)} probes ran before the record was first written" if probes else "no probe ran before the record was first written",
@@ -537,7 +667,7 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
     rec_tier = frontmatter(last_text)[0].get("tier") if last_text else None
     if first_code is None:
         put("red-first", NA, "no code written")
-    elif (not record and tier0) or rec_tier == "0":
+    elif (not record and tier0 and several <= 1) or rec_tier == "0":
         put("red-first", NA, "tier 0: no test needed")
     else:
         tests = [c for c in calls if c.n < first_code and c.name == "Bash"
@@ -552,7 +682,7 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
 
     # change-line: the PR description's first line names the record
     if not record:
-        put("change-line", NA, "no record")
+        put("change-line", NA, none_why, **none_ev)
     else:
         bodies = pr_bodies(calls, root)
         want = re.compile(r"^[*_`]*Change[*_`]*:\s*[*_`]*" + re.escape(record) + r"[*_`]*\s*$")
@@ -563,21 +693,26 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
                 "the PR description opens with the Change: line" if want.match(first.strip()) else
                 f"the PR description opens with {first.strip()[:80]!r}", source="pull request")
         else:
-            last = texts[-1][1] if texts else ""
-            lines_c = [ln.strip() for ln in last.splitlines() if re.match(r"^\W*Change\W*:", ln.strip())]
-            if lines_c:
-                good = any(want.match(ln) for ln in lines_c)
-                put("change-line", PASS if good else FAIL,
-                    "the description in the last message has the Change: line on its own" if good else
-                    f"the last message's Change: line is {lines_c[0][:80]!r}", source="last message")
-            else:
+            # the description in the last message starts at the line that names it, or the message is it
+            last = (texts[-1][1] if texts else "").splitlines()
+            at = [i for i, ln in enumerate(last) if re.match(r"^\W*Change\W*:", ln.strip())]
+            opening = [i for i in at if at_opening(last, i)]
+            if not at:
                 put("change-line", NA, "the session opened no pull request and wrote no description")
+            elif any(want.match(last[i].strip()) for i in opening):
+                put("change-line", PASS, "the description in the last message has the Change: line on its own", source="last message")
+            elif opening:
+                put("change-line", FAIL, f"the last message's Change: line is {last[opening[0]].strip()[:80]!r}", source="last message")
+            elif any(names_description(ln) for ln in last):
+                put("change-line", FAIL, "the description in the last message does not open with the Change: line", source="last message")
+            else:
+                put("change-line", NA, "the last message names no pull request description; its Change: line is elsewhere")
 
     # record-check, at the session's commits
     if not record:
-        put("record-check", NA, "no record")
+        put("record-check", NA, none_why, **none_ev)
     elif record_check is None:
-        put("record-check", NA, "no commit for the session")
+        put("record-check", NA, "no commit for the session", error="no commit for the session")
     else:
         try:
             verdict, ev = record_check(record)
@@ -585,15 +720,17 @@ def grade(lines, root=None, record_at_first=None, record_at_last=None, record_ch
         except LookupError as e:
             put("record-check", NA, f"cannot run record-check: {e}", error=str(e))
 
-    # outcome-filled, when the record is done or the session marked a task done
+    # outcome-filled, when the record is done or the session marked a task done (done: true, or a [x] under Tasks)
     if not record:
-        put("outcome-filled", NA, "no record")
-    elif last_err or last_text is None:
-        put("outcome-filled", NA, f"the record cannot be read: {last_err or 'not in the last commit'}")
+        put("outcome-filled", NA, none_why, **none_ev)
+    elif last_err:
+        put("outcome-filled", NA, f"the record cannot be read: {last_err}", error=last_err)
+    elif last_text is None:
+        put("outcome-filled", NA, "the record cannot be read: not in the last commit")
     else:
         fields, done_last = frontmatter(last_text)
         done_first = frontmatter(first_text)[1] if first_text else 0
-        done = fields.get("status") == "done" or done_last > done_first
+        done = fields.get("status") == "done" or done_last > done_first or ticked(last_text) > ticked(first_text)
         if not done:
             put("outcome-filled", NA, f"the record is {fields.get('status') or 'without a status'} and no task was marked done")
         else:

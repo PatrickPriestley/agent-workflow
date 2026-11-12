@@ -1,0 +1,11 @@
+session: 6cc07e5f-8172-530e-9c9a-e23e0a49a446
+transcript: sha256:802cae39c2c040d919dd6d2acf74483f8f8d7afbd446e985871b2f6b0c191e6a lines:482
+labelled-by: Claude (a model, blind first pass); the open questions ruled by Patrick Priestley, 2026-11-12
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | the record docs/changes/2026-11-09-skill-transcripts.md, which the session worked under and edited [82][83][104][106], holds `tier: 2` in its frontmatter at the last commit
+probe-before-record: na | the record was there before the session started: the brief [1] says it exists, and the session printed and read it [2][3] before its first write to it [82]
+record-before-code: na | the record was there before the session started [1][2][3]; the session did not first write it
+red-first: pass | the test suite written at [24] was run at [25] and reported "2 passed, 51 failed" with FAIL lines on assertions (expected [pass] got [no-scores]), before the first code, grade/fields.py at [29]; record is tier 2
+change-line: pass | the pull request opened at [120] has a body whose first line is `Change: docs/changes/2026-11-09-skill-transcripts.md`, alone, followed by a blank line (same text as the body file written at [108])
+record-check: pass | frontmatter at the last commit has id matching the file name, tier 2 and status approved; all nine tier 2 sections are listed at [87]; record-check on origin/main..HEAD answered ok tier=2 at [109], after the last commit [106] (the sheet's copy of the record is cut after Options and concerns)
+outcome-filled: pass | the session marked the grade task done [106], and the Outcome holds a "Task 3: grade" part with shipped work and pasted runs, appended at [83] and extended at [104], both committed before the last commit
