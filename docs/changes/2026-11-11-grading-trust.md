@@ -1,7 +1,7 @@
 ---
 id: 2026-11-11-grading-trust
 tier: 2
-status: approved
+status: done
 requester: Patrick Priestley, in chat on 2026-11-11 ("Review the entire architecture and approach first", "Yes" to a record for the review's first three steps, and "start the grading trust in parallel")
 approvers: [Patrick Priestley, 2026-11-11]
 plugin: plugins/change-record
@@ -239,6 +239,17 @@ record confirms it).
   alone does not, and listing or reading files does not. A record with its tasks ticked counts
   as done for `outcome-filled`, whatever its status says. A session with no record and no code
   that says `Tier: 0` passes `tier-declared`.
+- (The store labels, 2026-11-12.) The five store sessions were labelled the same way: a
+  model's blind first pass from sheets, and the owner's ruling on what the labellers left open
+  ("As recommended", in chat). `659da00f` `red-first` stays `fail` and `5ac54a69` `red-first`
+  stays `pass`. A session that works on several changes gets no verdict on its record steps
+  until grading is done per change, so six lines of `5ac54a69`'s label carry none. The read
+  key was not used again: the sessions were the folder rebuilt in the cloud container for the
+  read check of 2026-11-11, a departure from "on the owner's machine" in Checks. Rejected:
+  reading the store again, which the owner had agreed to once only.
+- (Closing, 2026-11-12.) No error threshold is set (C4). The first measurement of a grader
+  on sessions it was not written from is still to come, so there is nothing yet to set one
+  against.
 
 ## Tasks
 
@@ -808,3 +819,50 @@ are not yet checked for the same reason.
 Still open under this record: the five store sessions (R1 asks for twenty; fifteen are
 labelled), which need the read key and are the only way to measure the three steps that read
 the record at a commit. The grader faults above are not fixed here.
+
+### The five store sessions, the fixed graders and the close (2026-11-12)
+
+The grader faults were fixed under `2026-11-12-grader-fixes` (pull request #54), which also
+holds the five store labels and the full account. In short, from its Outcome:
+
+- R1 is met: twenty label files are kept, fifteen fixture sessions and five store sessions.
+  One of them, `5ac54a69`, has a verdict on one step only, by the owner's ruling.
+- On the five store sessions, labelled before any rule saw them, the graders of the first
+  measurement (`fields/1`) gave eight wrong verdicts, and the fixes for the fixture faults
+  alone left all eight. They came from two causes the fixtures do not have: a record edited
+  from an inline Python script, and a session that wrote three records. Both are fixed in
+  `fields/2`.
+- With `fields/2`, no counted verdict disagrees with a label on any of the twenty sessions.
+  That is agreement on the sessions the rules were written from, not a measured error.
+
+What the twenty cover, with `fields/2` (a session covers a step when the label or the grader
+gives a verdict and the grader could grade it):
+
+    | Step | Covered | Wrong | Both n/a | Could not grade |
+    | tier-declared | 4 | 0 | 3 | 13 |
+    | probe-before-record | 10 | 0 | 9 | 1 |
+    | record-before-code | 9 | 0 | 10 | 1 |
+    | red-first | 15 | 0 | 5 | 0 |
+    | change-line | 12 | 0 | 7 | 1 |
+    | record-check | 3 | 0 | 4 | 13 |
+    | outcome-filled | 2 | 0 | 5 | 13 |
+
+Against this record's Goal. Done: the graders' verdicts are checked against labels a person
+ruled on; the report prints a measured error beside each pass rate, or "not yet checked", and
+shows the evidence behind each failure where it printed fixed advice; the suites run on macOS
+and Linux. Not done, and what the owner should know before acting on a report:
+
+- No step has an error measured on sessions the graders were not then fitted to. The next
+  sessions captured should be labelled before anyone looks at their verdicts; that is the
+  first real measurement of `fields/2`.
+- `tier-declared`, `record-check` and `outcome-filled` are under the five covered sessions R4
+  asks for (4, 3 and 2). They need a session's commit, which the fixtures lack.
+- The judge's two steps have no labels, and the agreement check has not run (its provider
+  has no balance).
+- No independent reviewer looked at any pull request of this record or of the fixes: the
+  cross-model review failed for the same lack of balance each time.
+- The labels are a model's first pass. The owner ruled on the fifteen disagreements among the
+  fixture labels and on three open questions among the store labels, and did not read the
+  agreements one by one.
+- The risk Task 1 left for the owner still stands: on macOS a checkout reached through a link
+  may have its writes miscounted; it is worth a probe before the first measurement on a Mac.
