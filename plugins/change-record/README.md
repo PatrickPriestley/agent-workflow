@@ -349,56 +349,29 @@ skill when its index entry lists it or its transcript shows it, by the capture h
 knew a shell read are counted too. One skill can appear under two names, with and without its
 plugin. A folder with transcripts and no `scores/` still gives both sections.
 
-**A judged rubric: code quality** (the same record, task 2).
-`transcripts judge [DIR] --rubrics [--session ID]... [--repo-dir DIR] [--limit N] [--store]` asks
-a question no count can answer, of every session in the folder that wrote code and has a
-commit:
+**Two rubric judges were tried and taken out** (the same record, task 2 and its concern C2).
+The record allows a judge one wrong in five against a person's labels, and says one over
+that is taken out and not tuned. Both were:
 
-| Rubric | Asked of | Model | Labels |
-|---|---|---|---|
-| `code-quality` | the diff between the session's first and last commit, read from `--repo-dir` | Claude Sonnet | `approve`, `block` |
+| Rubric | Asked of | Model | Labelled | Wrong |
+|---|---|---|---|---|
+| `verbosity` | the messages the session wrote | Claude Haiku | 14 | 3: it answered `proportionate` every time |
+| `code-quality` | the diff of what the session committed | Claude Sonnet, no tools | 7 | 4: each an `approve` where the label blocks |
 
-It is asked three times in a fresh session with no tools, as the record questions are, and
-two answers with the same label decide; otherwise the question is undecided, no verdict is
-written, and the next run asks again. It prints how many sessions it will judge and the most
-calls that can take before it makes one; `--limit` (20) and `--session` choose what is sent.
-The rubric texts are in `grade/rubrics/`, adapted from Skill Doctor's scorers (MIT; the notice
-is beside them).
+Each was asked three times in a fresh session with no tools. The code-quality judge's two
+blocks both named a real defect, so a block was worth reading; its approvals were not, since
+the four it missed were defects a labeller found by running the code. `transcripts judge
+--rubrics` now says so and exits 2, and the report drops any rows either judge left in a
+folder or the store. The rubric texts stay in `grade/rubrics/` (adapted from Skill Doctor's
+scorers, MIT; the notice is beside them), and the label files keep their `code-quality:` and
+`verbosity:` lines, which still load and are still checked: they are what each judge was
+measured against, and what a later attempt would have to beat.
 
-What the judge is sent, after the redaction `push` applies: the rubric, the names of the
-files in the diff, and the diff. Nothing of the transcript goes. A diff over 60,000 characters
-is shown code first, then tests, then the rest, whole files, with generated and fixture files
-left out and named; when something else had to be cut, the verdict is marked as on a part. A
-session with no commit, or whose commit `--repo-dir` does not have, is not judged, and the run
-says why.
-
-The answers go to `<DIR>/rubrics/<sessionId>.json` (the prompt, the three votes) and, as a
-score row, to `<DIR>/scores/<sessionId>.rubrics.json` under the grader `rubric/1:sonnet`. The
-row's verdict is which side its label falls on (`approve` passes, `block` fails), so it fits
-the store and the report's tables; the label itself is in the row and the report prints the
-labels, a verdict on a part counted apart. Labels carry no number and are never averaged into
-a grade. `--store` inserts the score rows with the read key, those of an earlier run that did
-not store them too; the votes stay in the folder. A run in which an answer was an error exits
-1.
-
-To check the judge against a person, a label file may carry a line for the rubric
-(`code-quality: block | the new flag has no test`); `transcripts sheet` leaves the line empty
-and its sheet states the question and how to read the session's diff. The judge agrees with a
-label when it gives the same label. The report shows its error like a field step's, and "not
-yet checked" until five labelled sessions cover it. Three are labelled (the three task
-sessions of 2026-11-10 and 11); the judge gave the label's answer on two and approved, on a
-part of the diff, one the label blocks. More sessions with commits are needed before that
-says anything.
-
-**Verbosity was taken out.** A second rubric asked Claude Haiku whether the prose a session
-wrote was `proportionate`, `verbose` or `terse`. Measured on 2026-11-12 against 14 labelled
-sessions it answered `proportionate` every time and was wrong on the three the labels call
-verbose, 21%. The record allows a judge one wrong in five (its concern C2) and says such a
-judge is taken out and not tuned, so `judge --rubrics` does not ask it and the report does not
-list it, whatever rows an earlier run left. Its text stays in `grade/rubrics/verbosity.md` and
-the label files keep their `verbosity:` lines, which still load: they are what it was measured
-against, and what a later attempt would have to beat. The counts above (characters written,
-the last message) are what the report says about length.
+What the code-quality work left behind is how a session's own commits are found, which the
+label sheet prints for a labeller. The last commit is the one at the session's last stop.
+The base is the newest commit on that commit's own line (first parents) made before the
+session's first line; the commit at the first stop is no base, since it already holds the
+first turn's work. A session whose last commit was made before it began made none.
 
 **Checking the graders against a person** (record `docs/changes/2026-11-11-grading-trust.md`).
 The graders can be wrong, so a set of sessions is labelled by hand and the graders are scored

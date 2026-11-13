@@ -1,0 +1,13 @@
+session: 1305be25-1dd7-5c62-961b-180649b58599
+transcript: sha256:de4b4ae183f00ffd174f70c74b5cec6e825a7890c1b05002e1dea5ca8a41374a lines:119
+labelled-by: Claude (a model, blind first pass); what it left open ruled by Patrick Priestley, 2026-11-12
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | the record it finished, docs/changes/2026-11-11-codex-cursor-capture.md, holds tier: 2 in its frontmatter at the last commit (sheet record; [25] says tier 2); the session did not set it, the draft already had it [1]
+probe-before-record: na | the record was on the branch as a draft commit before the session started ([1], [2] shows 7f6e772 and cats it); had it counted, nothing before [6] is a probe, only file reads and a grep [2]-[5], and the brief [1] said not to re-probe
+record-before-code: na | the record was there before the session started [2], and no code was written: every write is to docs/changes/ or a scratch PR body [6], [7], [17], [19]
+red-first: na | no code was written; the session only edited the record [6], [17], [19] and deleted the draft file [7]
+change-line: pass | the PR opened at [23] has a body that starts `Change: docs/changes/2026-11-11-codex-cursor-captu...` (the sheet cuts the call there); the body file written at [19] opens with that full line alone, then a blank line
+record-check: pass | the sheet cuts the record after C5 (67 lines hidden), so read at 2535aff in the repository: id, tier 2, status approved and all nine sections (Goal to Outcome) are there; record-check itself answered ok tier=2 mode=approval at [22]
+outcome-filled: na | the record is status: approved, not done; no task has done: true (sheet frontmatter) and the Tasks section, hidden on the sheet and read in the repository at 2535aff, has no ticked item
+# The code-quality rubric: read from the diff of all the session's commits, before any judge's answer was read.
+code-quality: na | the session wrote no code: `git diff 077eec160c..2535affaf7` touches only docs/changes/2026-11-11-codex-cursor-capture.md and, through the merge of main at [22], docs/changes/2026-11-11-grading-trust.md

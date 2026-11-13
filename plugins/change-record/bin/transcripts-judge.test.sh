@@ -63,19 +63,14 @@ def section(tag):
     return m.group(1) if m else ""
 asked = argv[argv.index("--model") + 1] if "--model" in argv else "haiku"
 v = "pass"
-if "<diff>" in prompt:  # the code-quality rubric: block a diff that holds HACK
-    label = mode if mode in ("approve", "block") else "block" if "HACK" in section("diff") else "approve"
-    js = json.dumps({"label": label, "reason": "the stand-in read the diff"})
+if "<decisions>" in prompt:
+    v = "pass" if "Rejected" in section("decisions") else "fail"
 else:
-    if "<decisions>" in prompt:
-        v = "pass" if "Rejected" in section("decisions") else "fail"
-    else:
-        v = "pass" if re.search(r"^\s*\$ ", section("outcome"), re.M) else "fail"
-    js = json.dumps({"verdict": v, "reason": "the stand-in read the section"})
+    v = "pass" if re.search(r"^\s*\$ ", section("outcome"), re.M) else "fail"
+js = json.dumps({"verdict": v, "reason": "the stand-in read the section"})
 answers = {"content": js, "fenced": "```json\n" + js + "\n```", "prosejson": "I think so.\n" + js,
            "badverdict": json.dumps({"verdict": "maybe", "reason": "x"}), "malformed": "It passes, mostly.",
-           "empty": "", "twojson": js + "\n" + js, "extrakeys": json.dumps({"verdict": v, "reason": "r", "score": 1}),
-           "badlabel": json.dumps({"label": "fine", "reason": "x"})}
+           "empty": "", "twojson": js + "\n" + js, "extrakeys": json.dumps({"verdict": v, "reason": "r", "score": 1})}
 if kind == "opencode":
     if mode == "refused":
         print("I can't help with that.")
@@ -119,6 +114,11 @@ calls() { [ -f "$FAKELOG" ] && wc -l < "$FAKELOG" | tr -d ' ' || echo 0; }
 
 # ---- a repository with three records -----------------------------------------------------
 REPO="$TMPROOT/checkout"; mkdir -p "$REPO/docs/changes" "$REPO/tests"
+# at HOUR[:MIN[:SEC]] git-args...: a git command whose commit is made at that time (half past, with no
+# MIN) on the day of the made-up sessions (2026-11-10), which start on the hour: a session's own
+# commits are those made after it began
+at() { local t="$1"; shift; case "$t" in *:*:*) ;; *:*) t="$t:00" ;; *) t="$t:30:00" ;; esac
+       GIT_AUTHOR_DATE="2026-11-10T${t}Z" GIT_COMMITTER_DATE="2026-11-10T${t}Z" git "$@"; }
 record() {  # id decisions outcome
 cat <<EOF
 ---
@@ -159,13 +159,13 @@ GOOD_OUT="Ran it, for $EMAIL:
   cd "$REPO" && git init -q -b main && git config user.email t@example.com && git config user.name t
   git config core.hooksPath /dev/null
   printf 'def greet(n):\n    return n\n' > greet.py; printf 'import unittest\n' > tests/test_greet.py
-  git add -A && git commit -qm init
+  git add -A && at 10 commit -qm init
   record 2026-11-10-good "$GOOD_DEC" "$GOOD_OUT" > docs/changes/2026-11-10-good.md
   record 2026-11-10-bad "- Use argparse for the flag." "All tests pass." > docs/changes/2026-11-10-bad.md
   record 2026-11-10-bare "- Parse the flag by hand. Rejected: argparse." "All tests pass." > docs/changes/2026-11-10-bare.md
   record 2026-11-10-empty "" "" | sed 's/^status: done/status: approved/' > docs/changes/2026-11-10-empty.md
   printf 'def greet(n):\n    return n.upper()\n' > greet.py
-  git add -A && git commit -qm "feat: shout"
+  git add -A && at 11 commit -qm "feat: shout"
 )
 A="$(git -C "$REPO" rev-parse HEAD~1)"; C="$(git -C "$REPO" rev-parse HEAD)"
 
@@ -614,24 +614,34 @@ it "an empty folder is still refused: there is nothing to report"
 mkdir -p "$TMPROOT/empty2"; out="$(cd "$TMPROOT" && "$T" report "$TMPROOT/empty2" 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "no score rows in"
 
-echo "session-quality R4: the code-quality rubric, asked of Sonnet, three votes (verbosity was taken out under C2)"
-# three more commits: D a change a reviewer would block, E a small module beside a large fixture, F a large module
+echo "session-quality C2: the two rubric judges were taken out; the sheet names the session's own commits"
+# More commits, each at a known time: D at 12:30, E at 14:30, F at 15:30, G at 17:30 on main; a side branch
+# from F committed at 17:45 and merged into main at 18:30 after a commit of the session's own; and a
+# branch from D with two commits a few seconds into 13:00.
 (
   cd "$REPO"
-  printf 'def greet(n):\n    try:\n        return n.upper()\n    except Exception:  # HACK\n        pass\n' > greet.py
-  git commit -qam "feat: never fail"
-  mkdir -p tests/fixtures; python3 -c 'print("x" * 70000)' > tests/fixtures/data.json
-  printf 'def shout(n):\n    return n.upper()\n' > shout.py
-  git add -A && git commit -qm "feat: shout module"
-  python3 -c 'print("\n".join("VALUE_%d = %d" % (i, i) for i in range(5000)))' > table.py
-  git add -A && git commit -qm "feat: table"
+  printf 'def greet(n):\n    try:\n        return n.upper()\n    except Exception:\n        pass\n' > greet.py
+  at 12 commit -qam "feat: never fail"
+  printf 'def shout(n):\n    return n.upper()\n' > shout.py; git add -A && at 14 commit -qm "feat: shout module"
+  printf 'VALUE = 1\n' > table.py; git add -A && at 15 commit -qm "feat: table"
+  printf 'def zeta(n):\n    return n\n' > zeta.py; git add -A && at 17 commit -qm "feat: zeta"
+  git checkout -q -b side HEAD~1
+  printf 'def other(n):\n    return n\n' > other.py; git add -A && at 17:45 commit -qm "feat: other, on a side branch"
+  git checkout -q main
+  printf 'def mine(n):\n    return n\n' > mine.py; git add -A && at 18 commit -qm "feat: mine"
+  at 18 merge -q --no-ff side -m "chore: merge side"
+  git checkout -q -b span HEAD~5
+  printf 'def span(n):\n    return n\n' > span.py; git add -A && at 13:00:03 commit -qm "feat: span"
+  printf 'def span(n):\n    return n or 0\n' > span.py; git add -A && at 13:00:04 commit -qm "fix: span"
+  git checkout -q main
 )
-D="$(git -C "$REPO" rev-parse HEAD~2)"; E="$(git -C "$REPO" rev-parse HEAD~1)"; F="$(git -C "$REPO" rev-parse HEAD)"
-# talk SID HOUR CODE? TEXT: a session that writes greet.py when CODE is yes, and says TEXT
+M="$(git -C "$REPO" rev-parse main)"; G="$(git -C "$REPO" rev-parse main~2)"; E="$(git -C "$REPO" rev-parse main~4)"
+D="$(git -C "$REPO" rev-parse main~5)"; H="$(git -C "$REPO" rev-parse span)"
+# talk SID HOUR TEXT: a session that runs a test, writes greet.py and says TEXT, its lines a second apart from HOUR:00:01
 talk() {
   { printf '["call","r1","Bash",{"command":"python3 -m unittest"}]\n["result","r1","FAILED (failures=1)",false]\n'
-    [ "$3" = yes ] && printf '["call","c1","Write",{"file_path":"%s","content":"x"}]\n["result","c1","ok",false]\n' "$REPO/greet.py"
-    python3 -c 'import json,sys; print(json.dumps(["text", sys.argv[1]]))' "$4"
+    printf '["call","c1","Write",{"file_path":"%s","content":"x"}]\n["result","c1","ok",false]\n' "$REPO/greet.py"
+    python3 -c 'import json,sys; print(json.dumps(["text", sys.argv[1]]))' "$3"
   } | python3 "$GEN" "$W/$1.jsonl" "$1" "$REPO" "$2"
 }
 # keep AR SID FIRST LAST: archive the session and set the commits at its first and last stop
@@ -644,211 +654,90 @@ e = json.load(open(p)); e["first_stop"] = {"branch": "x", "commit": first or Non
 json.dump(e, open(p, "w"), indent=2)
 PY
 }
-Q1=e1000000-0000-0000-0000-000000000001; Q2=e2000000-0000-0000-0000-000000000002; Q3=e3000000-0000-0000-0000-000000000003
-Q4=e4000000-0000-0000-0000-000000000004; Q5=e5000000-0000-0000-0000-000000000005; Q6=e6000000-0000-0000-0000-000000000006
-GOODTEXT="The --shout flag is in and the suite passes; write to $EMAIL if it breaks. Nothing else changed."
-talk $Q1 11 yes "$GOODTEXT"
-talk $Q2 12 yes "It works. To summarize what I just said: it works. To summarize what I just said again: it works."
-talk $Q3 13 yes "ok"
-talk $Q4 14 yes "The shout module is in beside its fixture, and the suite passes. Nothing else changed here."
-talk $Q5 15 yes "The table module is in with five thousand values, and the suite passes. Nothing else changed."
-talk $Q6 16 no "I read the code and changed nothing, as asked, so there is nothing for a reviewer to look at."
+Q1=e1000000-0000-0000-0000-000000000001; Q3=e3000000-0000-0000-0000-000000000003; Q9=e9000000-0000-0000-0000-000000000009
+QA=ea000000-0000-0000-0000-00000000000a; QB=eb000000-0000-0000-0000-00000000000b; QC=ec000000-0000-0000-0000-00000000000c
+QD=ed000000-0000-0000-0000-00000000000d; QE=ee000000-0000-0000-0000-00000000000e
+talk $Q1 11 "The --shout flag is in and the suite passes; write to $EMAIL if it breaks. Nothing else changed."
+talk $Q3 13 "This session committed nothing at all, and no commit was recorded at any of its stops."
+talk $Q9 12 "Two commits before the first stop, and the suite passes. Nothing else changed, and nothing waits on you."
+talk $QA 10 "The repository's first commit holds the greeting and its test. Nothing else changed in this one."
+talk $QB 21 "The commit this session ended on is not in the repository that is being read, as it happens."
+talk $QC 19 "The work was already committed when this session began, and it wrote one file it did not commit."
+talk $QD 18 "My module is in, and I merged the side branch into main. The suite passes and nothing else changed."
+talk $QE 13 "The span module went in while this session was still writing, a few seconds after it began."
 RA="$TMPROOT/rubric-ar"
-keep "$RA" $Q1 "$A" "$C"; keep "$RA" $Q2 "$C" "$D"; keep "$RA" $Q3 "" ""; keep "$RA" $Q4 "$D" "$E"; keep "$RA" $Q5 "$E" "$F"; keep "$RA" $Q6 "$A" "$C"
-# rq FILE QUESTION KEY: a field of a question in a rubrics file; rr FILE STEP KEY: a field of a rubric score row's evidence
-rq() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["questions"][sys.argv[2]].get(sys.argv[3]))' "$1" "$2" "$3" 2>/dev/null || echo none; }
-rr() { python3 -c 'import json,sys; r=[x for x in json.load(open(sys.argv[1])) if x["step"]==sys.argv[2]]; print(r[0]["grader"], r[0]["verdict"], r[0]["evidence"].get(sys.argv[3]) if r else "none")' "$1" "$2" "$3" 2>/dev/null || echo no-row; }
+keep "$RA" $Q1 "$A" "$C"; keep "$RA" $Q3 "" ""; keep "$RA" $Q9 "$E" "$E"; keep "$RA" $QA "$A" "$A"
+keep "$RA" $QB "$A" "0000000000000000000000000000000000000000"; keep "$RA" $QC "$C" "$C"; keep "$RA" $QD "$M" "$M"; keep "$RA" $QE "$H" "$H"
 : > "$FAKELOG"; rm -f "$COUNTER"
-out="$(AGENT_TRANSCRIPTS="$RA" judge "$RA" --rubrics --repo-dir "$REPO")"; rc=$?
-it "judge --rubrics exits 0 and says how many calls it may make before it makes one"
-assert_eq 0 "$rc"
-has "$out" "4 sessions to judge, at most 12 calls (3 votes each)"
-it "a session that wrote no code is not judged"
-has "$out" "${Q6:0:8} not judged: no code written"
-it "C4: a session with no commit is not judged, and the run says why"
-has "$out" "${Q3:0:8} not judged: no commit recorded for the session"
-assert_eq "no no" "$([ -e "$RA/rubrics/$Q3.json" ] && echo yes || echo no) $([ -e "$RA/scores/$Q3.rubrics.json" ] && echo yes || echo no)"
-it "a sound diff is approve and a diff a reviewer would block is block, each from three votes"
-assert_eq "approve pass 3" "$(rq "$RA/rubrics/$Q1.json" code-quality label) $(rq "$RA/rubrics/$Q1.json" code-quality verdict) $(py -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["questions"]["code-quality"]["votes"]))' "$RA/rubrics/$Q1.json")"
-assert_eq "block fail" "$(rq "$RA/rubrics/$Q2.json" code-quality label) $(rq "$RA/rubrics/$Q2.json" code-quality verdict)"
-it "C2: code quality is asked of Sonnet, twelve calls, and nothing is asked of the session's messages"
-assert_eq "12 sonnet 12 0" "$(py - "$FAKELOG" <<'PY'
+out="$(judge "$RA" --rubrics --repo-dir "$REPO")"; rc=$?
+it "judge --rubrics asks nothing, exits 2 and says the rubric judges were taken out"
+assert_eq "2 0" "$rc $(calls)"
+has "$out" "judge --rubrics was taken out"
+has "$out" "grade/rubrics/README.md"; lacks "$out" "usage:"
+assert_eq "no" "$([ -e "$RA/rubrics" ] && echo yes || echo no)"
+(cd "$TMPROOT" && "$T" sheet "$RA" --repo-dir "$REPO" --labels "$RA/labels" > /dev/null 2>&1)
+sh() { cat "$RA/sheets/$1.md" 2>&1; }
+OWN="git log --first-parent --no-merges"
+it "the sheet asks no rubric question, and a new label file has no rubric line"
+lacks "$(sh $Q1; cat "$RA/labels/$Q1.txt" 2>&1)" "code-quality"
+lacks "$(sh $Q1; cat "$RA/labels/$Q1.txt" 2>&1)" "verbosity"
+it "the sheet names the session's own commits: from the newest commit made before it began to its last"
+has "$(sh $Q1)" "\`$OWN ${A:0:10}..${C:0:10}\`"
+it "commits made before the session's first stop are its own, whatever commit that stop recorded"
+has "$(sh $Q9)" "\`$OWN ${C:0:10}..${E:0:10}\`"
+it "the base is on the session's own line: a newer commit that came in by a merge is not it"
+has "$(sh $QD)" "\`$OWN ${G:0:10}..${M:0:10}\`"
+it "a commit made after the session's first line is its own, though its last line is later still"
+has "$(sh $QE)" "\`$OWN ${D:0:10}..${H:0:10}\`"
+it "a session that began before the repository's first commit: the whole history is its own"
+has "$(sh $QA)" "\`$OWN ${A:0:10}\` (the history begins with this session)"
+it "a session whose last commit was made before it began, one with no commit, and one whose commit is not here have none to name"
+has "$(sh $QC)" "No commit of this session's is known"
+has "$(sh $Q3)" "No commit of this session's is known"
+has "$(sh $QB)" "No commit of this session's is known"
+lacks "$(sh $QC; sh $Q3; sh $QB)" "$OWN"
+it "an index entry with no start time names no commits either, and the sheet is still written"
+RB="$TMPROOT/rubric-notime"; keep "$RB" $Q1 "$A" "$C"
+python3 - "$RB/sessions/$Q1.json" <<'PY'
 import json, sys
-calls = [json.loads(l) for l in open(sys.argv[1])]
-model = lambda c: c["argv"][c["argv"].index("--model") + 1]
-print(len(calls), " ".join(sorted({model(c) for c in calls})), sum("<diff>" in c["prompt"] for c in calls), sum("<messages>" in c["prompt"] for c in calls))
-PY
-)"
-it "the judge file and the score rows hold code-quality and nothing else"
-assert_eq "code-quality code-quality" "$(py -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["questions"]), " ".join(r["step"] for r in json.load(open(sys.argv[2]))))' "$RA/rubrics/$Q1.json" "$RA/scores/$Q1.rubrics.json")"
-it "C4: the diff is the session's first commit to its last, and the judge sees the rubric with it"
-p1="$(rq "$RA/rubrics/$Q1.json" code-quality prompt)"
-has "$p1" "+    return n.upper()"
-has "$p1" "a careful senior reviewer"
-lacks "$p1" "HACK"
-it "C6: what goes to the judge is redacted"
-has "$p1" "<redacted:email>"; lacks "$p1" "$EMAIL"
-it "C4: over the limit, fixture files are left out and named; the code is judged whole, so it is no part"
-assert_eq "approve False" "$(rq "$RA/rubrics/$Q4.json" code-quality label) $(rq "$RA/rubrics/$Q4.json" code-quality partial)"
-has "$(rq "$RA/rubrics/$Q4.json" code-quality left_out)" "tests/fixtures/data.json"
-p4="$(rq "$RA/rubrics/$Q4.json" code-quality prompt)"
-has "$p4" "+def shout(n):"; lacks "$p4" "xxxxxxxxxxxxxxxxxxxxxxxx"
-it "C4: code that does not fit is cut, the verdict is marked as on a part, and the judge is told"
-assert_eq "True" "$(rq "$RA/rubrics/$Q5.json" code-quality partial)"
-has "$(rq "$RA/rubrics/$Q5.json" code-quality prompt)" "This is a part of a larger change"
-it "each verdict is a score row under the rubric's own grader, with its label"
-assert_eq "rubric/1:sonnet fail block" "$(rr "$RA/scores/$Q2.rubrics.json" code-quality label)"
-assert_eq "rubric/1:sonnet pass True" "$(rr "$RA/scores/$Q5.rubrics.json" code-quality partial)"
-it "the row names the files that were left out, and the run says which verdict is on a part"
-has "$(rr "$RA/scores/$Q4.rubrics.json" code-quality left_out)" "tests/fixtures/data.json"
-has "$out" "${Q5:0:8} code-quality: approve (on a part)"
-lacks "$out" "${Q4:0:8} code-quality: approve (on a part)"
-it "a second run judges nothing again and makes no call"
-n1="$(calls)"; out="$(AGENT_TRANSCRIPTS="$RA" judge "$RA" --rubrics --repo-dir "$REPO")"
-assert_eq "$n1" "$(calls)"; has "$out" "0 sessions to judge"
-
-echo "session-quality R4: answers that do not count, and the limit"
-one() { rm -rf "$TMPROOT/r1"; keep "$TMPROOT/r1" $Q1 "$A" "$C"; : > "$FAKELOG"; rm -f "$COUNTER"; }
-one; out="$(FAKE_SCRIPT=haiku,haiku,haiku AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
-it "an answer served by another model than the one asked for is not a vote, and no verdict is written"
-assert_eq "undecided" "$(rq "$TMPROOT/r1/rubrics/$Q1.json" code-quality verdict)"
-assert_eq "no-row 0" "$(rr "$TMPROOT/r1/scores/$Q1.rubrics.json" code-quality label) $(py -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$TMPROOT/r1/scores/$Q1.rubrics.json")"
-one; out="$(FAKE_SCRIPT=badlabel,content,content AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
-it "a label the rubric does not have is malformed; two votes that agree still decide"
-assert_eq "malformed vote vote approve" "$(py -c 'import json,sys; q=json.load(open(sys.argv[1]))["questions"]["code-quality"]; print(" ".join(v["status"] for v in q["votes"]), q["label"])' "$TMPROOT/r1/rubrics/$Q1.json")"
-one; out="$(FAKE_SCRIPT=block,malformed,badlabel AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
-it "one counted answer decides nothing"
-assert_eq "undecided None" "$(rq "$TMPROOT/r1/rubrics/$Q1.json" code-quality verdict) $(rq "$TMPROOT/r1/rubrics/$Q1.json" code-quality label)"
-it "an undecided question is asked again on the next run"
-: > "$FAKELOG"; out="$(AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
-assert_eq "3 approve" "$(calls) $(rq "$TMPROOT/r1/rubrics/$Q1.json" code-quality label)"
-it "a session whose diff is another one than was judged is judged again"
-python3 - "$TMPROOT/r1/sessions/$Q1.json" "$D" <<'PY'
-import json, sys
-e = json.load(open(sys.argv[1])); e["last_stop"]["commit"] = sys.argv[2]
+e = json.load(open(sys.argv[1])); e["first_timestamp"] = None
 json.dump(e, open(sys.argv[1], "w"), indent=2)
 PY
-: > "$FAKELOG"; out="$(AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
-assert_eq "3 block" "$(calls) $(rq "$TMPROOT/r1/rubrics/$Q1.json" code-quality label)"
-it "a verdict of another version of the rubric is not kept"
-: > "$FAKELOG"; out="$(AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
-assert_eq 0 "$(calls)"
-sed -i.bak 's|"judge": "rubric/1"|"judge": "rubric/0"|' "$TMPROOT/r1/rubrics/$Q1.json"; rm -f "$TMPROOT/r1/rubrics/$Q1.json.bak"
-: > "$FAKELOG"; out="$(AGENT_TRANSCRIPTS="$TMPROOT/r1" judge "$TMPROOT/r1" --rubrics --repo-dir "$REPO")"
-assert_eq "3 rubric/1" "$(calls) $(py -c 'import json,sys; print(json.load(open(sys.argv[1]))["judge"])' "$TMPROOT/r1/rubrics/$Q1.json")"
-it "C2: --limit judges that many sessions, newest first"
-rm -rf "$TMPROOT/r2"; keep "$TMPROOT/r2" $Q1 "$A" "$C"; keep "$TMPROOT/r2" $Q2 "$C" "$D"; : > "$FAKELOG"
-out="$(AGENT_TRANSCRIPTS="$TMPROOT/r2" judge "$TMPROOT/r2" --rubrics --repo-dir "$REPO" --limit 1)"
-assert_eq "yes no" "$([ -f "$TMPROOT/r2/rubrics/$Q2.json" ] && echo yes || echo no) $([ -f "$TMPROOT/r2/rubrics/$Q1.json" ] && echo yes || echo no)"
-has "$out" "1 sessions to judge, at most 3 calls"
+(cd "$TMPROOT" && "$T" sheet "$RB" --repo-dir "$REPO" --labels "$RB/labels" > /dev/null 2>&1)
+has "$(cat "$RB/sheets/$Q1.md" 2>&1)" "No commit of this session's is known"
 
-echo "session-quality R4: what the judge is shown, at the edges"
-(
-  cd "$REPO"
-  mkdir -p docs; python3 -c 'print("\n".join("A line of documentation, number %d." % i for i in range(2500)))' > docs/big.md
-  printf 'def zeta(n):\n    return n\n' > zeta.py
-  git add -A && git commit -qm "feat: zeta, with a long document"
-)
-G="$(git -C "$REPO" rev-parse HEAD)"
-Q7=e7000000-0000-0000-0000-000000000007; Q8=e8000000-0000-0000-0000-000000000008; Q9=e9000000-0000-0000-0000-000000000009
-QA=ea000000-0000-0000-0000-00000000000a; QB=eb000000-0000-0000-0000-00000000000b
-talk $Q7 17 yes "The zeta module is in with its long document, and the suite passes. Nothing else changed here."
-talk $Q9 19 yes "The change is in one commit and the suite passes. Nothing else changed, and nothing waits on you."
-talk $QA 20 yes "The repository's first commit holds the greeting and its test. Nothing else changed in this one."
-talk $QB 21 yes "The commit this session ended on is not in the repository that is being read, as it happens."
-RE="$TMPROOT/rubric-edge"
-keep "$RE" $Q7 "$F" "$G"; keep "$RE" $Q9 "$C" "$C"; keep "$RE" $QA "$A" "$A"
-keep "$RE" $QB "$A" "0000000000000000000000000000000000000000"; keep "$RE" $Q1 "$A" "$C"
-: > "$FAKELOG"; out="$(AGENT_TRANSCRIPTS="$RE" judge "$RE" --rubrics --repo-dir "$REPO")"
-it "under the limit the whole diff is judged, and it is no part"
-assert_eq "False" "$(rq "$RE/rubrics/$Q1.json" code-quality partial)"
-it "C4: over the limit the code is kept before the documentation, whatever order git gives them"
-p7="$(rq "$RE/rubrics/$Q7.json" code-quality prompt)"
-has "$p7" "+def zeta(n):"; lacks "$p7" "A line of documentation, number 2400."
-assert_eq "True" "$(rq "$RE/rubrics/$Q7.json" code-quality partial)"
-it "C4: a single file over the limit is shown from its start"
-has "$(rq "$RA/rubrics/$Q5.json" code-quality prompt)" "+VALUE_0 = 0"
-lacks "$(rq "$RA/rubrics/$Q5.json" code-quality prompt)" "+VALUE_4999 = 4999"
-it "a session that stopped twice on one commit is judged on that commit's own change"
-has "$(rq "$RE/rubrics/$Q9.json" code-quality prompt)" "+    return n.upper()"
-it "a session on the repository's first commit is judged on what that commit holds"
-has "$(rq "$RE/rubrics/$QA.json" code-quality prompt)" "+def greet(n):"
-it "a commit the repository does not have: the session is not judged, and the run says why"
-has "$out" "${QB:0:8} not judged: commit 0000000000 is not in"
-assert_eq "no" "$([ -e "$RE/rubrics/$QB.json" ] && echo yes || echo no)"
-it "--rubrics takes neither the agreement judge nor a single transcript"
-(judge "$RE" --rubrics --judge opencode > /dev/null 2>&1); assert_eq 2 "$?"
-
-echo "session-quality R5: labels for the rubric, and the judge's error in the report"
-(cd "$TMPROOT" && "$T" sheet "$RA" --repo-dir "$REPO" --labels "$RA/labels" > /dev/null 2>&1)
-it "the sheet asks the rubric question and the label file has a line for it, and neither asks for verbosity"
-has "$(cat "$RA/sheets/$Q1.md" 2>&1)" "### code-quality"
-has "$(cat "$RA/sheets/$Q1.md" 2>&1)" "git diff ${A:0:10}..${C:0:10}"
-has "$(cat "$RA/labels/$Q1.txt" 2>&1)" "code-quality:"
-lacks "$(cat "$RA/sheets/$Q1.md" "$RA/labels/$Q1.txt" 2>&1)" "verbosity"
-# fill SID CODE-QUALITY: write the rubric label, the seven steps left unlabelled
-fill() { python3 - "$RA/labels/$1.txt" "$2" <<'PY'
-import re, sys
-p, cq = sys.argv[1:]
-s = open(p).read()
-s = re.sub(r"^labelled-by:.*$", "labelled-by: A Labeller, 2026-11-12", s, flags=re.M)
-s = re.sub(r"^code-quality:.*$", "code-quality: %s | made-up reason for the code" % cq, s, flags=re.M)
-open(p, "w").write(s)
-PY
-}
-fill $Q1 block; fill $Q2 approve; fill $Q4 approve
+(cd "$TMPROOT" && AGENT_TRANSCRIPTS="$RA" "$T" grade --repo-dir "$REPO" > /dev/null 2>&1)
 r="$(report "$RA" 2>&1)"; rc=$?
-it "the report lists the rubric step with its own grader, and its error as not yet checked under five labelled sessions"
+it "C2: a label file may still carry a line for each rubric that was judged once: it loads and is counted for nothing"
 assert_eq 0 "$rc"
-has "$r" "| code-quality | rubric/1:sonnet | 3 | 1 | 0 | 75% | not yet checked (3 of 5 needed) |"
-it "the labels are shown as labels, a verdict on a part counted apart"
-has "$r" "Rubric labels, code-quality: approve 3 (1 of them judged on a part of the diff), block 1."
-it "a judge that says approve where the label says block is a false pass; block where it says approve is a false fail"
-has "$r" "code-quality, rubric/1:sonnet, false pass, ${Q1:0:8}"
-has "$r" "the label says block (made-up reason for the code); the grader says approve"
-has "$r" "code-quality, rubric/1:sonnet, false fail, ${Q2:0:8}"
-has "$r" "the label says approve (made-up reason for the code); the grader says block"
-it "a rubric label the rubric does not have rejects the file"
-fill $Q1 fine
-r="$(report "$RA" 2>&1)"; rc=$?
+printf 'code-quality: block | made-up: labelled while the rubric was asked\nverbosity: verbose | made-up: labelled while the rubric was asked\n' >> "$RA/labels/$Q1.txt"
+sed -i.bak 's/^labelled-by:.*/labelled-by: A Labeller, 2026-11-12/; s/^red-first:.*/red-first: pass | made-up: a step labelled beside the two lines/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
+r2="$(report "$RA" 2>&1)"; rc=$?
+assert_eq 0 "$rc"
+lacks "$r2" "code-quality"; lacks "$r2" "verbosity"
+it "and its label is still checked: a word the rubric did not have, or a label with no reason, rejects the file"
+sed -i.bak 's/^verbosity: verbose/verbosity: wordy/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
+r2="$(report "$RA" 2>&1)"; rc=$?
 assert_eq 1 "$rc"
-has "$r" "$Q1.txt: code-quality: unknown label 'fine' (approve, block or na)"
-it "a rubric label with no reason rejects the file; na is a label; a line left empty is simply not labelled"
-fill $Q1 approve; sed -i.bak 's/^code-quality: approve .*/code-quality: approve/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
+has "$r2" "$Q1.txt: verbosity: unknown label 'wordy' (proportionate, verbose, terse or na)"
+sed -i.bak 's/^verbosity: wordy.*/verbosity: verbose | made-up/; s/^code-quality: block.*/code-quality: block/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
 has "$(report "$RA" 2>&1)" "$Q1.txt: code-quality: a label needs a one-line reason after |"
-fill $Q1 na; sed -i.bak 's/^code-quality: approve .*/code-quality:/' "$RA/labels/$Q4.txt"; rm -f "$RA/labels/$Q4.txt.bak"
-r="$(report "$RA" 2>&1)"; rc=$?
-assert_eq 0 "$rc"
-has "$r" "code-quality, rubric/1:sonnet, false pass, ${Q1:0:8}"
-has "$r" "the label says na (made-up reason for the code); the grader says approve"
-has "$r" "| code-quality | rubric/1:sonnet | 3 | 1 | 0 | 75% | not yet checked (2 of 5 needed) |"
-it "a label file written before the rubrics, with no line for one, still loads and is not counted for it"
-grep -v '^code-quality:\|^# Rubrics' "$RA/labels/$Q2.txt" | sed 's/^red-first:.*/red-first: pass | made-up: a step labelled, the rubric not/' > "$RA/labels/$Q2.tmp"; mv "$RA/labels/$Q2.tmp" "$RA/labels/$Q2.txt"
-r="$(report "$RA" 2>&1)"; rc=$?
-assert_eq 0 "$rc"
-has "$r" "| code-quality | rubric/1:sonnet | 3 | 1 | 0 | 75% | not yet checked (1 of 5 needed) |"
-it "C2: a label file may still carry a line for verbosity, the rubric taken out: it loads and is counted for nothing"
-printf 'verbosity: verbose | made-up: labelled while the rubric was asked\n' >> "$RA/labels/$Q2.txt"
-r="$(report "$RA" 2>&1)"; rc=$?
-assert_eq 0 "$rc"
-lacks "$r" "verbosity"
-it "and its label is still checked"
-sed -i.bak 's/^verbosity: verbose/verbosity: wordy/' "$RA/labels/$Q2.txt"; rm -f "$RA/labels/$Q2.txt.bak"
-r="$(report "$RA" 2>&1)"; rc=$?
-assert_eq 1 "$rc"
-has "$r" "$Q2.txt: verbosity: unknown label 'wordy' (proportionate, verbose, terse or na)"
-sed -i.bak 's/^verbosity: wordy/verbosity: verbose/' "$RA/labels/$Q2.txt"; rm -f "$RA/labels/$Q2.txt.bak"
-it "C2: rows the verbosity judge left in the folder at an earlier run are not in the report"
-py - "$RA/scores/$Q1.rubrics.json" <<'PY'
+sed -i.bak 's/^code-quality: block.*/code-quality: fine | made-up/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
+has "$(report "$RA" 2>&1)" "$Q1.txt: code-quality: unknown label 'fine' (approve, block or na)"
+sed -i.bak 's/^code-quality: fine.*/code-quality: block | made-up/' "$RA/labels/$Q1.txt"; rm -f "$RA/labels/$Q1.txt.bak"
+it "C2: rows the rubric judges left in the folder at an earlier run are not in the report, and change nothing in it"
+py - "$RA/scores/$Q1.json" "$RA/scores/$Q1.rubrics.json" <<'PY'
 import json, sys
-rows = json.load(open(sys.argv[1]))
-old = dict(rows[0], step="verbosity", grader="rubric/1:haiku", verdict="pass", evidence={"label": "proportionate", "why": "an earlier run", "partial": False, "votes": ["vote"] * 3})
-json.dump(rows + [old], open(sys.argv[1], "w"), indent=2)
+row = json.load(open(sys.argv[1]))[0]
+old = [dict(row, step="code-quality", grader="rubric/2:sonnet", verdict="fail", evidence={"label": "block", "why": "an earlier run", "partial": False, "votes": ["vote"] * 3}),
+       dict(row, step="verbosity", grader="rubric/1:haiku", verdict="pass", evidence={"label": "proportionate", "why": "an earlier run", "partial": False, "votes": ["vote"] * 3})]
+json.dump(old, open(sys.argv[2], "w"), indent=2)
 PY
-r="$(report "$RA" 2>&1)"; rc=$?
-assert_eq 0 "$rc"
-lacks "$r" "verbosity"; lacks "$r" "rubric/1:haiku"
-has "$r" "| code-quality | rubric/1:sonnet | 3 | 1 | 0 | 75% | not yet checked (1 of 5 needed) |"
+before="$(report "$RA" 2>&1)"
+mv "$RA/scores/$Q1.rubrics.json" "$TMPROOT/held.json"; without="$(report "$RA" 2>&1)"; mv "$TMPROOT/held.json" "$RA/scores/$Q1.rubrics.json"
+lacks "$before" "rubric/"; lacks "$before" "code-quality"; lacks "$before" "verbosity"
+assert_eq "$without" "$before"
+has "$before" "| red-first | fields/2 |"
 
 echo "R11: scores and votes to the store, with the read key only"
 PORTF="$TMPROOT/port"; SLOG="$TMPROOT/store.log"; : > "$SLOG"
@@ -923,24 +812,6 @@ rm -f "$COUNTER"; : > "$FAKELOG"
 out="$(judge "$G5" --repo-dir "$REPO")"; rc=$?
 assert_eq "0 3 pass" "$rc $(calls) $(jv "$G5/judges/$J1.claude.json" outcome-real-output)"
 lacks "$out" "were errors"
-it "the rubric judge, which already asks again, exits 1 when an answer was an error"
-G4="$TMPROOT/again4"; keep "$G4" $Q1 "$A" "$C"; rm -f "$COUNTER"; : > "$FAKELOG"
-out="$(FAKE_SCRIPT="error,error,error" judge "$G4" --rubrics --repo-dir "$REPO")"; rc=$?
-assert_eq "1 undecided" "$rc $(rq "$G4/rubrics/$Q1.json" code-quality verdict)"
-has "$out" "${Q1:0:8}: 3 of the judge's answers were errors; a question left with no verdict is asked again at the next run"
-rm -f "$COUNTER"; : > "$FAKELOG"
-out="$(judge "$G4" --rubrics --repo-dir "$REPO")"; rc=$?
-assert_eq "0 3 pass" "$rc $(calls) $(rq "$G4/rubrics/$Q1.json" code-quality verdict)"
-lacks "$out" "were errors"
-it "an error among answers that still decided exits 1 in its own run, and the session is not asked again"
-G6="$TMPROOT/again6"; keep "$G6" $Q1 "$A" "$C"; rm -f "$COUNTER"; : > "$FAKELOG"
-out="$(FAKE_SCRIPT="content,content,error" judge "$G6" --rubrics --repo-dir "$REPO")"; rc=$?
-assert_eq "1 pass" "$rc $(rq "$G6/rubrics/$Q1.json" code-quality verdict)"
-has "$out" "${Q1:0:8}: 1 of the judge's answers were errors"
-rm -f "$COUNTER"; : > "$FAKELOG"
-out="$(judge "$G6" --rubrics --repo-dir "$REPO")"; rc=$?
-assert_eq "0 0" "$rc $(calls)"
-has "$out" "1 already judged"
 
 S1="$TMPROOT/later1"; fresh "$S1" $J1; rm -f "$COUNTER"; : > "$FAKELOG"
 judge "$S1" --repo-dir "$REPO" > /dev/null
@@ -988,23 +859,6 @@ judge "$S4" --repo-dir "$REPO" > /dev/null; judge "$S4" --repo-dir "$REPO" --jud
 s0="$(sent scores)"; v0="$(sent judge_votes)"
 out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S4" --repo-dir "$REPO" --judge opencode --store)"; rc=$?
 assert_eq "0 0 6" "$rc $(( $(sent scores) - s0 )) $(( $(sent judge_votes) - v0 ))"
-it "--rubrics --store sends the rows of a session it has just judged"
-S5="$TMPROOT/later5"; keep "$S5" $Q1 "$A" "$C"; rm -f "$COUNTER"; : > "$FAKELOG"
-s0="$(sent scores)"
-out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$S5" --rubrics --repo-dir "$REPO" --store)"; rc=$?
-assert_eq "0 1" "$rc $(( $(sent scores) - s0 ))"
-has "$out" "1 rows stored"
-it "--rubrics --store sends the rubric rows judged before without it, and not a verbosity row an earlier run left there"
-want=4
-assert_eq "5" "$(py -c 'import json,sys,glob; print(sum(len(json.load(open(f))) for f in glob.glob(sys.argv[1]+"/scores/*.rubrics.json")))' "$RA")"
-s0="$(sent scores)"; : > "$FAKELOG"
-out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$RA" --rubrics --repo-dir "$REPO" --store)"; rc=$?
-assert_eq "0 0 $want" "$rc $(calls) $(( $(sent scores) - s0 ))"
-has "$out" "$want rows stored"
-s1="$(sent scores)"
-out="$(AGENT_TRANSCRIPTS_URL="$URL" judge "$RA" --rubrics --repo-dir "$REPO" --store)"; rc=$?
-it "and sends them once"
-assert_eq "0 0" "$rc $(( $(sent scores) - s1 ))"
 
 if [ "${TRANSCRIPTS_LIVE_JUDGE:-}" = 1 ]; then
   echo "R10, live: the real Haiku judge on the two known-answer sessions"

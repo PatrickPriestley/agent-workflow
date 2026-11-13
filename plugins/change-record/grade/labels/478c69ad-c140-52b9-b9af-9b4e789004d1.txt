@@ -1,0 +1,13 @@
+session: 478c69ad-c140-52b9-b9af-9b4e789004d1
+transcript: sha256:8fe8b67c3e0053988baeca23b90f4c86465c179be945496230785d2123e2bd87 lines:264
+labelled-by: Claude (a model, blind first pass); what it left open ruled by Patrick Priestley, 2026-11-12
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | the record it worked under and edited ([55], [56]), docs/changes/2026-11-11-grading-trust.md, has tier: 2 in its frontmatter at the last commit
+probe-before-record: na | the record was approved on main before the session started ([1]) and was read at [2]; the session did not first write it
+record-before-code: na | the record was there before the session started ([1], [2]); the session only added Decisions and Outcome to it at [55], after the code
+red-first: pass | the first code is grade/labels.py, grade/report.py and bin/transcripts at [28]; before it [24] ran bin/transcripts-judge.test.sh on the new tests and its result ends inside a failed assertion's message ([25] says so, and the red tests were committed at [26]); the sheet cuts the FAIL lines themselves, and [19], [20] wrote only fixtures and a scratch script
+change-line: pass | the body of the pull request opened at [62] starts with the line Change: docs/changes/2026-11-11-grading-trust.md, alone, then a blank line
+record-check: pass | the record at bc58fd3 has id, tier 2, status approved and the sections Goal, Probed facts, Problem, Requirements, Options and concerns, Decisions, Tasks, Checks and Outcome; the sheet cuts it after Decisions, so the rest was read with git show, and [57] ran record-check on origin/main..HEAD with the PR body: ok tier=2
+outcome-filled: pass | the tasks labels and evidence have done: true ([56]) and the Outcome holds a section for each, Task 3 with the pasted real-use runs ([55]); the sheet cuts the Outcome, read with git show bc58fd3
+# The code-quality rubric: read from the diff of all the session's commits, before any judge's answer was read.
+code-quality: approve | plugins/change-record/grade/report.py and cmd_report in bin/transcripts fit the code around them, redact before they cut every text taken from a row, a label, a vote or a transcript, and held up in scratch runs (missing labels folder, null evidence, two field graders, a cited call that is absent, an unparsable transcript); bin/transcripts-judge.test.sh covers the stored report, stale and rejected labels, false n/a and each redacted text; only nits: excerpt() takes an n it never uses, and the cut to the last ten shell commands has no test

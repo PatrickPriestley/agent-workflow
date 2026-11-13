@@ -1,0 +1,13 @@
+session: 172fe91d-8bb8-5fab-9d00-4341f1f540c3
+transcript: sha256:31ce6f363b9e5db79e048b29a9bb37fe6cb8ee7fb34c225636667c32427cb977 lines:196
+labelled-by: Claude (a model, blind first pass); what it left open ruled by Patrick Priestley, 2026-11-12
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | the record it worked under and edited, docs/changes/2026-11-11-codex-cursor-capture.md, holds tier: 2 at the last commit (sheet record); the session's own texts never name a tier and the brief [1] called the task tier 1 work
+probe-before-record: na | the record was approved on main before the session started ([1]; [2] cats it from origin/main), so the session did not first write it
+record-before-code: na | the record was there before the session started [2]; the session only added to it later [33], [35]
+red-first: pass | [11] ran bin/transcripts.test.sh after adding the probe tests and it reported failed assertions (`expected [0] got [2]`, passed=180 failed=69), before the first code, probe/agent_sample.py at [14]; [10] wrote only made-up fixtures
+change-line: pass | the PR opened at [45] has a body that starts `Change: docs/changes/2026-11-11-codex-cursor-capture.md` followed by a blank line; the body file at [40] opens the same way
+record-check: pass | the sheet cuts the record after C5 (224 lines hidden), so read at bf0bd4f in the repository: id, tier 2, status approved and all nine sections (Goal to Outcome) are there; record-check answered ok tier=2 mode=code at [40]
+outcome-filled: na | the record is status: approved, not done; neither task has done: true (sheet frontmatter), no item is ticked under Tasks (read at bf0bd4f), and [35] writes that the done marker is not set; the Outcome does hold the task's runs
+# The code-quality rubric: read from the diff of all the session's commits, before any judge's answer was read.
+code-quality: block | plugins/change-record/probe/agent_sample.py: Shape.add parses any string that is JSON (json_in) and copies its keys and its type/status/source/reason/model/kind/version values, so JSON printed by a command or pasted in a prompt reaches the sample; a made-up rollout whose `cat package.json` output named customers and dependencies put those names and values in codex-stop.json, against the module's own no-content contract, and no test in bin/transcripts.test.sh has JSON inside an output or a prompt (the labeller was fairly sure; the owner ruled 2026-11-12 that block stands)

@@ -274,6 +274,27 @@ record confirms it).
   Rejected: a row that says only that nothing was asked.
 - (After the labels.) The grader stays `rubric/1`: the code-quality question, its input and
   its counting did not change, and a new version would ask it of every session again.
+- (After the store pull.) What the code-quality judge reads was wrong, and C4 as resolved was
+  not what was built. C4 says the diff between the session's first and last commit. The code
+  took the commit at the session's first stop as the first, so every commit made before that
+  stop was left out; a session that stops once was judged on its last commit alone. Now the
+  base is the newest commit on the last commit's own line (first parents) that was made
+  before the session's first line, so the diff is what the session committed. The sheet
+  gives a labeller the same command. A session whose last commit was made before it started
+  made no commit, and is not judged. The input changed, so the grader is `rubric/2` and the
+  `rubric/1` verdicts are not carried over or stored. Rejected: reading the session's own
+  commits out of its transcript, which sessions that commit with `-q` do not print; and the
+  merge base with the default branch, which gives a later session on a shared branch the work
+  of the earlier ones. Only the files the session's own commits on that line changed were
+  shown, merges left out, so a merge from another branch did not bring its work in.
+- (After the store pull.) The code-quality judge is taken out too, as C2 says: measured on
+  the corrected diffs against seven labelled sessions it was wrong on four, and the owner
+  confirmed it on 2026-11-12 ("Take it out, as C2 says", in chat). `judge --rubrics` says so
+  and exits 2, and the report drops every rubric row. Rejected: keeping its blocks as leads
+  with no verdict, which the owner was offered; C2 says not tuned, and that is a second use
+  tuned to what it got right. What stays is how a session's own commits are found, which
+  the label sheet prints, and which the field graders need next (they take the first stop's
+  commit as the session's start, the same mistake).
 
 ## Tasks
 
@@ -520,3 +541,150 @@ Not done: task 3 (`transcripts propose`). C5 lets an edit be drafted only from a
 label confirms. The labels confirm two code-quality blocks, both defects in this plugin's
 own code and both now fixed in their own records; neither is a failure of the `change`
 skill's text, so there is no confirmed skill failure to draft an edit from yet.
+
+### The store pull: the judge's input corrected, the judge measured and taken out (2026-11-12)
+
+The store was read from this cloud session with the owner's leave: the session's network was
+moved onto the `agent-workflow-admin` environment, whose saved secret the proxy adds to
+requests to the store, so the key was never in the session. `materialize` rebuilt ten
+sessions, five of them new (the child sessions of 11 November). `grade --store` wrote 70
+rows.
+
+Labels (C3). Two model labellers read the five new sessions blind, for the seven steps and
+code quality, and a third read `659da00f` and `6cc07e5f` again for code quality once their
+first labels were known to rest on a partial diff. The owner ruled on 2026-11-12: the three
+blocks a labeller was not sure of stand (`172fe91d`, `508c7884`, `bf01bd72`), and a workflow
+file counts as code (`bf01bd72`, red-first). Two sheets cut the record, so those labellers
+read it at the last commit in the repository and said so; those labels stand as written.
+
+What the labellers showed first: the judge read the wrong diff. It took the commit at the
+session's first stop as the first commit. What it was shown, against what the session
+committed (lines changed):
+
+    659da00f   show fe50848            498   | b2baf03..fe50848, 5 commits    1,122
+    6cc07e5f   21c00ba..68db645        248   | 5071b6e..68db645, 11 commits   1,637
+    508c7884   show f1f49ed              1   | 830850f..f1f49ed, 3 commits    1,969
+    172fe91d   show bf0bd4f          1,276   | 0f4e78f..bf0bd4f, 2 commits    1,380
+    bf01bd72   bdb8d6a..6503763      3,856   | most of it a merge from main, not the session's
+
+So this morning's verdicts, and the first labels of two sessions, were on parts. The "no
+tests in the diff" block on `659da00f` was true of the one commit shown.
+
+The fix (`rubric/2`): the base is the newest commit on the last commit's own line made
+before the session's first line, and only the files the session's own commits changed are
+shown. Red first: 17 assertions failed. 10 guards broken by hand, 8 caught, 2 given tests. A
+flaw of the fix itself showed on the first real run: a file a session had added and removed
+again was still named in the list of files, and the judge blocked `6cc07e5f` three times for
+a compiled file that was not in its last commit. Fixed with a test, and that session asked
+again.
+
+The measurement, on the corrected diffs. Sonnet was asked of the seven sessions that wrote
+code: 21 calls, 20 counted and one with no answer in 180 s, then 3 more for `6cc07e5f`.
+`transcripts report DIR --labels plugins/change-record/grade/labels`, before the removal:
+
+    | Step | Grader | Covered | Wrong | Error | False fail | False pass | False n/a | Both n/a |
+    | code-quality | rubric/2:sonnet | 7 | 4 | 57% | 0 | 4 | 0 | 0 |
+
+    session    label     judge
+    659da00f   block     block (2 of 3)
+    6cc07e5f   block     block (3 of 3)
+    dd2defdb   block     approve, on a part
+    172fe91d   block     approve (2 votes; 1 no answer)
+    508c7884   block     approve, on a part
+    bf01bd72   block     approve, on a part
+    478c69ad   approve   approve, on a part
+
+Both blocks named a real defect: on `659da00f` the redaction defect fixed in
+`2026-11-12-push-resend-after-stop`, and on `6cc07e5f` `frontmatter()` in `grade/fields.py`
+returning a list where a count is expected, which is on `main` today. The four approvals each
+missed a defect a labeller reproduced by running the session's code. Six of the seven diffs
+were over the 60,000 characters a judge is shown and were judged on a part. 57% is far over
+C2's one in five, so the judge is taken out.
+
+What that says beyond the rule: the labeller that found the defects had tools and ran the
+code; the judge had three votes on a capped diff and no tools. Agreement between a reviewer
+that runs code and one that cannot is not something a rubric's wording changes.
+
+Shipped: `judge --rubrics` refuses and says why; `judge_rubrics`, the diff selection and the
+rubric prompts are gone; `grade/rubric.py` holds only the retired rubrics' names and
+allowed answers; `grade/report.py` drops every rubric row; `grade/labels.py` checks a
+`code-quality:` or `verbosity:` line and counts it for nothing; `session_commits` in
+`bin/transcripts` and the sheet's line that names a session's own commits; the README.
+`transcripts-judge.test.sh`: 284 assertions on `main`, 297 with `rubric/2`, 224 now. Red
+first for the removal: 17 failed. 15 guards broken by hand: 14 caught, and the fifteenth was
+refused by another path, so its test now tells the two apart. The other suites pass
+unchanged (250, 168, 89), and the eval cases (40).
+
+Use, on the rebuilt store folder:
+
+    $ transcripts judge DIR --rubrics --repo-dir .
+    transcripts: judge --rubrics was taken out: both rubric judges were wrong on more than one labelled session in five (plugins/change-record/grade/rubrics/README.md has the measurements)
+    exit 2
+
+    $ transcripts sheet DIR --session ... (five sessions)
+    659da00f: The session's own commits, in the repository: `git log --first-parent --no-merges b2baf0338e..fe50848d89`.
+    508c7884: The session's own commits, in the repository: `git log --first-parent --no-merges 830850f48e..f1f49edfca`.
+    883c53c9: No commit of this session's is known: what it wrote is in the calls below.
+
+The report on that folder, which holds eight `rubric/2` rows, names no rubric. Its measure of
+the field graders, now on nine labelled store sessions:
+
+    | Step | Grader | Covered | Wrong | Error | False fail | False pass | False n/a | Both n/a |
+    | tier-declared | fields/2 | 8 | 0 | 0% | 0 | 0 | 0 | 1 |
+    | probe-before-record | fields/2 | 0 | 0 | not yet checked | 0 | 0 | 0 | 9 |
+    | record-before-code | fields/2 | 0 | 0 | not yet checked | 0 | 0 | 0 | 9 |
+    | red-first | fields/2 | 7 | 2 | 29% | 2 | 0 | 0 | 2 |
+    | change-line | fields/2 | 7 | 0 | 0% | 0 | 0 | 0 | 2 |
+    | record-check | fields/2 | 8 | 1 | 12% | 1 | 0 | 0 | 1 |
+    | outcome-filled | fields/2 | 5 | 1 | 20% | 0 | 0 | 1 | 4 |
+
+The four false verdicts are grader faults, each traced to its cause below.
+
+Defects on `main` that this round found, eleven in all (the owner was first told ten). None
+is fixed here; the owner ruled the order: the probe, then the store, then the graders, then
+the sheet and the test scaffolding. "Confirmed" is by this session, on `main`.
+
+- Probe. `probe/agent_sample.py` descends into any string that parses as JSON and copies its
+  key names, and the values under `type`, `status`, `source`, `reason`, `model`, `kind` and
+  `version`, into a sample that promises structure and no content. Found by a labeller
+  (`172fe91d`), who ran it. Confirmed by reading.
+- Store. `cmd_push` runs every session in one `try`, so one session that cannot be sent
+  stops all the others at every push. Labeller (`659da00f`), ran it. Confirmed by reading.
+- Store. `materialize` ranks a session's index rows by last timestamp, then bytes, so after
+  a redaction that shortens the text the older, less redacted row wins. Labeller, ran it.
+  Confirmed by reading.
+- Store. The email pattern in `PATTERNS` is quadratic on a long run of its own characters:
+  1.9 s for 20,000 letters here, and the background push has 60 s. Labeller. Confirmed by
+  running the pattern.
+- Store. The `bearer|token|basic` pattern rewrites prose ("the token expiration is
+  checked"). It errs on the safe side. Labeller. Confirmed by reading.
+- Graders. `simple_commands` in `grade/fields.py` lexes with `shlex`, which takes `#` as a
+  comment to the end of the command, so a test run under a comment line is not seen.
+  Labeller (`6cc07e5f`), ran it. Confirmed by running the lexer. It may be the cause of the
+  false fail on `478c69ad`; that is not yet shown.
+- Graders. The commit at the first stop is taken as the session's start: a record the
+  session itself created counts as already there, `record-check` runs on a part of the
+  session's commits (the false fail on `1305be25`), and a task marked done before the first
+  stop is not seen (the false n/a on `508c7884`). Labeller, ran it; the same mistake as the
+  judge's. Confirmed by reading.
+- Graders. `frontmatter()` returns `({}, [])` for a record with no header, and
+  `outcome-filled` compares that list with a count. Found by the Sonnet judge (`6cc07e5f`).
+  Confirmed by reading; the crash is not yet reproduced.
+- Graders. A file written by inline Python after a `cd` is placed in the wrong folder, so a
+  fixture counts as code (the false fail on `172fe91d`). Seen in the grader's own evidence.
+- Sheet. `sheet()` shows a record's first 200 lines; the tier 2 records here run 267 to 424,
+  so Tasks, Checks and Outcome are cut. Labeller (`508c7884`), ran it. Confirmed by reading.
+- Tests. Seven suites set `TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"` beside a trap that
+  removes it; if `mktemp` fails, the trap removes the folder the suite was started from.
+  Labeller (`bf01bd72`), ran it. Confirmed by reading.
+
+Not done, and what to keep in mind:
+
+- The store holds the 70 `fields/2` rows, four of them known false, and eight `rubric/2`
+  rows no report reads. It takes inserts only; corrected field rows will sit beside the old
+  ones under the next grader version.
+- This morning's `rubric/1` rows were never stored.
+- Two labellers left files outside their scratch folders while reproducing a defect and
+  removed them; the repository was not touched.
+- Task 3 (`transcripts propose`) is still not started. The confirmed failures are defects in
+  this plugin's code, not failures of the `change` skill's text.

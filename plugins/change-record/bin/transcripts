@@ -1301,7 +1301,10 @@ def cmd_sheet(args):
                 entry = json.load(open(os.path.join(d, "sessions", sid + ".json")))
                 lines = session_lines(d, sid, entry)
                 last, records = (entry.get("last_stop") or {}).get("commit"), []
-                commits = ((entry.get("first_stop") or {}).get("commit"), last)
+                try:
+                    commits = session_commits(o["repo"], entry)
+                except LookupError:
+                    commits = None
                 for rec in labels.named_records(lines)[:3]:
                     try:
                         text = record_reader(o["repo"], last, lambda m: None)(rec)
@@ -1404,7 +1407,7 @@ def read_json(path, default=None):
 
 
 JUDGE_USAGE = ("usage: transcripts judge [DIR] [--session ID]... [--repo-dir DIR] [--judge claude|opencode] [--limit N] "
-               "[--store] [--verbose]\n       transcripts judge [DIR] --rubrics [--session ID]... [--repo-dir DIR] [--limit N] [--store]\n"
+               "[--store] [--verbose]\n"
                "       transcripts judge --transcript FILE --record FILE [--judge claude|opencode]\n"
                "--limit: sessions judged per run, newest first (default 20 for claude, the Haiku judge; 10 for opencode, "
                "the agreement check)")
@@ -1427,26 +1430,27 @@ def show_judged(sid, res, verbose):
         print(f"  verdict: {r['verdict']}")
 
 
-def session_diff(repo, first, last):
-    """[(path, that file's diff)] between a session's first and last commit, or raise LookupError."""
+def session_commits(repo, entry):
+    """(base, last) of a session's own commits. last is the commit at its last stop. base is the
+    newest commit on last's own line (first parents) made before the session's first line, or
+    None when that line began with the session. The commit at the first stop is no base: it is
+    already the work of the session's first turn. Raises LookupError when there is no commit to
+    name: none recorded, one this repository does not have, or a last commit made before the
+    session began."""
+    last = (entry.get("last_stop") or {}).get("commit")
     if not last:
         raise LookupError("no commit recorded for the session")
-    if not has_commit(repo, last):
-        raise LookupError(f"commit {last[:10]} is not in {repo}")
-    base = first if has_commit(repo, first) and first != last else (last + "^" if has_commit(repo, last + "^") else None)
-    if base:
-        rc, names = git_run(repo, "diff", "--name-only", base, last)
-    else:  # the repository's first commit: everything it holds
-        rc, names = git_run(repo, "show", "--name-only", "--format=", last)
+    try:
+        began = int(datetime.fromisoformat(str(entry.get("first_timestamp")).replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        raise LookupError("the session's start time is not known")
+    rc, out = git_run(repo, "rev-list", "-1", "--first-parent", f"--before={began}", last)
+    base = out.decode().strip()
     if rc != 0:
-        raise LookupError(f"git could not diff {(base or 'the first commit')[:10]}..{last[:10]}")
-    files = []
-    for path in names.decode("utf-8", "replace").splitlines():
-        _, out = git_run(repo, "diff", base, last, "--", path) if base else git_run(repo, "show", "--format=", last, "--", path)
-        files.append((path, out.decode("utf-8", "replace")))
-    if not any(d for _, d in files):
-        raise LookupError("the session's commits change nothing")
-    return files
+        raise LookupError(f"commit {last[:10]} cannot be read in {repo}")
+    if base == last:
+        raise LookupError("the session made no commit")
+    return base or None, last
 
 
 ASKED_AGAIN = "a question left with no verdict is asked again at the next run"
@@ -1490,92 +1494,14 @@ def send_judged(url, key, path, doc, rows):
     return n
 
 
-def judge_rubrics(fields, d, only, repo, limit, store):
-    """transcripts judge --rubrics: the code-quality rubric for the sessions that wrote code and have a commit."""
-    import rubric
-    q = "code-quality"
-    try:
-        d = folder_arg(d)
-        url = key = None
-        if store:
-            url = store_url()
-            if url is None:
-                raise StoreError("--store needs AGENT_TRANSCRIPTS_URL, the store's URL")
-            key = key_file("read-key", required=True)
-    except (PermissionError, StoreError) as e:
-        say(str(e))
-        return 2
-    sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
-    todo, kept, owed = [], 0, []
-    for sid in [s for s in sids if not only or s in only]:
-        entry = read_json(os.path.join(d, "sessions", sid + ".json"), {})
-        try:
-            lines = session_lines(d, sid, entry)
-            if not fields.code_written(lines, session_root(lines)):
-                raise LookupError("no code written")
-            files = session_diff(repo, (entry.get("first_stop") or {}).get("commit"), (entry.get("last_stop") or {}).get("commit"))
-        except (OSError, LookupError, fields.Unparsable) as e:
-            print(f"{sid[:8]} not judged: {e}")
-            continue
-        text, partial, left = rubric.select_diff(files)
-        context = "Files in the diff: " + ", ".join(p for p, _ in files) + "." + \
-            (" Left out as generated or fixture files: " + ", ".join(left) + "." if left else "")
-        sha = hashlib.sha256(redact_text(text).encode()).hexdigest()
-        have = read_json(os.path.join(d, "rubrics", sid + ".json"), {})
-        old = (have.get("questions") or {}).get(q) or {} if have.get("judge") == rubric.RUBRIC else {}
-        if old.get("input_sha256") == sha and old.get("verdict") in ("pass", "fail"):
-            kept += 1
-            if store and not have.get("stored_at"):
-                owed.append((sid, have))
-        else:
-            todo.append((entry.get("last_timestamp") or "", sid, entry, text, partial, context, left, sha))
-    todo.sort(key=lambda t: (t[0], t[1]), reverse=True)
-    todo = todo[:limit]
-    print(f"transcripts: {len(todo)} sessions to judge, at most {len(todo) * rubric.VOTES} calls ({rubric.VOTES} votes each)"
-          + (f"; {kept} already judged" if kept else ""))
-    stored = problems = 0
-    for _, sid, entry, text, partial, context, left, sha in todo:
-        now = datetime.now().astimezone().isoformat(timespec="seconds")
-        r = rubric.judge_question(q, text, partial, context, redact_text)
-        r.update(input_sha256=sha, left_out=left, judged_at=now)
-        doc = {"session_id": sid, "judge": rubric.RUBRIC, "judged_at": now, "questions": {q: r}}
-        write_atomic(os.path.join(d, "rubrics", sid + ".json"), (json.dumps(doc, indent=2) + "\n").encode())
-        errors = errors_in(doc["questions"], [q])
-        if errors:
-            say(f"{sid[:8]}: {errors} of the judge's answers were errors; {ASKED_AGAIN}")
-            problems += 1
-        skill_name, blob = change_skill(entry)
-        rows = []
-        if r["verdict"] != rubric.UNDECIDED:
-            ev = {"label": r["label"], "why": r["why"], "partial": bool(r["partial"]),
-                  "votes": [v["status"] for v in r["votes"]], "prompt_sha256": r["prompt_sha256"],
-                  "judge_file": f"rubrics/{sid}.json"}
-            if left:
-                ev["left_out"] = left
-            rows.append({"session_id": sid, "step": q, "verdict": r["verdict"], "skill": skill_name, "skill_blob": blob,
-                         "grader": f"{rubric.RUBRIC}:{r['model']}", "graded_at": now, "evidence": ev})
-        write_atomic(os.path.join(d, "scores", sid + ".rubrics.json"), (json.dumps(rows, indent=2) + "\n").encode())
-        print(f"{sid[:8]} {q}: {r['label'] or r['verdict']}" + (" (on a part)" if partial else ""))
-        if store:
-            owed.append((sid, doc))
-    for sid, doc in owed:  # judged now, or at an earlier run that did not store or could not
-        try:
-            # a file from before 2026-11-12 may hold a row of the verbosity rubric, which is not sent any more
-            rows = [r for r in read_json(os.path.join(d, "scores", sid + ".rubrics.json"), []) if r.get("step") in rubric.QUESTIONS]
-            stored += send_judged(url, key, os.path.join(d, "rubrics", sid + ".json"), doc, [("scores", r) for r in rows])
-        except StoreError as e:
-            say(f"{sid}: {e}; its rows are kept in {d}")
-            problems += 1
-    if store:
-        print(f"transcripts: {stored} rows stored")
-    return 1 if problems else 0
-
-
 def cmd_judge(args):
     d, only, repo, kind, limit, store, verbose, transcript, record_file, i = None, [], os.getcwd(), "claude", None, False, False, None, None, 0
-    rubrics = False
     while i < len(args):
         a = args[i]
+        if a == "--rubrics":
+            say("judge --rubrics was taken out: both rubric judges were wrong on more than one labelled session in five "
+                "(plugins/change-record/grade/rubrics/README.md has the measurements)")
+            return 2
         if a in ("--session", "--repo-dir", "--judge", "--limit", "--transcript", "--record") and i + 1 < len(args):
             v = args[i + 1]
             if a == "--session":
@@ -1591,21 +1517,18 @@ def cmd_judge(args):
             else:
                 record_file = v
             i += 2
-        elif a in ("--store", "--verbose", "--rubrics"):
-            store, verbose, rubrics = store or a == "--store", verbose or a == "--verbose", rubrics or a == "--rubrics"
+        elif a in ("--store", "--verbose"):
+            store, verbose = store or a == "--store", verbose or a == "--verbose"
             i += 1
         elif d is None and not a.startswith("--"):
             d, i = a, i + 1
         else:
             say(JUDGE_USAGE)
             return 2
-    if kind not in ("claude", "opencode") or (limit is not None and limit < 1) or bool(transcript) != bool(record_file) \
-            or (rubrics and (transcript or kind != "claude")):
+    if kind not in ("claude", "opencode") or (limit is not None and limit < 1) or bool(transcript) != bool(record_file):
         say(JUDGE_USAGE)
         return 2
     fields, judge, _ = load_grade_modules()
-    if rubrics:
-        return judge_rubrics(fields, d, only, os.path.abspath(repo), limit or 20, store)
     limit = limit or (20 if kind == "claude" else 10)
     if transcript:
         try:

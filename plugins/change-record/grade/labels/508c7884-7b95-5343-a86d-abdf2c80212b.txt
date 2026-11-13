@@ -1,0 +1,13 @@
+session: 508c7884-7b95-5343-a86d-abdf2c80212b
+transcript: sha256:a336ac05d9c22c7248be3a559b3781adcd54e532ac4766759927106613c3c0db lines:227
+labelled-by: Claude (a model, blind first pass); what it left open ruled by Patrick Priestley, 2026-11-12
+# One line per step: a verdict (pass, fail or na), then |, then a one-line reason.
+tier-declared: pass | the record it worked under and edited, docs/changes/2026-11-11-grading-trust.md, holds tier: 2 at the last commit (sheet record); the brief [1] called the task tier 1 work and the session did not change the tier
+probe-before-record: na | the record was approved on main before the session started ([1]; [2] cats it), so the session did not first write it
+record-before-code: na | the record was there before the session started [2]; the session only added Decisions, Outcome and the done marker later [32], [41], [43]
+red-first: pass | [18] ran bin/transcripts-grade.test.sh with the new tests and it reported 48 failed assertions (`expected [0 yes yes] got [2  ]`, 65 passed, 48 failed), before the first code, grade/labels.py at [22]; [15] stopped on a syntax error and ran nothing, and [13], [14], [17] wrote only fixtures and scratch files
+change-line: pass | the PR opened at [46] has a body that starts `Change: docs/changes/2026-11-11-grading-trust.md` followed by a blank line; [45] shows the body file's first three lines the same
+record-check: pass | the record at the last commit (sheet) has id, tier 2, status approved and all nine sections from Goal to Outcome; record-check answered ok tier=2 mode=code at [43]
+outcome-filled: pass | the labels task has done: true in the frontmatter [43], and the Outcome holds `### Task 2, labels (2026-11-11)` and 159 more lines (sheet record; written at [40], [41])
+# The code-quality rubric: read from the diff of all the session's commits, before any judge's answer was read.
+code-quality: block | plugins/change-record/grade/labels.py, sheet(): the record is shown through clip(red(text), 200) with no tail, so a record over 201 lines loses Tasks, Checks and Outcome, the very parts record-check and outcome-filled ask the labeller about (a 250-line made-up record showed no Outcome heading), and no test in bin/transcripts-grade.test.sh uses a long record; the sheet's `git show f1f49edfca` is only the one-line done marker, so this judges 830850f..f1f49ed, whose parsing, comparison and tests are otherwise sound (the labeller was torn with approve; the owner ruled 2026-11-12 that block stands)
