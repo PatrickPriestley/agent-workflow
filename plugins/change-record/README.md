@@ -447,8 +447,13 @@ of the few fields that name a kind of thing (`type`, `role`, `status`, `model`, 
 fields, and `name` inside a tool call) when they look like an identifier or a version number;
 how often fixed phrases occur (`*** Update File:`, `rejected by user`, `Change: docs/changes/`);
 and the names, never the values, of `CODEX_*` and `CURSOR_*` environment variables. A key that
-does not look like a field name is written `<key>`. It holds no prompt, answer, command, path,
-address or id. `probe` never fails the session: every problem is a line on stderr and exit 0,
+does not look like a field name is written `<key>`. A string that is itself JSON (a prompt, a
+file a command printed) is content: it is opened one level, for its types, and its keys are
+written `<key>`, except the parameter names of a tool call's argument string and the words an
+agent's own wrapper around a result uses (`output`, `metadata`, `exit_code`); none of its
+values is kept. It holds no prompt, answer, command, path, address or id. Read each sample
+before you commit it all the same: a plain object's key names are kept when they look like
+field names. `probe` never fails the session: every problem is a line on stderr and exit 0,
 it prints nothing on stdout, and it reads at most 20 MB of the transcript. The list of what a
 sample may hold is at the top of `probe/agent_sample.py`.
 

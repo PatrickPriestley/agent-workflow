@@ -291,6 +291,36 @@ for x in '"agent": "codex"' function_call_output custom_tool_call local_shell_ca
          '~/.codex/sessions/<n>/<n>/<n>/rollout-<timestamp>-<uuid>.jsonl' '"incomplete_last_line": true'; do has "$s" "$x"; done
 it "the Codex sample holds no prompt, answer, command, path, address or id"
 no_content "$PO/codex-stop.json"
+it "a string that is itself JSON is content: its key names and values are not copied (record 2026-11-12-probe-no-content)"
+JXT="$PH/.codex/sessions/2026/11/12/rollout-2026-11-12T10-00-00-$CXID.jsonl"; mkdir -p "$(dirname "$JXT")"
+python3 - "$JXT" <<'PY'
+import json, sys
+def line(typ, payload): return json.dumps({"timestamp": "2026-11-12T10:00:00.000Z", "type": typ, "payload": payload})
+prompt = json.dumps({"accountOwner": "Bob", "reason": "confidential", "password": "hunter2"})
+package = json.dumps({"customerName": "Ada", "status": "churned", "dependencies": {"leftpad": "1.0.0"}, "kind": "enterprise"})
+rows = [
+    line("response_item", {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}),
+    line("response_item", {"type": "function_call", "name": "shell", "call_id": "call_1",
+                           "arguments": json.dumps({"command": ["cat", "package.json"], "env": {"deployTarget": "prod"}, "note": package,
+                                                    "status": "refunded", "name": "AdaLovelace"})}),
+    line("response_item", {"type": "function_call_output", "call_id": "call_1",
+                           "output": json.dumps({"output": package, "metadata": {"exit_code": 0, "duration_seconds": 0.1}, "billingPlan": "gold"})}),
+    line("response_item", {"type": "function_call_output", "call_id": "call_2", "output": json.dumps({"clientList": [{"fullName": "Ada", "status": "vip"}], "source": "crm"})}),
+]
+open(sys.argv[1], "w").write("\n".join(rows) + "\n")
+PY
+out="$(codex_hook "\"$JXT\"" | probe "$PO/json" --agent codex)"; rc=$?
+assert_eq 0 "$rc"
+s="$(cat "$PO/json/codex-stop.json" 2>/dev/null)"
+for x in accountOwner confidential password hunter2 customerName churned dependencies leftpad enterprise deployTarget billingPlan clientList crm \
+         refunded AdaLovelace fullName vip; do lacks "$s" "$x"; done
+it "what the agent itself wraps a result or a call in is still structure: the wrapper's known keys and a call's argument names"
+for x in '"payload.output|json.metadata.exit_code": "number:1"' '"payload.output|json.output": "json-string:1"' '"payload.arguments|json.command[]": "string:2"' \
+         '"payload.arguments|json.env": "object:1"' '"payload.arguments|json.env.<key>": "string:1"' '"payload.arguments|json.note": "json-string:1"' \
+         '"payload.output|json.<key>"' '"payload.content[].text": "json-string:1"'; do has "$s" "$x"; done
+it "a JSON string at the first level is opened with every key masked; one inside another JSON string is not opened"
+has "$s" '"payload.content[].text|json.<key>": "string:3"'
+lacks "$s" 'note|json'; lacks "$s" 'output|json.output|json'
 it "probe --agent cursor writes the stored summary, whatever keys the transcript uses"
 out="$(cursor_hook "\"$CUT\"" | probe "$PO" --agent cursor)"; rc=$?
 assert_eq 0 "$rc"; assert_eq "" "$out"; same "$MU/cursor-stop.expected.json" "$PO/cursor-stop.json"

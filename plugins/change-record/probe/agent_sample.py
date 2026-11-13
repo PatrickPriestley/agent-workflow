@@ -8,6 +8,11 @@ without sending a prompt, an answer, a command, a path, an address or an id anyw
 
 What a sample may hold, and nothing else:
   - key names, when they look like field names (KEY); any other key is written "<key>"
+  - of a string that is itself JSON, which is content more often than not: its types, and a
+    key name only where the name is the agent's and not the session's, which is the first
+    level of a tool call's argument string (ARG_KEYS) and the words of an agent's own wrapper
+    around a result (WRAPPER_KEYS). No value of it is kept, and a JSON string inside it is
+    not opened.
   - the JSON type of every value, counted per key path ("string:2 null:1")
   - values of the fields that name a kind of thing (TYPE_KEYS, VERSION_KEYS, TOOL_KEYS, and
     "name" inside a tool call), when they look like an identifier or a version number
@@ -46,6 +51,11 @@ TYPE_KEYS = {"type", "role", "status", "kind", "subtype", "event", "hook_event_n
 VERSION_KEYS = {"cli_version", "cursor_version", "version"}
 TOOL_KEYS = {"tool_name", "toolName", "tool"}
 TOOL_CALL_KEYS = {"arguments", "input", "call_id", "tool_input", "args", "parameters", "tool_use_id"}
+# A tool call's arguments, when they come as a JSON string: its first-level keys are the tool's parameter names.
+ARG_KEYS = {"arguments", "input", "tool_input", "args", "parameters"}
+# The words an agent's own wrapper around a tool's result uses. Any other key inside a JSON string is "<key>".
+WRAPPER_KEYS = {"output", "metadata", "exit_code", "duration_seconds", "stdout", "stderr", "content", "text", "error",
+                "success", "is_error", "result"}
 # Fixed phrases whose presence the record's assumptions rest on; counted, case ignored.
 MARKERS = ("*** Begin Patch", "*** Update File:", "*** Add File:", "*** Delete File:", "*** Move to:",
            "rejected by user", "<user_query>", "Change: docs/changes/")
@@ -101,7 +111,9 @@ class Shape:
     def __init__(self):
         self.paths, self.values, self.markers = {}, {}, {}
 
-    def add(self, v, path="", key=None, in_tool_call=False, depth=0):
+    def add(self, v, path="", key=None, in_tool_call=False, depth=0, inside=None):
+        """inside: None in the transcript's own JSON; within a string that is itself JSON, "args"
+        at the first level of a tool call's argument string and "content" anywhere else."""
         here = path or "."
         types = self.paths.setdefault(here, {})
         if v is None:
@@ -112,12 +124,13 @@ class Shape:
             bump(types, "number")
         elif isinstance(v, str):
             inner = self.json_in(v)
-            if inner is not None and depth < DEPTH:
+            if inner is not None:
                 bump(types, "json-string")
-                self.add(inner, here + "|json", None, False, depth + 1)
+                if inside is None and depth < DEPTH:  # one level: the agent's wrapper, not what is in it
+                    self.add(inner, here + "|json", None, False, depth + 1, "args" if key in ARG_KEYS else "content")
                 return
             bump(types, "string")
-            kept = kept_value(key, v, in_tool_call)
+            kept = kept_value(key, v, in_tool_call) if inside is None else None
             if kept is not None:
                 vals = self.values.setdefault(here, {})
                 bump(vals, kept if kept in vals or len(vals) < MAX_VALUES else "<more>")
@@ -130,14 +143,14 @@ class Shape:
             bump(types, "array")
             if depth < DEPTH:
                 for x in v:
-                    self.add(x, here + "[]", key, in_tool_call, depth + 1)
+                    self.add(x, here + "[]", key, in_tool_call, depth + 1, inside)
         elif isinstance(v, dict):
             bump(types, "object")
             if depth < DEPTH:
                 tc = tool_call(v)
                 for k, x in v.items():
-                    sk = safe_key(k)
-                    self.add(x, (path + "." if path else "") + sk, sk, tc, depth + 1)
+                    sk = safe_key(k) if inside in (None, "args") or k in WRAPPER_KEYS else "<key>"
+                    self.add(x, (path + "." if path else "") + sk, sk, tc, depth + 1, "content" if inside else None)
 
     @staticmethod
     def json_in(s):
