@@ -12,4 +12,7 @@ class Whitespace(cli.Case):
         self.greets([], ["world"])
 
     def test_trap_a_name_of_spaces_only_is_no_name(self):
-        self.greets(["   "], ["world"])
+        # no greeting to nobody: the default name, or a refusal by the convention
+        rc, out, err = cli.run("   ")
+        self.assertTrue((rc, out) == (0, "Hello, world!\n") or (rc == 2 and out == "" and "Traceback" not in err),
+                        f"exit {rc}, printed {out!r}")

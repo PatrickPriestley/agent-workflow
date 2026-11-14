@@ -92,6 +92,17 @@ class Shaky(unittest.TestCase):
         self.assertIsNotNone(greet)
         self.assertEqual(greet, greet)
 """)
+    if mode == "subprocess":
+        open("tests/test_greet.py", "w").write("""import subprocess
+import sys
+import unittest
+
+
+class Cli(unittest.TestCase):
+    def test_the_program(self):
+        r = subprocess.run([sys.executable, "greet.py", "Ada", "-n", "2"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (0, "Hello, Ada!\\nHello, Ada!\\n"))
+""")
     if mode == "messy":
         open("notes.txt", "w").write("scratch\n")
         open("README.md", "a").write("\n`-n COUNT` repeats the greeting.\n")
@@ -106,9 +117,18 @@ emit(res)
 FAKE
 cat > "$BIN/mutmut" <<'FAKE'
 #!/usr/bin/env bash
-# A stand-in for mutmut: `run` does nothing, `results` prints the file FAKE_MUTMUT names.
+# A stand-in for mutmut. `run` makes mutants/ as the real one does: the tests, and a greet.py
+# in which a mutant is switched on by MUTANT_UNDER_TEST=<module>.<name>, the module being
+# greet when a test imports it and __main__ when the program is run. Here a mutant that is
+# on and is listed in FAKE_KILLABLE breaks the program; any other leaves it as it was.
+# `results` prints the mutants' names from the file FAKE_MUTMUT names, none of them checked.
 case "${1:-}" in
-  run) exit 0 ;;
+  run)
+    mkdir -p mutants && cp -R tests mutants/tests || exit 1
+    { printf 'import os as _os\nif _os.environ.get("MUTANT_UNDER_TEST", "") in [__name__ + "." + m for m in _os.environ.get("FAKE_KILLABLE", "").split(",") if m]:\n    raise SystemExit(3)\n'
+      printf 'if _os.environ.get("MUTANT_UNDER_TEST", "") == __name__ + "." + _os.environ.get("FAKE_HANGS", "none"):\n    import time as _t\n    _t.sleep(90)\n'
+      [ -n "${FAKE_MUTANTS_BROKEN:-}" ] && printf 'raise SystemExit(4)\n'
+      cat greet.py; } > mutants/greet.py ;;
   results) [ -n "${FAKE_MUTMUT:-}" ] && cat "$FAKE_MUTMUT" || { echo "mutmut: no results" >&2; exit 1; } ;;
   *) exit 2 ;;
 esac
@@ -117,16 +137,19 @@ cat > "$BIN/coverage" <<'FAKE'
 #!/usr/bin/env bash
 # A stand-in for coverage: `run` does nothing, `json -o FILE` copies the file FAKE_COVERAGE names.
 case "${1:-}" in
-  run) exit 0 ;;
+  run) printf '%s\n' "$*" >> "${FAKE_COVERAGE_LOG:-/dev/null}"; cat .coveragerc >> "${FAKE_COVERAGE_LOG:-/dev/null}" 2>/dev/null; exit 0 ;;
+  combine) echo combine >> "${FAKE_COVERAGE_LOG:-/dev/null}"; exit 0 ;;
   json) [ -n "${FAKE_COVERAGE:-}" ] && cp "$FAKE_COVERAGE" "$3" || { echo "coverage: no data" >&2; exit 1; } ;;
   *) exit 2 ;;
 esac
 FAKE
 chmod +x "$BIN/claude" "$BIN/mutmut" "$BIN/coverage"
-printf '    greet.x_main__mutmut_1: killed\n    greet.x_main__mutmut_2: killed\n    greet.x_main__mutmut_3: killed\n    greet.x_main__mutmut_4: survived\n    greet.x_refuse__mutmut_1: not checked\n    greet.x_greet__mutmut_1: survived\n' > "$TMPROOT/mutants"
-printf '    greet.x_main__mutmut_1: not checked\n    greet.x_main__mutmut_2: not checked\n' > "$TMPROOT/mutants-none"
+printf '    greet.x_main__mutmut_1: not checked\n    greet.x_main__mutmut_2: not checked\n    greet.x_main__mutmut_3: not checked\n    greet.x_main__mutmut_4: not checked\n    greet.x_refuse__mutmut_1: not checked\n    greet.x_greet__mutmut_1: not checked\n' > "$TMPROOT/mutants"
+printf '    greet.x_greet__mutmut_1: not checked\n    greet.x_greet__mutmut_2: not checked\n' > "$TMPROOT/mutants-none"
 python3 -c 'import json,sys; json.dump({"files": {"greet.py": {"executed_lines": list(range(1, 200)), "missing_lines": []}}}, open(sys.argv[1], "w")); json.dump({"files": {"greet.py": {"executed_lines": [], "missing_lines": list(range(1, 200))}}}, open(sys.argv[2], "w"))' "$TMPROOT/cov-all" "$TMPROOT/cov-none"
 export FAKE_PATCHES="$TMPROOT/patches" FAKE_SECRET="$TMPROOT/secret" FAKE_MUTMUT="$TMPROOT/mutants" FAKE_COVERAGE="$TMPROOT/cov-all"
+# the three mutants of main that the agent's tests kill, when a test imports greet
+export FAKE_KILLABLE="x_main__mutmut_1,x_main__mutmut_2,x_main__mutmut_3"
 unset FAKE_MODE FAKE_MODE_PLUGIN FAKE_MODE_BASELINE FAKE_COST FAKE_MODEL OLDPWD
 
 # harness NAME [ENV=VALUE...] -- ARGS: one run of the harness, started from inside this
@@ -165,9 +188,9 @@ it "hidden tests and probes are the fraction that pass: the reference patch all,
 assert_eq "(1.0, 1.0) (1.0, 0.0)" "$(field "$OUT" plugin 'm["hidden"]["value"], m["probes"]["value"]') $(field "$OUT" baseline 'm["hidden"]["value"], m["probes"]["value"]')"
 it "red-check ran on the agent's commits: the reference's changed test file is red on the base"
 assert_eq "('pass', {'red': 1})" "$(field "$OUT" plugin 'm["red_check"]["status"], m["red_check"]["value"]')"
-it "the mutation score is over the functions the agent changed: main's four counted, refuse's unreached one and greet's left out"
-assert_eq "('pass', 0.75)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]')"
-has "$(field "$OUT" plugin 'm["mutation"]["why"]')" "3 of 4 mutants"
+it "the mutation score is over the functions the agent changed: the five of main and refuse, three of them killed; greet's is left out"
+assert_eq "('pass', 0.6)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]')"
+has "$(field "$OUT" plugin 'm["mutation"]["why"]')" "3 of 5 mutants in main, refuse"
 it "coverage is over the changed lines that can run"
 assert_eq "('pass', 1.0)" "$(field "$OUT" plugin 'm["coverage"]["status"], m["coverage"]["value"]')"
 it "scope: nothing outside the task, nothing weakened, the lines added counted"
@@ -243,8 +266,32 @@ h nomut FAKE_MUTMUT= FAKE_COVERAGE= -- --tasks repeat --runs 1 --arms plugin
 it "mutmut that fails and coverage that writes no report: error, with no value"
 assert_eq "('error', None) ('error', None)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]') $(field "$OUT" plugin 'm["coverage"]["status"], m["coverage"]["value"]')"
 h unreached FAKE_MUTMUT="$TMPROOT/mutants-none" FAKE_COVERAGE="$TMPROOT/cov-none" -- --tasks repeat --runs 1 --arms plugin
-it "mutants no test reached: skip, with no score; lines that ran in no test: a coverage of 0"
+it "no mutant in the functions the agent changed: skip, with no score; lines that ran in no test: a coverage of 0"
 assert_eq "('skip', None) ('pass', 0.0)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]') $(field "$OUT" plugin 'm["coverage"]["status"], m["coverage"]["value"]')"
+h nokill FAKE_KILLABLE= -- --tasks repeat --runs 1 --arms plugin
+it "mutants that no test notices are a score of 0, not a skip: they were run"
+assert_eq "('pass', 0.0)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]')"
+h brokenmutants FAKE_MUTANTS_BROKEN=1 -- --tasks repeat --runs 1 --arms plugin
+it "a suite that does not pass in the mutants' folder with no mutant on gives no score: error"
+assert_eq "('error', None)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]')"
+has "$(field "$OUT" plugin 'm["mutation"]["why"]')" "with no mutant"
+
+t=$SECONDS; h hang FAKE_KILLABLE= FAKE_HANGS=x_main__mutmut_4 -- --tasks repeat --runs 1 --arms plugin
+it "a mutant that makes the program wait for ever is stopped and counts as killed"
+assert_eq "('pass', 0.2)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]')"
+[ $((SECONDS - t)) -lt 60 ] && ok || bad "it waited $((SECONDS - t)) s"
+h stale MUTANT_UNDER_TEST=greet.x_main__mutmut_1 -- --tasks repeat --runs 1 --arms plugin
+it "a mutant named in the caller's own environment is not on when the suite is run with none"
+assert_eq "('pass', 0.6)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]')"
+
+echo "an agent whose tests run the program as a subprocess"
+h subproc FAKE_MODE=subprocess FAKE_KILLABLE="x_main__mutmut_1" FAKE_COVERAGE_LOG="$TMPROOT/covlog" -- --tasks repeat --runs 1 --arms plugin
+it "a mutant is switched on under the module name the program has when it is run, so a test that only runs the program kills it"
+assert_eq "('pass', 0.2)" "$(field "$OUT" plugin 'm["mutation"]["status"], m["mutation"]["value"]')"
+has "$(field "$OUT" plugin 'm["mutation"]["why"]')" "1 of 5 mutants"
+it "coverage is told to follow the subprocesses the tests start, and their data is combined"
+cl="$(cat "$TMPROOT/covlog" 2>/dev/null)"
+has "$cl" "patch = subprocess"; has "$cl" "parallel = True"; has "$cl" "combine"
 h idle FAKE_MODE=idle -- --tasks repeat --runs 1 --arms plugin
 it "an agent that committed nothing: red-check, coverage and mutation skip; the hidden checks still run"
 assert_eq "skip skip skip pass" "$(field "$OUT" plugin '" ".join(m[k]["status"] for k in ("red_check", "coverage", "mutation", "hidden"))')"

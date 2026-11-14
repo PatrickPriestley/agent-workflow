@@ -272,10 +272,22 @@ result is for that model. Patrick Priestley, in chat, 2026-11-14.
 - Deterministic measures only. Rejected: the Haiku judge of error-message wording that the
   design proposed. The two model judges built since were wrong too often to keep, and the
   probes already compare each error's exit code and a message pattern.
-- The mutation score is over the functions the agent changed, taken from mutmut's results
-  for the whole file by the function in each mutant's name. A run with no mutant in those
-  functions, or none that a test reaches, has the status skip and no score. Rejected:
-  "the lines the agent changed", which mutmut cannot select and its results do not name.
+- The mutation score is over the functions the agent changed, by the function in each
+  mutant's name. A run with no mutant in those functions has the status skip and no score.
+  Rejected: "the lines the agent changed", which mutmut cannot select and does not name.
+- mutmut makes the mutants and the harness scores them: each mutant is switched on and the
+  agent's whole suite run against it, once under the module name `greet`, which the program
+  has when a test imports it, and once under `__main__`, which it has when a test runs it.
+  A run that fails or does not end in time has killed the mutant. Rejected: mutmut's own
+  verdicts. It decides which tests reach a mutant inside its own process, so for an agent
+  whose tests run the program as a subprocess it checks nothing: 6 of the 10 shake-out runs
+  had no score, and the matrix would have left the mutation question undecided. (Changed
+  after the shake-out of all five tasks, before any run of the matrix.)
+- Coverage follows the subprocesses the tests start (`patch = subprocess`, with each
+  process's data kept apart and combined). Rejected: the plain run, which read 0.07 to 0.16
+  for the same four shake-out runs whose true coverage is 0.86 to 1.0.
+- The hidden check for a name of spaces only accepts a refusal with status 2 as well as
+  the default name. Both say there is no greeting for nobody; `Hello, !` is neither.
 - The measures need pytest, mutmut and coverage, installed by the harness into a virtual
   environment of its own. They run on a copy of the scratch repository made after the agent
   has finished and after the scope measure has read the agent's commits, so mutmut's
@@ -507,3 +519,41 @@ the skill. Error path: lines that name two models give no table and exit 2.
 R6: `git diff --stat origin/main..HEAD -- plugins/change-record/skills` prints nothing.
 
 Not done: the matrix and its report, which are task 3.
+
+### Task 2, the measures after the shake-out of all five tasks (2026-11-14)
+
+The shake-out was run for the other four tasks too, one run an arm, 65 cents; with the
+first, ten runs and 86 cents in all. It showed two things the fakes could not.
+
+In 6 of the 10 runs the agent's tests run the program as a subprocess. For those, mutmut
+checked no mutant and coverage saw almost no line. The measures are changed as Decisions
+say. The ten kept repositories, measured again, no agent run:
+
+    task               arm       mutation before -> after      coverage before -> after
+    repeat             plugin    0.644 -> 0.644                1.0   -> 1.0
+    repeat             baseline  0.87  -> 0.87                 1.0   -> 1.0
+    names-file         plugin    none  -> 0.679 (36 of 53)     0.065 -> 0.903
+    names-file         baseline  none  -> 0.571 (28 of 49)     0.08  -> 0.92
+    names-csv          plugin    none  -> 0.809 (38 of 47)     0.091 -> 0.864
+    names-csv          baseline  0.879 -> 0.914 (53 of 58)     0.974 -> 0.974
+    format-json        plugin    0.681 -> 0.681                1.0   -> 1.0
+    format-json        baseline  none  -> 0.788 (52 of 66)     0.16  -> 1.0
+    defect-whitespace  plugin    none  -> none                 1.0   -> 1.0
+    defect-whitespace  baseline  none  -> none                 1.0   -> 1.0
+
+Where the tests import the program the score is what mutmut gave, but for one run where
+the whole suite kills two mutants more than the tests mutmut had picked. For
+`defect-whitespace` there is still no score: mutmut makes no mutant in `greet`, the one
+function the fix touches. That task will not be decided on mutation.
+
+The hidden checks, on the same ten: `names-file`, both arms miss the byte order mark;
+`names-csv`, the baseline misses the empty item and the trailing comma and the plugin arm
+misses nothing; `defect-whitespace`, both print `Hello, !` for a name of spaces only;
+`format-json` and `repeat`, nothing missed. Ten runs decide nothing.
+
+Red first: 10 of 83 assertions failed on the measures as they were. `run.test.sh` passes
+with 86. Guards: 12 broken by hand in the changed code; all 12 failed the suite.
+
+One mutant in sixty or so makes the program wait for ever; a run of the suite against a
+mutant is stopped after ten times what the suite takes with none, and five seconds. Before
+that limit one repository took six minutes to score.

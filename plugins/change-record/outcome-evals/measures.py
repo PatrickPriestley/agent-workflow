@@ -10,7 +10,11 @@ How well the agent did is the value.
     probes      fraction of the hidden probes that pass
     red_check   red-check's verdicts for the changed test files, as counts
     coverage    fraction of the changed, executable lines of greet.py the agent's tests run
-    mutation    fraction of mutants killed, in the functions of greet.py the agent changed
+    mutation    fraction of mutants killed, in the functions of greet.py the agent changed.
+                mutmut makes the mutants; each is then switched on and the agent's whole suite
+                run against it, once under the module name the program has when a test imports
+                it and once under the one it has when a test runs it. mutmut's own verdicts are
+                not used: it finds no test for a mutant that only a subprocess reaches.
     outside     files changed outside greet.py, README.md, tests/ and docs/changes/
     weakened    test functions deleted and assertion lines removed, against the base
     added       lines added
@@ -27,10 +31,11 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 INSIDE = ("greet.py", "README.md")
 INSIDE_DIRS = ("tests/", "docs/changes/")
-UNCOUNTED = ("not checked", "skipped", "no tests")  # mutants no test was run against
+MODULES = ("greet", "__main__")  # what greet.py is called when a test imports it, and when one runs it
 
 
 def sh(cmd, cwd, env=None, timeout=300):
@@ -188,7 +193,12 @@ def coverage(clone, lines, tools_bin):
     if not lines:
         return entry("skip", None, "greet.py did not change")
     env = tool_env(tools_bin)
-    run = sh(["coverage", "run", "--source=.", "-m", "unittest", "discover", "-s", "tests", "-t", "."], clone, env)
+    # the tests may run the program as a subprocess: coverage follows it there, each process
+    # writes its own data, and combine puts them together
+    with open(os.path.join(clone, ".coveragerc"), "w") as f:
+        f.write("[run]\nsource = .\npatch = subprocess\nparallel = True\n")
+    run = sh(["coverage", "run", "-m", "unittest", "discover", "-s", "tests", "-t", "."], clone, env)
+    sh(["coverage", "combine"], clone, env)
     out = os.path.join(clone, ".coverage.json")
     rep = sh(["coverage", "json", "-o", out], clone, env)
     if rep.returncode != 0 or not os.path.exists(out):
@@ -201,27 +211,42 @@ def coverage(clone, lines, tools_bin):
     return entry("pass", round(len(could & ran) / len(could), 3), f"{len(could & ran)} of {len(could)} changed lines")
 
 
+def suite_passes(folder, env, mutant=None, limit=120):
+    env = dict(env)
+    env.pop("MUTANT_UNDER_TEST", None)
+    if mutant:
+        env["MUTANT_UNDER_TEST"] = mutant
+    try:
+        return sh(["python3", "-B", "-m", "unittest", "discover", "-s", "tests", "-t", "."], folder, env, timeout=limit).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False  # a mutant that hangs the suite has been noticed
+
+
 def mutation(clone, functions, tools_bin):
     if not functions:
         return entry("skip", None, "the agent changed no function of greet.py")
     env = tool_env(tools_bin)
     with open(os.path.join(clone, "setup.cfg"), "w") as f:
         f.write("[mutmut]\nsource_paths=greet.py\ntests_dir=tests\n")
-    sh(["mutmut", "run"], clone, env, timeout=600)
+    sh(["mutmut", "run"], clone, env, timeout=600)  # for the mutants it makes in mutants/
     res = sh(["mutmut", "results", "--all", "true"], clone, env)
     if res.returncode != 0:
         return entry("error", None, (res.stderr.strip() or "mutmut results failed")[-200:])
-    killed = counted = 0
-    for m in re.finditer(r"^\s*(\S+?)__mutmut_\d+: (.+?)\s*$", res.stdout, re.M):
-        fn = re.split(r"[.ǁ]", m.group(1))[-1]
-        fn = fn[2:] if fn.startswith("x_") else fn
-        if fn not in functions or m.group(2) in UNCOUNTED:
-            continue
-        counted += 1
-        killed += m.group(2) == "killed"
-    if not counted:
-        return entry("skip", None, "no mutant in the changed functions was reached by a test")
-    return entry("pass", round(killed / counted, 3), f"{killed} of {counted} mutants in {', '.join(sorted(functions))}")
+    names = []
+    for m in re.finditer(r"^\s*\S+?\.(\S+?__mutmut_\d+):", res.stdout, re.M):
+        fn = re.split("\u01c1", m.group(1).rsplit("__mutmut_", 1)[0])[-1]
+        if (fn[2:] if fn.startswith("x_") else fn) in functions:
+            names.append(m.group(1))
+    if not names:
+        return entry("skip", None, "mutmut made no mutant in the functions the agent changed")
+    folder = os.path.join(clone, "mutants")
+    started = time.time()
+    if not os.path.isdir(os.path.join(folder, "tests")) or not suite_passes(folder, env):
+        return entry("error", None, "the agent's suite does not pass in the mutants' folder with no mutant on")
+    # a mutant may make the program wait for ever: give each run ten times what the suite took, and five seconds
+    limit = 5 + 10 * (time.time() - started)
+    killed = sum(1 for name in names if not all(suite_passes(folder, env, f"{module}.{name}", limit) for module in MODULES))
+    return entry("pass", round(killed / len(names), 3), f"{killed} of {len(names)} mutants in {', '.join(sorted(functions))}")
 
 
 def measure(task, repo, base, checks_dir, red_check_tool, tools_bin):
