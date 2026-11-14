@@ -1,7 +1,7 @@
 ---
 id: 2026-11-14-ci-macos-cost
 tier: 1
-status: open
+status: done
 requester: Patrick Priestley, in chat on 2026-11-14 ("Can we fix 3", to "Cut what CI costs. For example, run the macOS jobs only on `main` instead of on every PR push.")
 approvers: []
 ---
@@ -73,22 +73,32 @@ macOS job that now never reports.
 
 ## Outcome
 
-Shipped, and a prototype until a run shows it: `.github/workflows/test.yml` takes the
-runners of its `test` and `change-record` jobs from one expression, can be started by hand,
-and cancels a pull request's run when a newer one starts; `bin/ci-workflow.test.sh` (13
-assertions) pins that, and runs as a step of the `test` job.
+Shipped: `.github/workflows/test.yml` takes the runners of its `test` and `change-record`
+jobs from one expression, can be started by hand, and cancels a pull request's run when a
+newer one starts; `bin/ci-workflow.test.sh` (13 assertions) pins that, and runs as a step
+of the `test` job.
 
 Red first: 6 of the 13 assertions failed on the workflow as it was. 9 guards broken by
 hand, in the workflow's text; all 9 failed the test. The workflow parses as YAML, and the
 suites beside it pass (`commit-gate` 81, `pr-size` 41, `pr-agent/workflow` 61,
 `pr-agent` 11).
 
-Not verified against the real system: GitHub has started no job for this repository since
-2026-11-13, so the expression has not been evaluated by GitHub. The record stays open until
-the first pull request after Actions is back shows the two suites' jobs on Linux only, and
-the push to `main` that follows shows them on Linux and macOS. If the expression is wrong
-the likely sign is a workflow that fails to start with a message about its matrix; the fix
-would be a fixed list again, which is one line per job.
+Verified against the real system (the jobs GitHub made for three runs on 2026-11-14, read
+through the GitHub API from this session): the expression gives the lists it was written to
+give on this private repository.
+
+- Pull request #66, this change: `test (ubuntu-latest)` and `change-record (ubuntu-latest)`,
+  no macOS job.
+- The push to `main` that merged it (run 43605788455): `test` and `change-record` on
+  `ubuntu-latest` and on `macos-latest`; `pr size` and `conventional PR title` skipped.
+- Pull request #67, the first opened from the merged workflow (run 43606174472): the two
+  suites on `ubuntu-latest` only, with `pr size` and `conventional PR title`.
+
+Not shown: no job of those runs was started. GitHub has started no job for this repository
+since 2026-11-13; each ended within three seconds with no runner and no log. So the
+`CI workflow` step has not run on a runner, on Linux or macOS, and the cancelling of an
+older run has not been seen. The list for a public repository (both systems on a pull
+request) has not been evaluated by GitHub either: the repository is private.
 
 What the reviewer was asked to attack:
 
