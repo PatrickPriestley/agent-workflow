@@ -336,4 +336,96 @@ it "a folder inside a repository's working tree is refused"
 out="$(mat "$REPO/mat")"; rc=$?
 assert_eq 2 "$rc"; has "$out" "working tree"
 
+echo "store faults (record 2026-11-12-store-faults): one session that cannot be sent, the newest redaction, a long run of letters"
+# two sessions in one archive; the first by name cannot be read
+SIDX=10000000-2222-3333-4444-555555555555; SIDY=20000000-2222-3333-4444-555555555555
+part1 | sed "s/$SID/$SIDX/" > "$PROJ/$SIDX.jsonl"; part1 | sed "s/$SID/$SIDY/" > "$PROJ/$SIDY.jsonl"
+ARX="$TMPROOT/arX"; pushX() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" AGENT_TRANSCRIPTS_URL="$URL" "$T" push 2>&1); }
+for x in $SIDX $SIDY; do (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$x.jsonl" < /dev/null 2>/dev/null); done
+sentof() { python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["sent"].get("version")))' "$ARX/sessions/$1.json"; }
+chunks_of() { grep "\"path\": \"/rest/v1/chunks\"" "$LOG" | grep -c "$1" | tr -d ' '; }
+mv "$ARX/parts/$SIDX" "$TMPROOT/held-parts"
+standin sx1; out="$(pushX)"; rc=$?
+it "a session whose archived lines cannot be read does not keep the next one from being sent"
+assert_eq "1 0 1" "$rc $(chunks_of $SIDX) $(chunks_of $SIDY)"
+assert_eq "null 1" "$(sentof $SIDX) $(sentof $SIDY)"
+it "the push says which session it could not send, and that the rest went"
+has "$out" "${SIDX:0:8}"; has "$out" "1 session could not be sent"; has "$out" "pushed 1 new chunks"
+it "the next push tries that session again and sends nothing twice"
+out="$(pushX)"; rc=$?
+assert_eq "1 0 1" "$rc $(chunks_of $SIDX) $(chunks_of $SIDY)"
+mv "$TMPROOT/held-parts" "$ARX/parts/$SIDX"
+it "a session the store refuses is the same: the others still go, and it is tried again once the store takes it"
+ARZ="$TMPROOT/arZ"; pushZ() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARZ" AGENT_TRANSCRIPTS_URL="$URL" "$T" push 2>&1); }
+for x in $SIDX $SIDY; do (cd "$REPO" && AGENT_TRANSCRIPTS="$ARZ" "$T" archive --transcript "$PROJ/$x.jsonl" < /dev/null 2>/dev/null); done
+standin sx2 --refuse-session $SIDX; out="$(pushZ)"; rc=$?
+assert_eq "1 1" "$rc $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sent"].get("version"))' "$ARZ/sessions/$SIDY.json")"
+has "$out" "${SIDX:0:8}"; has "$out" "400"
+it "a session that was passed over is tried once in a push, not at each of its passes"
+assert_eq 1 "$(chunks_of $SIDX)"
+standin sx3; out="$(pushZ)"; rc=$?
+assert_eq "0 1 0" "$rc $(chunks_of $SIDX) $(chunks_of $SIDY)"
+it "a store that cannot be reached, or fails as a whole, still stops the push at once"
+standin sx4 --refuse chunks; ARW="$TMPROOT/arW"
+for x in $SIDX $SIDY; do (cd "$REPO" && AGENT_TRANSCRIPTS="$ARW" "$T" archive --transcript "$PROJ/$x.jsonl" < /dev/null 2>/dev/null); done
+out="$(cd "$REPO" && AGENT_TRANSCRIPTS="$ARW" AGENT_TRANSCRIPTS_URL="$URL" "$T" push 2>&1)"; rc=$?
+assert_eq "1 1" "$rc $(count chunks)"; has "$out" "push stopped"
+it "a refusal that is about who asks or how often (401, 429) is the store's, not one session's: the push stops at once"
+for st in 401 429; do
+  standin "sx5-$st" --refuse chunks --refuse-status $st
+  out="$(cd "$REPO" && AGENT_TRANSCRIPTS="$ARW" AGENT_TRANSCRIPTS_URL="$URL" "$T" push 2>&1)"; rc=$?
+  assert_eq "1 1" "$rc $(count chunks)"; has "$out" "push stopped"
+done
+
+# the same session sent twice, the second time by a copy of the tool with the next redaction version, which
+# takes a long word out: the second copy in the store is the shorter one
+SIDN=30000000-2222-3333-4444-555555555555; WORD="SHORTENME$(python3 -c 'print("x" * 400)')"
+line 2026-11-01T10:00:00.000Z user "\"Take $WORD out of this.\"" | sed "s/$SID/$SIDN/" > "$PROJ/$SIDN.jsonl"
+ARN="$TMPROOT/arN"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARN" "$T" archive --transcript "$PROJ/$SIDN.jsonl" < /dev/null 2>/dev/null)
+mkdir -p "$TMPROOT/v2/bin"; python3 - "$T" "$TMPROOT/v2/bin/transcripts" <<'PY'
+import os, sys
+s = open(sys.argv[1]).read()
+a = s.replace("\nREDACTION = 1", "\nREDACTION = 2", 1).replace("\nPATTERNS = [", "\nPATTERNS = [\n    (_R(r\"SHORTENMEx*\"), \"\"),", 1)
+assert a.count("REDACTION = 2") == 1 and "SHORTENMEx*" in a
+open(sys.argv[2], "w").write(a); os.chmod(sys.argv[2], 0o755)
+PY
+standin sn1
+(cd "$REPO" && AGENT_TRANSCRIPTS="$ARN" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+(cd "$REPO" && AGENT_TRANSCRIPTS="$ARN" AGENT_TRANSCRIPTS_URL="$URL" "$TMPROOT/v2/bin/transcripts" push > /dev/null 2>&1)
+it "after a new redaction that shortens the text, materialize returns the newer copy, not the longer one"
+assert_eq "2 2" "$(count chunks) $(count sessions)"
+out="$(mat "$TMPROOT/matN" --session $SIDN)"
+got="$(cat "$TMPROOT/matN"/projects/*/"$SIDN.jsonl" 2>/dev/null)"
+has "$got" "out of this"; lacks "$got" "SHORTENME"
+assert_eq 2 "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["redaction_version"])' "$TMPROOT/matN/sessions/$SIDN.json")"
+
+it "addresses are redacted exactly as the one pattern redacts them: 30,000 made-up strings and the hard cases"
+assert_eq "same 30012" "$(python3 - "$T" <<'PY'
+import importlib.machinery, importlib.util, random, re, sys
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("tr", sys.argv[1])
+tr = importlib.util.module_from_spec(importlib.util.spec_from_loader("tr", loader)); loader.exec_module(tr)
+plain = re.compile(r"[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+random.seed(11)
+parts = ["a", "b", "1", "4", "0", ".", "%", "+", "-", "_", "@", " ", "\n", "/", ":", "<", ">", "x", "%40", ".com", ".org",
+         "jane.doe@example.org", "\u00e9", "@a.co", "%40b.io", "a%40", "40", ".c", "-.", "..", "@@", "%4"]
+cases = ["".join(random.choice(parts) for _ in range(random.randint(1, 30))) for _ in range(30000)]
+cases += ["jane.doe@example.org1@a.co", "a@b.orgc@d.com", "x%40y.io%40z.io", "a%40b@c.org", "@a.co", "a@", "a@b", "a@b.c", "%40%40%40a.io",
+          "mailto:jane.doe@example.org,john%40example.com.", "a@b.co" * 50, ""]
+same = sum(tr.redact_emails(t) == plain.sub("<redacted:email>", t) for t in cases)
+print("same" if same == len(cases) else "differ", same)
+PY
+)"
+it "redaction of a long run of letters, digits and dots takes well under a second, not a time that grows with its square"
+python3 -c 'import json; print(json.dumps({"type": "user", "message": {"role": "user", "content": "0f" * 30000 + " and " + "a." * 30000 + " and " + "%40" * 20000}}))' > "$TMPROOT/long.jsonl"
+assert_eq "done 1" "$(python3 - "$T" "$TMPROOT/long.jsonl" <<'PY'
+import subprocess, sys
+try:
+    r = subprocess.run([sys.argv[1], "redact"], stdin=open(sys.argv[2], "rb"), capture_output=True, timeout=5)
+    print("done", len(r.stdout.splitlines()))
+except subprocess.TimeoutExpired:
+    print("not done in 5 s")
+PY
+)"
+
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

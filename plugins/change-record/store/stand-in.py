@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A stand-in for the store's HTTPS interface (PostgREST on Supabase), for the tests only.
 
-  stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE] [--refuse-after N]
+  stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE [--refuse-status N]]
+              [--refuse-after N] [--refuse-session ID]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -11,9 +12,11 @@ judge_votes are
 401 42501. With READKEY, GET reads rows with `col=eq.value` filters, `select`, `order`,
 `limit` and `offset`. Every request is appended to LOGFILE as one JSON line: method, path,
 apikey, prefer and body. POST /__admin/tamper with {"chunk_id": ...} changes a stored chunk's
-data, to test that materialize checks it. --refuse TABLE answers 503 to every insert into
-TABLE, as a store that fails part way would; --refuse-after N accepts N inserts into chunks
-and answers 503 to every later one, as a store that fails part way through a session would.
+data, to test that materialize checks it. --refuse TABLE answers 503 (or --refuse-status N)
+to every insert into TABLE, as a store that fails part way would; --refuse-after N accepts N
+inserts into chunks and answers 503 to every later one, as a store that fails part way
+through a session would; --refuse-session ID answers 400 to any insert of that session's
+rows, as a store that will not take one session's data would.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -29,6 +32,8 @@ OPTS = dict(zip(sys.argv[4::2], sys.argv[5::2]))
 HANG = float(OPTS.get("--hang", 0))
 REFUSE = OPTS.get("--refuse")
 REFUSE_AFTER = int(OPTS["--refuse-after"]) if "--refuse-after" in OPTS else None
+REFUSE_SESSION = OPTS.get("--refuse-session")
+REFUSE_STATUS = int(OPTS.get("--refuse-status", 503))
 ACCEPTED = {"chunks": 0}
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
         "scores": ("session_id", "step", "grader", "graded_at"),
@@ -73,7 +78,7 @@ class H(BaseHTTPRequestHandler):
             return self.answer(404, {"code": "PGRST205", "message": f"Could not find the table 'public.{table}'"})
         reader = key == READKEY
         if self.command == "POST" and table == REFUSE:
-            return self.answer(503, {"message": "the stand-in refuses this table"})
+            return self.answer(REFUSE_STATUS, {"message": "the stand-in refuses this table"})
         if self.command == "POST" and table == "chunks" and REFUSE_AFTER is not None:
             with LOCK:
                 ACCEPTED["chunks"] += 1
@@ -89,6 +94,8 @@ class H(BaseHTTPRequestHandler):
             except ValueError:
                 return self.answer(400, {"code": "PGRST102", "message": "Empty or invalid json"})
             rows = rows if isinstance(rows, list) else [rows]
+            if REFUSE_SESSION and any(r.get("session_id") == REFUSE_SESSION for r in rows):
+                return self.answer(400, {"code": "23514", "message": "new row violates a check constraint (the stand-in refuses this session)"})
             with LOCK:
                 have = {tuple(r.get(c) for c in KEYS.get(table, ())) for r in TABLES[table]}
                 for r in rows:

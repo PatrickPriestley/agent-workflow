@@ -205,7 +205,10 @@ refused with 409 and changes nothing). Set `AGENT_TRANSCRIPTS_URL` to the projec
 `AGENT_TRANSCRIPTS`, and every stop also starts `transcripts push --background`, detached from
 the hook so the session never waits: it sends what the store does not have, stops after
 `AGENT_TRANSCRIPTS_PUSH_LIMIT` seconds (60), logs to `<archive>/push.log`, and leaves the rest
-for the next stop. Before anything leaves the machine, every string in every line is redacted:
+for the next stop. A session whose own data cannot be sent (its archived files cannot be
+read, or the store refuses its rows) is passed over and named, the others still go, and it is
+tried again at the next push; a store that cannot be reached or fails as a whole stops the
+push at once. Before anything leaves the machine, every string in every line is redacted:
 email addresses, GitHub, Anthropic, AWS, Supabase, Slack and `sk-` keys, JWTs, bearer and basic
 tokens, URL passwords and private key blocks become `<redacted:kind>`; the local archive keeps
 the original. `transcripts redact` shows what would be sent. Each stream goes as gzip chunks
@@ -235,7 +238,8 @@ machine, in `~/.config/agent-transcripts/read-key` (0600), for `materialize`, wh
 folder in Claude Code's layout (`projects/<repository>/<id>.jsonl` and subagents, each file's
 time from its last timestamp, `sessions/<id>.json`, and `skills/<plugin:skill>/SKILL.md` at the
 blob each session recorded, read from the checkout you run it in). It checks every chunk
-against its chain id. For Skill Doctor, point `--claude-home` at that folder and `--skills-dir`
+against its chain id. Where the store holds a session more than once, it takes the copy with
+the newest redaction version, then the latest and longest. For Skill Doctor, point `--claude-home` at that folder and `--skills-dir`
 at its `skills/`.
 
 **Grading.** `transcripts grade` scores every session in a folder (the local archive by
