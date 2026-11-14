@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Tests for the outcome-evals harness (record 2026-11-08-outcome-evals, requirements R2, R4,
-# R8, R9). A fake `claude` stands first on PATH: it applies a
+# Tests for the outcome-evals harness and its reporter (record 2026-11-08-outcome-evals,
+# requirements R2, R3, R4, R7, R8, R9). A fake `claude` stands first on PATH: it applies a
 # canned patch in the scratch repository, commits, and prints the event stream the real one
 # prints. Fake `mutmut` and `coverage` stand in for the two tools. No model is called and
 # nothing is installed. Needs bash, git and python3.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUN="$here/run.sh"
+RUN="$here/run.sh"; REPORT="$here/report.py"
 REPO_ROOT="$(cd "$here" && git rev-parse --show-toplevel)"
 # The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
 # and git and python name the real one.
@@ -281,6 +281,73 @@ assert_eq "2 2 2 no" "$a $b $c $([ -e "$TMPROOT/u1.jsonl" ] && echo yes || echo 
 it "--keep keeps each scratch repository and its event stream"
 h keep -- --tasks repeat --runs 1 --arms baseline --keep "$TMPROOT/kept"
 [ -f "$TMPROOT/kept/repeat-baseline-1/events.jsonl" ] && [ -f "$TMPROOT/kept/repeat-baseline-1/repo/greet.py" ] && ok || bad "$(ls -R "$TMPROOT/kept" 2>&1 | head -5)"
+
+echo "the reporter (R3, R4, R7)"
+# lines NAME: write known lines. gen TASK ARM VALUE... gives five runs with those hidden-test values.
+gen() { python3 - "$@" <<'PY'
+import json, sys
+import os
+task, arm, cost = sys.argv[1], sys.argv[2], float(sys.argv[3])
+outside = int(os.environ.get("GEN_OUTSIDE", "0"))
+for n, v in enumerate(sys.argv[4:], 1):
+    v = float(v)
+    print(json.dumps({"task": task, "arm": arm, "run": n, "model": "m1", "turns": 10, "cost": cost, "agent": {"status": "ok", "reason": None},
+                      "measures": {"hidden": {"status": "pass", "value": v}, "probes": {"status": "pass", "value": v},
+                                   "mutation": {"status": "skip", "value": None}, "coverage": {"status": "pass", "value": 1.0},
+                                   "outside": {"status": "pass", "value": outside}, "weakened": {"status": "pass", "value": 0},
+                                   "added": {"status": "pass", "value": 30}, "flaky": {"status": "pass", "value": 0},
+                                   "assertions": {"status": "pass", "value": {"tests": 3, "no_assertion": 1, "weak": 2}},
+                                   "red_check": {"status": "pass", "value": {"red": 1}}}}))
+PY
+}
+report() { python3 -B "$REPORT" "$@" 2>&1; }
+W="$TMPROOT/win.jsonl"; : > "$W"
+for t in a b c; do gen $t plugin 0.2 1 1 1 0.9 1 >> "$W"; gen $t baseline 0.2 0.5 0.6 0.5 0.5 0.6 >> "$W"; done
+# d and e: the plugin arm's mean is the better one, by less than the baseline's range
+for t in d e; do gen $t plugin 0.2 0.8 0.8 0.8 0.8 0.8 >> "$W"; gen $t baseline 0.2 0.7 0.7 0.8 0.8 0.8 >> "$W"; done
+out="$(report "$W")"
+it "a win: ahead on three decided tasks by more than the larger range, behind on none"
+has "$out" "- Hidden tests: the skill improves it. The plugin arm is ahead on 3 of 5 decided tasks and behind on none."
+it "a better mean that is within the range is not ahead"
+lacks "$out" "ahead on 5"
+it "a measure with no value in any run is not decided anywhere, and says so"
+has "$out" "- Mutation score: no effect shown. The plugin arm is ahead on 0 and behind on 0 of 0 decided tasks; 5 of 5 tasks were not decided."
+it "a tie on every task: no effect shown"
+has "$out" "- Changed-line coverage: no effect shown. The plugin arm is ahead on 0 and behind on 0 of 5 decided tasks; 0 of 5 tasks were not decided."
+it "the table has one row an arm with the mean and the range, and the two counts as numbers only"
+has "$out" "| plugin | 5 of 5 | 0.98 (0.90 to 1.00) | 0.98 (0.90 to 1.00) | none | 1.00 | 5 of 5 | 0.0 | 0.0 | 1.0 | 2.0 | 0.0 | 30.0 | 10.0 | 0.20 |"
+has "$out" "| baseline | 5 of 5 | 0.54 (0.50 to 0.60) |"
+it "the model is named once"
+has "$out" "Model: m1. 50 of 50 runs count"
+L="$TMPROOT/lower.jsonl"; : > "$L"
+for t in a b c; do gen $t plugin 0.2 1 1 1 1 1 >> "$L"; GEN_OUTSIDE=2 gen $t baseline 0.2 1 1 1 1 1 >> "$L"; done
+it "for files outside the task fewer is better: the arm with none is ahead"
+has "$(report "$L")" "- Files outside the task: the skill improves it. The plugin arm is ahead on 3 of 3 decided tasks and behind on none."
+M="$TMPROOT/mixed.jsonl"; cp "$W" "$M"; gen f plugin 0.2 0.1 0.1 0.1 0.1 0.1 >> "$M"; gen f baseline 0.2 0.9 0.9 0.9 0.9 0.9 >> "$M"
+it "ahead on three and behind on one: no effect shown"
+has "$(report "$M")" "- Hidden tests: no effect shown. The plugin arm is ahead on 3 and behind on 1 of 6 decided tasks; 0 of 6 tasks were not decided."
+D="$TMPROOT/dear.jsonl"; : > "$D"
+for t in a b c; do gen $t plugin 0.9 1 1 1 1 1 >> "$D"; gen $t baseline 0.2 0.5 0.5 0.5 0.5 0.5 >> "$D"; done
+it "a gain at more than twice the baseline's cost a run is called a trade-off, task by task"
+has "$(report "$D")" "- Hidden tests: the skill improves it. The plugin arm is ahead on 3 of 3 decided tasks and behind on none. On a, b, c the gain costs more than twice the baseline: a trade-off."
+S="$TMPROOT/short.jsonl"; : > "$S"
+for t in a b; do gen $t plugin 0.2 1 1 1 1 1 >> "$S"; gen $t baseline 0.2 0.5 0.5 0.5 0.5 0.5 >> "$S"; done
+gen c plugin 0.2 1 1 1 1 >> "$S"; gen c baseline 0.2 0.5 0.5 0.5 0.5 0.5 >> "$S"
+it "a task whose cell is short of five runs is not decided, so two wins and a short cell are no effect shown"
+has "$(report "$S")" "- Hidden tests: no effect shown. The plugin arm is ahead on 2 and behind on 0 of 2 decided tasks; 1 of 3 tasks were not decided."
+it "--runs sets how many runs a cell needs"
+has "$(report "$S" --runs 4)" "- Hidden tests: the skill improves it. The plugin arm is ahead on 3 of 3 decided tasks and behind on none."
+E="$TMPROOT/err.jsonl"; cp "$S" "$E"; python3 -c 'import json,sys
+l = json.loads(open(sys.argv[1]).readline()); l.update(task="c", arm="plugin", run=5); l["agent"] = {"status": "error", "reason": "saw a check"}; l["measures"]["hidden"]["value"] = 1.0
+open(sys.argv[2], "a").write(json.dumps(l) + "\n")' "$S" "$E"
+it "a run whose agent status is error does not fill a cell"
+has "$(report "$E")" "1 of 3 tasks were not decided"
+has "$(report "$E")" "| plugin | 4 of 5 |"
+X="$TMPROOT/models.jsonl"; cp "$W" "$X"; gen z plugin 0.2 1 | sed 's/"m1"/"m2"/' >> "$X"
+it "lines that name more than one model give no table"
+out="$(report "$X")"; assert_eq 2 "$?"; has "$out" "more than one model"
+it "no lines is exit 2"
+: > "$TMPROOT/none.jsonl"; out="$(report "$TMPROOT/none.jsonl")"; assert_eq 2 "$?"
 
 echo "the suites run in CI"
 it "the workflow runs the self-test and this suite"

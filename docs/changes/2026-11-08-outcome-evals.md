@@ -475,3 +475,35 @@ R6: `git diff --stat origin/main..HEAD -- plugins/change-record/skills` prints n
 
 Not done here: the reporter, which is part two, and the matrix. One run an arm says nothing
 about the skill; at the shake-out's price the fifty runs would cost about five dollars.
+
+### Task 2, part two: the reporter (2026-11-14)
+
+Shipped: `outcome-evals/report.py FILE.jsonl... [--runs 5]`, which prints a table a task
+with one row an arm (the mean and the range of each measure over the runs that count, the
+two counts as numbers only) and then one sentence a measure by R7's rule; and its tests in
+`run.test.sh`.
+
+Red first, against a reporter that prints nothing: 16 of 75 assertions failed, all of them
+the reporter's. `run.test.sh` passes with 75.
+
+Guards: 9 broken by hand in `report.py`; all 9 failed the suite.
+
+Use, on the two lines of the shake-out (`--runs 1`, since one run an arm is all there is):
+
+    Model: claude-sonnet-5-5. 2 of 2 runs count; a run that was cut off, saw a check or had
+    the skill in the wrong arm does not.
+
+    | Arm | Runs | Hidden tests | Probes | Mutation | Coverage | Red tests | ... | Turns | Cost |
+    | plugin | 1 of 1 | 0.67 | 0.75 | 0.64 | 1.00 | 1 of 1 | ... | 14.0 | 0.15 |
+    | baseline | 1 of 1 | 0.67 | 1.00 | 0.87 | 1.00 | 1 of 1 | ... | 4.0 | 0.06 |
+
+    - Probes: no effect shown. The plugin arm is ahead on 0 and behind on 1 of 1 decided
+      tasks; 0 of 1 tasks were not decided.
+
+Those lines were measured before the two checks were made fair, and one run an arm has a
+range of nothing, so any difference reads as ahead or behind: it shows the reporter, not
+the skill. Error path: lines that name two models give no table and exit 2.
+
+R6: `git diff --stat origin/main..HEAD -- plugins/change-record/skills` prints nothing.
+
+Not done: the matrix and its report, which are task 3.
