@@ -335,6 +335,18 @@ def show_call(n, c, red):
     return out + [""]
 
 
+def record_shown(text, each=40):
+    """A record as the sheet shows it: what is before its first section whole, then each section's
+    heading and first lines, so that a long record still shows every section the questions ask about."""
+    parts = re.split(r"(?m)^(?=## )", str(text).strip("\n"))
+    out = clip(parts[0], 10 ** 6)
+    for part in parts[1:]:
+        lines = clip(part, 10 ** 6)
+        more = len(lines) - 1 - each
+        out += lines if more <= 1 else lines[:1 + each] + [f"[... {more} more lines of this section]", ""]
+    return out
+
+
 def own_commits(commits):
     """The line of a sheet that says where the session's own commits are, for a labeller who wants to read them."""
     if not commits:
@@ -395,7 +407,7 @@ def sheet(lines, sid, label_path, records=None, redact=None, commits=None):
     for path, text, note in records or []:
         out += [f"`{path}`" + (f": {note}" if text is None else ""), ""]
         if text is not None:
-            out += block(clip(red(text), 200)) + [""]
+            out += block(record_shown(red(text))) + [""]
     out += ["## The session, in order", ""]
     last = says[-1][0] if says else None
     first_user = True

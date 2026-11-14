@@ -7,7 +7,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 T="$here/transcripts"; STANDIN="$here/../store/stand-in.py"
 # The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
 # and git and python name the real one.
-TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; PIDS=""
+# a suite that cannot make its temporary folder must not go on: TMPROOT would be the folder it was started in
+TMPROOT="$(mktemp -d)" && TMPROOT="$(cd "$TMPROOT" && pwd -P)" || { echo "cannot make a temporary folder" >&2; exit 1; }
+PIDS=""
 trap 'for p in $PIDS; do kill $p 2>/dev/null; done; rm -rf "$TMPROOT"' EXIT
 # await_port FILE: wait for a stand-in to write its port; say so when it is slow or never does.
 await_port() {

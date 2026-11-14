@@ -6,7 +6,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RC="$here/record-check"
 # The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
 # and git and python name the real one.
-TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$TMPROOT"' EXIT
+# a suite that cannot make its temporary folder must not go on: TMPROOT would be the folder it was started in
+TMPROOT="$(mktemp -d)" && TMPROOT="$(cd "$TMPROOT" && pwd -P)" || { echo "cannot make a temporary folder" >&2; exit 1; }
+trap 'rm -rf "$TMPROOT"' EXIT
 pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
@@ -228,6 +230,20 @@ res=""; for i in 1 2 3 4 5; do
   res="$res$(cat "$TMPROOT/big.rc")"
 done
 assert_eq 00000 "$res"
+
+# Each suite of the plugin, started where no temporary folder can be made, must stop at once and remove
+# nothing (record 2026-11-12-sheet-and-scaffolding). The suites started here do not start others in turn.
+if [ -z "${SCAFFOLDING_CHECK:-}" ]; then
+  for s in dispatch record-check red-check transcripts transcripts-grade transcripts-judge transcripts-store; do
+    start="$TMPROOT/start-$s"; mkdir -p "$start"; printf 'keep\n' > "$start/keep"
+    out="$(cd "$start" && SCAFFOLDING_CHECK=1 TMPDIR="$TMPROOT/no-such-folder" bash "$here/$s.test.sh" 2>&1)"; rc=$?
+    it "$s.test.sh stops when it cannot make its temporary folder, and leaves the folder it was started in alone"
+    [ "$rc" -ne 0 ] && ok || bad "expected [a non-zero exit] got [0]"
+    assert_eq "keep" "$(cat "$start/keep" 2>/dev/null)"
+    has "$out" "cannot make a temporary folder"
+    lacks "$out" "  ok "
+  done
+fi
 
 printf 'passed=%d failed=%d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

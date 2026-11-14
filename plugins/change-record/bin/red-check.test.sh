@@ -6,7 +6,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RC="$here/red-check"
 # The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
 # and git and python name the real one.
-TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$TMPROOT"' EXIT
+# a suite that cannot make its temporary folder must not go on: TMPROOT would be the folder it was started in
+TMPROOT="$(mktemp -d)" && TMPROOT="$(cd "$TMPROOT" && pwd -P)" || { echo "cannot make a temporary folder" >&2; exit 1; }
+trap 'rm -rf "$TMPROOT"' EXIT
 pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }

@@ -9,7 +9,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 T="$here/transcripts"; STANDIN="$here/../store/stand-in.py"; FIX="$here/../grade/fixtures"
 # The real path, not a link to it: on macOS the temporary folder is /var/..., a link to /private/var/...,
 # and git and python name the real one.
-TMPROOT="$(cd "$(mktemp -d)" && pwd -P)"; PIDS=""
+# a suite that cannot make its temporary folder must not go on: TMPROOT would be the folder it was started in
+TMPROOT="$(mktemp -d)" && TMPROOT="$(cd "$TMPROOT" && pwd -P)" || { echo "cannot make a temporary folder" >&2; exit 1; }
+PIDS=""
 trap 'for p in $PIDS; do kill $p 2>/dev/null; done; rm -rf "$TMPROOT"' EXIT
 # await_port FILE: wait for a stand-in to write its port; say so when it is slow or never does.
 await_port() {
@@ -122,6 +124,9 @@ at() { local d="$1"; shift; GIT_AUTHOR_DATE="${d}T00:00:00Z" GIT_COMMITTER_DATE=
   mine_record 2026-11-10-ticked open "" | sed 's/^1\. x$/- [x] x/' > docs/changes/2026-11-10-ticked.md
   mine_record 2026-11-10-ticked-filled open "Shipped; output pasted." | sed 's/^1\. x$/- [x] x/' > docs/changes/2026-11-10-ticked-filled.md
   printf '# A record with no header\n\n## Outcome\nShipped.\n' > docs/changes/2026-11-10-bare.md
+  # a long record, as the tier 2 records here are: 300 probed facts, then the sections a labeller is asked about
+  mine_record 2026-11-10-long done "$(echo "Write to jane.roe@example.org about it."; for i in $(seq 2 120); do echo "outcome line $i"; done)" \
+    | awk '{print} /^## Probed facts/{for(i=1;i<=300;i++) print "- fact " i}' > docs/changes/2026-11-10-long.md
   git add -A && at 2027-01-02 commit -qm "docs(change): mine"
 )
 A="$(git -C "$REPO" rev-parse HEAD~2)"; B="$(git -C "$REPO" rev-parse HEAD~1)"; C="$(git -C "$REPO" rev-parse HEAD)"
@@ -1041,6 +1046,25 @@ has "$(ev ${G}8 red-first)" '"call": "c1"'
 it "a record with no header is graded, not a crash: no tier, and its Outcome is not that of a done record"
 assert_eq "fail not_applicable" "$(v ${G}7 tier-declared) $(v ${G}7 outcome-filled)"
 lacks "$out" "Traceback"
+
+echo "The sheet shows every section of a long record (record 2026-11-12-sheet-and-scaffolding)"
+mkcase ${G}d <<EOF
+["call","w1","Write",{"file_path":"$REPO/docs/changes/2026-11-10-long.md","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+EOF
+sheet --session ${G}d > /dev/null
+sl="$(cat "$AR/sheets/${G}d.md" 2>/dev/null)"
+it "a record longer than the sheet shows whole still has each section's heading and its first lines"
+for x in "status: done" "## Probed facts" "- fact 1" "## Decisions" "- x. Rejected: y." "## Tasks" "1. x" "## Checks" "## Outcome" "outcome line 2"; do has "$sl" "$x"; done
+it "what is left out of a section is counted where it was left out"
+has "$sl" "- fact 40"; lacks "$sl" "- fact 41"; has "$sl" "[... 261 more lines of this section]"
+has "$sl" "outcome line 40"; lacks "$sl" "outcome line 41"; has "$sl" "[... 80 more lines of this section]"
+it "a section one line over is shown whole: a line saying one line is left out would take its place"
+lacks "$sl" "[... 1 more lines"
+it "the record on the sheet is redacted like the rest of it"
+has "$sl" "Write to <redacted:email> about it."; lacks "$sl" "jane.roe@example.org"
+it "a short record is shown whole, as before"
+lacks "$d1" "more lines of this section"
 
 echo "transcripts grade: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
