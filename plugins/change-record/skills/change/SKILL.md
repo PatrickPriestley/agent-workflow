@@ -30,7 +30,8 @@ or API in a scratch directory and note what you saw. Then create
 branch, before code. Fill Goal (the requester's words), Probed facts (what you just probed,
 each labelled), Decisions (each with the rejected alternative), Tasks (files, test, why the
 test fails today) and Checks. Tier 2 adds Problem, Requirements and Options
-and concerns, and stops for approval: see `references/tier-2.md`.
+and concerns, is read by a fresh session with no context, and stops for approval: see
+`references/tier-2.md`.
 
 ## 3. Loop
 

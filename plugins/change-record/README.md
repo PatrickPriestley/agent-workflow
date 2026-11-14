@@ -149,6 +149,31 @@ yourself with those tools allowed. Each agent runs with `AGENT_TRANSCRIPTS_PAREN
 session running `dispatch` (`CLAUDE_CODE_SESSION_ID`), or unset when there is none, so the
 child's transcript entry names its parent.
 
+### record-review
+
+    plugins/change-record/bin/record-review docs/changes/<id>.md
+
+A tier 2 record is read, before its approval PR, by a fresh session that has no context but
+the record and the repository. The reviewer gets a brief on standard input (what to look
+for, then the record's text as it is in the working tree), runs from the repository's root
+and is given tools that only read: by default `claude -p --tools Read Grep Glob
+--output-format json`, or `--agent 'CMD'` for another headless agent. A command that
+continues or resumes a session is refused, since a reader who knows the conversation is not
+this review. It is asked for findings by severity: what it cannot understand without the
+conversation, facts with no evidence or that the repository contradicts, requirements no
+test could check, decisions with no rejected alternative, tasks with no test, concerns with
+no owner, and a tier the content contradicts.
+
+The review is printed under `Reviewed by: <who>, with no context but the record and the
+repository` and kept with the brief in `.git/record-review/<id>/`. Exit 0 is a complete
+review; 3 means the answer did not end with the end marker, so run it again; 4 that the
+reviewer failed or ran past `--timeout` (default 900 seconds); 5 that it changed the working
+tree, in which case its review is not used. The reviewer is the same model family as the
+author, so this is no substitute for the independent review of the code: it finds what a
+record leaves out, not what a second family would decide otherwise. It is not cheap: the
+first real review, of a record of 147 lines, took a fresh Claude session five minutes, 38
+turns of reading the repository and 3.62 dollars.
+
 ### Transcripts
 
     transcripts archive [--transcript PATH]
@@ -572,6 +597,7 @@ code changes, and a tier 0 declaration for trivial changes.
     bash plugins/change-record/bin/red-check.test.sh
     bash plugins/change-record/bin/record-check.test.sh
     bash plugins/change-record/bin/dispatch.test.sh
+    bash plugins/change-record/bin/record-review.test.sh
     bash plugins/change-record/bin/transcripts.test.sh
     bash plugins/change-record/bin/transcripts-store.test.sh
     bash plugins/change-record/bin/transcripts-grade.test.sh

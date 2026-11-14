@@ -234,7 +234,7 @@ assert_eq 00000 "$res"
 # Each suite of the plugin, started where no temporary folder can be made, must stop at once and remove
 # nothing (record 2026-11-12-sheet-and-scaffolding). The suites started here do not start others in turn.
 if [ -z "${SCAFFOLDING_CHECK:-}" ]; then
-  for s in dispatch record-check red-check transcripts transcripts-grade transcripts-judge transcripts-store; do
+  for s in dispatch record-check record-review red-check transcripts transcripts-grade transcripts-judge transcripts-store; do
     start="$TMPROOT/start-$s"; mkdir -p "$start"; printf 'keep\n' > "$start/keep"
     out="$(cd "$start" && SCAFFOLDING_CHECK=1 TMPDIR="$TMPROOT/no-such-folder" bash "$here/$s.test.sh" 2>&1)"; rc=$?
     it "$s.test.sh stops when it cannot make its temporary folder, and leaves the folder it was started in alone"

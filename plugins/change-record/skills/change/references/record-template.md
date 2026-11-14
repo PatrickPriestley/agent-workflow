@@ -44,7 +44,7 @@ error path), what the independent reviewer should attack.
 Filled at the end: what shipped, what did not, open findings, the real-use output.
 ```
 
-Tier 2 adds these three sections before Decisions:
+Tier 2 adds these three sections before Decisions, and Review after Checks:
 
 ```markdown
 ## Problem
@@ -56,6 +56,10 @@ R1, R2, ... Each testable in three lines or fewer.
 ## Options and concerns
 The candidate designs with trade-offs and the recommended one. Each concern as
 "C<n>: <conflict>. Owner: <who>. Resolved: <decision, by whom, when>".
+
+## Review
+The "Reviewed by:" line that record-review printed. Then each critical or important finding
+of that reader, with what was done about it; minor ones as open items.
 ```
 
 ## What goes where
@@ -70,6 +74,8 @@ The candidate designs with trade-offs and the recommended one. Each concern as
   test fails today, which `red-check` confirms where it runs.
 - **Checks** is the contract with the reviewer: what should be attacked, what commands show
   the change working.
+- **Review**, at tier 2, is what a reader with no context found in the record before it
+  went for approval (`tier-2.md`), and what became of each finding.
 - **Outcome** is written at the end and is the only prose evidence the process keeps. Paste
   real output, main path and one error path, from the final code.
 - **plugin and tasks** in the frontmatter are read by `${CLAUDE_PLUGIN_ROOT}/bin/dispatch`,

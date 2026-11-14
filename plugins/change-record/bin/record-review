@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# record-review: have a change record read by a fresh session that has no context but the
+# record and the repository, before the record goes for approval.
+#
+#   record-review RECORD [--agent 'CMD'] [--timeout SECONDS]
+#
+# RECORD is docs/changes/<id>.md as it is in the working tree, committed or not. The reviewer
+# gets a brief on standard input: what to look for, and the record's text. It runs from the
+# repository's root and may read the repository. It is asked to change nothing and gets no
+# tool to do it with: by default `claude -p --tools Read Grep Glob --output-format json`, or
+# --agent CMD, whose standard output is the review (or the JSON claude -p prints). A command
+# that continues or resumes a session is refused: the point is a reader who knows nothing.
+# The reviewer runs with AGENT_TRANSCRIPTS_PARENT set to CLAUDE_CODE_SESSION_ID, the session
+# running record-review (unset when there is none), so `transcripts archive` ties it to it.
+#
+# The review counts only if its last nonblank line is <<RECORD-REVIEW-END>>. It is printed
+# under a line `Reviewed by: <who>, with no context but the record and the repository`, and
+# kept with the brief and the reviewer's raw answer in .git/record-review/<id>/.
+#
+# Exit: 0 a complete review, 2 usage or setup, 3 no end marker or nothing above it (run it
+# again), 4 the reviewer failed, reported an error or ran past --timeout (default 900 s),
+# 5 the reviewer changed the working tree.
+set -uo pipefail
+END='<<RECORD-REVIEW-END>>'
+usage() { echo "usage: record-review RECORD [--agent 'CMD'] [--timeout SECONDS]" >&2; exit 2; }
+fail() { echo "record-review: $*" >&2; exit 2; }
+
+record=""; agent=""; timeout=900
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --agent) [ -n "${2:-}" ] || usage; agent="$2"; shift 2 ;;
+    --timeout) [ -n "${2:-}" ] || usage; timeout="$2"; shift 2 ;;
+    -*) usage ;;
+    *) [ -z "$record" ] || usage; record="$1"; shift ;;
+  esac
+done
+[ -n "$record" ] || usage
+case "$timeout" in ''|*[!0-9]*) fail "--timeout takes whole seconds, not '$timeout'" ;; esac
+git rev-parse --git-dir >/dev/null 2>&1 || fail "not inside a git repository"
+[ -f "$record" ] || fail "$record is not a file"
+record="$(cd "$(dirname "$record")" && pwd -P)/$(basename "$record")"
+root="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"; cd "$root" || exit 2
+case "$record" in "$root"/*) rel="${record#"$root"/}" ;; *) fail "$record is outside the repository at $root" ;; esac
+id="$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} /^id:/{sub(/^id:[ \t]*/,""); print; exit}' "$rel")"
+[ -n "$id" ] || fail "$rel has no id in its header; is it a change record?"
+case "$id" in *[!A-Za-z0-9._-]*) fail "the id '$id' in $rel is not a plain name" ;; esac
+
+# ---- a fresh session, or none -------------------------------------------------------
+who=""
+if [ -n "$agent" ]; then
+  # shellcheck disable=SC2086
+  set -- $agent
+  who="$(basename "$1")"
+  for w in "$@"; do
+    case "$w" in --continue|--resume|resume) fail "'$agent' continues a session; the review needs a fresh one, with no context" ;; esac
+    [ "$who" = claude ] && case "$w" in -c|-r) fail "'$agent' continues a session; the review needs a fresh one, with no context" ;; esac
+  done
+else
+  command -v claude >/dev/null 2>&1 || fail "claude is not installed; install it, or pass --agent 'CMD' for a headless agent that only reads"
+  agent="claude -p --tools Read Grep Glob --output-format json"; who=claude
+fi
+
+# ---- the brief ----------------------------------------------------------------------
+dir="$(git rev-parse --absolute-git-dir)/record-review/$id"; rm -rf "$dir"; mkdir -p "$dir"
+{
+cat <<BRIEF
+You are reviewing a change record before any code for it is written.
+You have not seen the conversation that produced it, and that is why you are asked: the
+record has to stand on its own for the people who approve it and for whoever builds from it.
+
+The record is $rel in this repository, and its text is below. You may read any file in the
+repository to check what it says. Do not change any file, do not run anything, do not
+rewrite the record and do not propose code.
+
+Report findings, the most serious first. For each one give: critical, important or minor;
+the section and the words it is about; what is wrong; and a concrete case in which it would
+hurt. Critical or important means the change would be built wrong, could not be built, or
+would be approved on a false belief. Look for these seven things, and where you find
+nothing of a kind, say so in one line:
+
+1. What you cannot understand, or would have to guess, without the conversation.
+2. Probed facts with no evidence label, and facts labelled as verified or as exact source
+   that the repository contradicts. Say what you read.
+3. Requirements that no test could check, or with no acceptance check.
+4. Decisions with no rejected alternative, and an option nobody weighed.
+5. Tasks with no test, or whose test would pass today.
+6. Concerns with no owner or no failure case, and a conflict with the code or the rules that
+   the record does not list.
+7. A tier that the record's own content contradicts.
+
+End your answer with a line that is exactly:
+$END
+
+----- $rel -----
+BRIEF
+cat "$rel"
+} > "$dir/brief.md"
+
+# ---- the working tree before, the reviewer, the working tree after ------------------
+# every path git calls changed or untracked, with the hash of what it holds now
+snapshot() {
+  git status --porcelain=v1 -uall -z | python3 -c '
+import hashlib, os, sys
+for e in sys.stdin.buffer.read().split(b"\0"):
+    if len(e) < 4:
+        continue
+    p = e[3:]
+    try:
+        h = hashlib.sha256(open(p, "rb").read()).hexdigest() if os.path.isfile(p) else "gone"
+    except OSError:
+        h = "unreadable"
+    sys.stdout.write("%s %s %s\n" % (e[:2].decode().replace(" ", "."), h, p.decode("utf-8", "replace")))'
+  git rev-parse HEAD 2>/dev/null
+}
+snapshot > "$dir/before"
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then export AGENT_TRANSCRIPTS_PARENT="$CLAUDE_CODE_SESSION_ID"; else unset AGENT_TRANSCRIPTS_PARENT; fi
+python3 - "$agent" "$timeout" "$dir" <<'PY'
+import os, signal, subprocess, sys
+agent, limit, d = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open(d + "/brief.md", "rb") as brief, open(d + "/answer", "wb") as out, open(d + "/reviewer.log", "wb") as err:
+    p = subprocess.Popen(["bash", "-c", agent], stdin=brief, stdout=out, stderr=err, start_new_session=True)
+    try:
+        rc = p.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+        sys.exit(124)
+sys.exit(rc if 0 <= rc < 124 else 1)
+PY
+rc=$?
+snapshot > "$dir/after"
+if ! cmp -s "$dir/before" "$dir/after"; then
+  echo "record-review: the reviewer changed the working tree; its review is not used. Changed:" >&2
+  { diff "$dir/before" "$dir/after" || true; } | sed -n 's/^[<>] [^ ]* [^ ]* \(.*\)$/  \1/p' | sort -u >&2
+  exit 5
+fi
+if [ "$rc" = 124 ]; then echo "record-review: the reviewer ($who) did not finish in $timeout s; nothing was reviewed" >&2; exit 4; fi
+if [ "$rc" != 0 ]; then
+  echo "record-review: the reviewer ($who) failed (exit $rc); its output is in $dir/reviewer.log and $dir/answer" >&2; exit 4
+fi
+
+# ---- the answer: plain text, or the JSON claude -p prints ---------------------------
+python3 - "$dir" "$END" "$who" <<'PY'
+import json, sys
+d, end, who = sys.argv[1], sys.argv[2], sys.argv[3]
+raw = open(d + "/answer", encoding="utf-8", errors="replace").read()
+text, model = raw, ""
+try:
+    j = json.loads(raw)
+    if isinstance(j, dict) and "result" in j:
+        if j.get("is_error"):
+            print(f"record-review: the reviewer ({who}) reported an error; its answer is in {d}/answer", file=sys.stderr)
+            sys.exit(4)
+        text = j.get("result") or ""
+        model = " ".join(sorted(j.get("modelUsage") or {}))
+except ValueError:
+    pass
+lines = text.rstrip().splitlines()
+if not lines or lines[-1].strip() != end or not "\n".join(lines[:-1]).strip():
+    print(f"record-review: no end marker at the end of the reviewer's answer, or nothing above it: "
+          f"the review did not finish. Run it again. The answer is in {d}/answer", file=sys.stderr)
+    sys.exit(3)
+body = "\n".join(lines[:-1]).rstrip() + "\n"
+head = f"Reviewed by: {who}{' ' + model if model else ''}, with no context but the record and the repository\n\n"
+open(d + "/review.md", "w", encoding="utf-8").write(head + body)
+sys.stdout.write(head + body)
+PY

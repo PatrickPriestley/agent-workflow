@@ -82,6 +82,9 @@ jobs:
       - name: dispatch
         if: ${{ !cancelled() }}
         run: bash plugins/change-record/bin/dispatch.test.sh
+      - name: record-review
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/record-review.test.sh
       - name: transcripts
         if: ${{ !cancelled() }}
         run: bash plugins/change-record/bin/transcripts.test.sh
