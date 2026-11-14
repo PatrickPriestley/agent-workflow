@@ -1,0 +1,15 @@
+diff --git a/greet.py b/greet.py
+index 21b83b0..dee664a 100644
+--- a/greet.py
++++ b/greet.py
+@@ -7,7 +7,9 @@ def greet(name):
+ 
+ def main(argv):
+     name = argv[1] if len(argv) > 1 else "world"
+-    print(greet(name))
++    count = int(argv[argv.index("-n") + 1]) if "-n" in argv else 1
++    for _ in range(count):
++        print(greet(name))
+ 
+ 
+ if __name__ == "__main__":

@@ -1,0 +1,77 @@
+diff --git a/greet.py b/greet.py
+index 21b83b0..a56a547 100644
+--- a/greet.py
++++ b/greet.py
+@@ -5,10 +5,36 @@ def greet(name):
+     return f"Hello, {name}!"
+ 
+ 
++def refuse(message):
++    print(f"greet: {message}", file=sys.stderr)
++    return 2
++
++
++def read_names(path):
++    if path == "-":
++        text = sys.stdin.read()
++    else:
++        with open(path, encoding="utf-8-sig") as f:
++            text = f.read()
++    names = (line.strip() for line in text.lstrip("\ufeff").splitlines())
++    return [name for name in names if name]
++
++
+ def main(argv):
+-    name = argv[1] if len(argv) > 1 else "world"
+-    print(greet(name))
++    args = argv[1:]
++    if args and args[0] == "--names-file":
++        if len(args) != 2:
++            return refuse("--names-file needs one path")
++        try:
++            names = read_names(args[1])
++        except (OSError, UnicodeError) as e:
++            return refuse(f"cannot read {args[1]}: {getattr(e, 'strerror', None) or e}")
++        for name in names:
++            print(greet(name))
++        return 0
++    print(greet(args[0] if args else "world"))
++    return 0
+ 
+ 
+ if __name__ == "__main__":
+-    main(sys.argv)
++    sys.exit(main(sys.argv))
+diff --git a/tests/test_greet.py b/tests/test_greet.py
+index fbe2fbd..86ed85e 100644
+--- a/tests/test_greet.py
++++ b/tests/test_greet.py
+@@ -6,3 +6,28 @@ from greet import greet
+ class Greet(unittest.TestCase):
+     def test_greets_by_name(self):
+         self.assertEqual(greet("Ada"), "Hello, Ada!")
++
++
++class NamesFile(unittest.TestCase):
++    def names(self, data):
++        import os, tempfile
++        from greet import read_names
++        f = tempfile.NamedTemporaryFile(delete=False)
++        f.write(data)
++        f.close()
++        self.addCleanup(os.unlink, f.name)
++        return read_names(f.name)
++
++    def test_one_name_a_line(self):
++        self.assertEqual(self.names(b"Ada\nBo\n"), ["Ada", "Bo"])
++
++    def test_no_final_newline_blank_lines_and_a_byte_order_mark(self):
++        self.assertEqual(self.names(b"\xef\xbb\xbfAda\n\nBo"), ["Ada", "Bo"])
++
++    def test_a_missing_file_is_refused_with_status_2(self):
++        from greet import main
++        import contextlib, io
++        err = io.StringIO()
++        with contextlib.redirect_stderr(err):
++            self.assertEqual(main(["greet.py", "--names-file", "no-such-file.txt"]), 2)
++        self.assertIn("no-such-file.txt", err.getvalue())

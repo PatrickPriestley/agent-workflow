@@ -1,0 +1,60 @@
+diff --git a/greet.py b/greet.py
+index 21b83b0..0350c88 100644
+--- a/greet.py
++++ b/greet.py
+@@ -5,10 +5,30 @@ def greet(name):
+     return f"Hello, {name}!"
+ 
+ 
++def refuse(message):
++    print(f"greet: {message}", file=sys.stderr)
++    return 2
++
++
++def parse_names(text):
++    names = (item.strip() for item in text.split(","))
++    return [name for name in names if name]
++
++
+ def main(argv):
+-    name = argv[1] if len(argv) > 1 else "world"
+-    print(greet(name))
++    args = argv[1:]
++    if args and args[0] == "--names":
++        if len(args) != 2:
++            return refuse("--names needs one comma-separated list")
++        names = parse_names(args[1])
++        if not names:
++            return refuse(f"--names has no name in {args[1]!r}")
++        for name in names:
++            print(greet(name))
++        return 0
++    print(greet(args[0] if args else "world"))
++    return 0
+ 
+ 
+ if __name__ == "__main__":
+-    main(sys.argv)
++    sys.exit(main(sys.argv))
+diff --git a/tests/test_greet.py b/tests/test_greet.py
+index fbe2fbd..8d43745 100644
+--- a/tests/test_greet.py
++++ b/tests/test_greet.py
+@@ -6,3 +6,17 @@ from greet import greet
+ class Greet(unittest.TestCase):
+     def test_greets_by_name(self):
+         self.assertEqual(greet("Ada"), "Hello, Ada!")
++
++
++class NamesCsv(unittest.TestCase):
++    def test_names_are_split_and_trimmed(self):
++        from greet import parse_names
++        self.assertEqual(parse_names("Ana, Bo ,,Cy,"), ["Ana", "Bo", "Cy"])
++
++    def test_a_list_with_no_name_is_refused_with_status_2(self):
++        from greet import main
++        import contextlib, io
++        err = io.StringIO()
++        with contextlib.redirect_stderr(err):
++            self.assertEqual(main(["greet.py", "--names", ",,"]), 2)
++        self.assertIn("--names", err.getvalue())

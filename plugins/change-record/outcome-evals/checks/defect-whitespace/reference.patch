@@ -1,0 +1,26 @@
+diff --git a/greet.py b/greet.py
+index 21b83b0..e07dfef 100644
+--- a/greet.py
++++ b/greet.py
+@@ -2,6 +2,7 @@ import sys
+ 
+ 
+ def greet(name):
++    name = name.strip() or "world"
+     return f"Hello, {name}!"
+ 
+ 
+diff --git a/tests/test_greet.py b/tests/test_greet.py
+index fbe2fbd..c14c6f3 100644
+--- a/tests/test_greet.py
++++ b/tests/test_greet.py
+@@ -6,3 +6,9 @@ from greet import greet
+ class Greet(unittest.TestCase):
+     def test_greets_by_name(self):
+         self.assertEqual(greet("Ada"), "Hello, Ada!")
++
++    def test_spaces_around_the_name_are_dropped(self):
++        self.assertEqual(greet("  Ada "), "Hello, Ada!")
++
++    def test_a_name_of_spaces_only_is_no_name(self):
++        self.assertEqual(greet("   "), "Hello, world!")

@@ -241,6 +241,11 @@ result is for that model. Patrick Priestley, in chat, 2026-11-14.
   variable and no argument the agent's process gets; the scratch repository is made in a
   temporary folder of its own. Rejected: beside the scratch repository, where an agent with
   a shell finds them with `ls ..`; and a dot directory inside it.
+- The scaffold's README states the repository's conventions: a usage error names the input
+  on standard error and exits with status 2, with no traceback; `-` is standard input; one
+  greeting a line. The prompts do not repeat them. Rejected: traps that neither the prompt
+  nor the repository lets an agent find out, which would measure guessing and not care.
+  (Added while building task 1.)
 - The hidden tests are named `acceptance.py`, not `hidden_test.py`. Rejected: a name that
   `red-check` and pytest take for a test of this repository.
 - Deterministic measures only. Rejected: the Haiku judge of error-message wording that the
@@ -350,3 +355,55 @@ Open:
 - No third round was run, so the fixes of round 2 have not been read by a fresh session.
 
 ## Outcome
+
+### Task 1, the checks (2026-11-14)
+
+Shipped under `plugins/change-record/outcome-evals/`: `tasks/<name>/{prompt.md,scaffold.sh}`
+and `checks/<name>/{acceptance.py,probes.sh,naive.patch,reference.patch}` for the five
+tasks, and `checks/selftest.sh`. Beside what the task listed: `tasks/scaffold-base.sh`, the
+one scaffold all five start from; `checks/run-checks.sh TASK REPO`, which prints one line a
+check and is what the harness will call; and the two small libraries the checks are written
+with, `checks/cli.py` with `checks/acceptance_runner.py`, and `checks/probes.lib.sh`.
+
+Forty checks, 25 traps and 15 plain:
+
+    task               traps  plain
+    names-file             7      3
+    names-csv              6      4
+    format-json            5      3
+    repeat                 4      3
+    defect-whitespace      3      2
+
+One trap of the design is a plain check here: a file with CRLF line ends. Python reads it
+right in text mode, so the naive implementation passes it.
+
+Red first, with stub checks that pass whatever they are given: 10 of 126 assertions
+failed, two a task, as the task said they would:
+
+    FAIL names-file: the naive implementation: acceptance, trap, stub: fail
+         expected [fail] got [pass]
+    FAIL names-file: the naive implementation: probe, trap, stub: fail
+         expected [fail] got [pass]
+
+With the real checks `selftest.sh` has 177 assertions and passes: against each naive
+implementation every trap fails and every plain check passes, against each reference
+implementation all pass, and each prompt holds to R10 and gives no trap away.
+
+Use, on implementations written another way than the reference (with `argparse` and
+`fileinput`), to see that the checks ask for the behaviour and not for one way of writing
+it: `repeat` 7 of 7, `format-json` 8 of 8, `names-file` 10 of 10. `argparse`'s own two-line
+refusal passes the probes: they ask for status 2, the input named, and no traceback.
+
+    $ python3 greet.py --names-file nope.txt
+    usage: greet [-h] [--names-file NAMES_FILE] [name]
+    greet: error: cannot read nope.txt: No such file or directory
+    exit 2
+
+Guards in the libraries and in `run-checks.sh`: 16 broken by hand. 13 failed the self-test
+at once. Three survived because another guard behind each gave the same exit status; each
+of their tests now tells the two apart, and all 16 fail it.
+
+R6: `git diff --stat origin/main..HEAD -- plugins/change-record/skills` prints nothing.
+
+Not done in this task: no agent has run against the checks; `selftest.sh` is not yet in
+CI, which task 2 adds with its own suite.
