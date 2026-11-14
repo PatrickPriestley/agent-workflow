@@ -592,6 +592,12 @@ the record holds and the order of work: decisions with rejected alternatives, pr
 with evidence labels after a real probe, an Outcome with real output, tests run before the
 code changes, and a tier 0 declaration for trivial changes.
 
+Whether the code that comes out is better was measured separately, on 2026-11-14
+(`outcome-evals/README.md`): five small tasks with hidden tests, with and without the
+plugin, five runs each on Sonnet 5.5. No effect was shown on hidden tests, error paths,
+mutation score, coverage or scope; the plugin's arm took about twice the turns. On tasks
+that small the skill's value is the record and the review, not better code.
+
 ## Tests
 
     bash plugins/change-record/bin/red-check.test.sh
@@ -602,6 +608,8 @@ code changes, and a tier 0 declaration for trivial changes.
     bash plugins/change-record/bin/transcripts-store.test.sh
     bash plugins/change-record/bin/transcripts-grade.test.sh
     bash plugins/change-record/bin/transcripts-judge.test.sh   # TRANSCRIPTS_LIVE_JUDGE=1 also runs the real Haiku judge
+    bash plugins/change-record/outcome-evals/checks/selftest.sh
+    bash plugins/change-record/outcome-evals/run.test.sh
     node --test plugins/change-record/evals/cases.test.cjs
 
 They build real git repositories in a scratch directory and need bash, git and python3 (the

@@ -396,6 +396,18 @@ out="$(report "$X")"; assert_eq 2 "$?"; has "$out" "more than one model"
 it "no lines is exit 2"
 : > "$TMPROOT/none.jsonl"; out="$(report "$TMPROOT/none.jsonl")"; assert_eq 2 "$?"
 
+echo "the report of the matrix (R5)"
+it "the README's report is what the reporter prints from the committed lines"
+want="$(python3 -B "$REPORT" "$here"/results/*.jsonl 2>&1)"
+got="$(awk '/<!-- report:begin -->/{f=1;next} /<!-- report:end -->/{f=0} f' "$here/README.md" 2>/dev/null)"
+[ -n "$want" ] && [ "$want" = "$got" ] && ok || bad "the README's report and the reporter's output differ: $(diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | head -5)"
+it "the plugin README cites the report"
+has "$(cat "$here/../README.md")" "outcome-evals/README.md"
+it "the committed lines hold numbers and names of measures: no path of a machine and no id of a session"
+assert_eq 0 "$(cat "$here"/results/*.jsonl | grep -cE '/tmp/|/home/|/Users/|session_|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')"
+it "everything else a run leaves under results/ is ignored"
+gi="$(cat "$here/.gitignore")"; has "$gi" 'results/*'; has "$gi" '!results/*.jsonl'
+
 echo "the suites run in CI"
 it "the workflow runs the self-test and this suite"
 wf="$(cat "$REPO_ROOT/.github/workflows/test.yml")"

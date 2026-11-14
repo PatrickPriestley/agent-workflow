@@ -1,7 +1,7 @@
 ---
 id: 2026-11-08-outcome-evals
 tier: 2
-status: approved
+status: done
 requester: Patrick Priestley, in chat on 2026-11-08 ("Is there a way to measure whether this skill improves the actual implementation and quality?")
 approvers: [Patrick Priestley, 2026-11-14]
 ---
@@ -557,3 +557,49 @@ with 86. Guards: 12 broken by hand in the changed code; all 12 failed the suite.
 One mutant in sixty or so makes the program wait for ever; a run of the suite against a
 mutant is stopped after ten times what the suite takes with none, and five seconds. Before
 that limit one repository took six minutes to score.
+
+### Task 3, the run and the report (2026-11-14)
+
+Shipped: `outcome-evals/results/2026-11-14-matrix.jsonl`, the fifty lines of the matrix;
+`outcome-evals/README.md` with the report and what it does and does not show; a paragraph
+in the plugin README's section on what is verified; and four assertions in `run.test.sh`
+that hold the README's report to the reporter's output over the committed lines.
+
+The matrix: five tasks, two arms, five runs, Sonnet 5.5, in two halves side by side with
+caps of 9 and 6 dollars. 50 of 50 runs ended with the agent status ok: none was cut off,
+none saw a check, the skill was called in 25 of 25 plugin runs and present in no baseline
+run. 3.98 dollars. With the ten shake-out runs the agent runs cost 4.84 dollars of the 15
+allowed; the two reviews of this record cost about 7 more, which C2 did not count.
+
+By R7, as `report.py` prints it:
+
+    - Hidden tests: no effect shown. The plugin arm is ahead on 1 and behind on 0 of 5
+      decided tasks; 0 of 5 tasks were not decided.
+    - Probes: no effect shown. ... ahead on 0 and behind on 0 of 5 decided tasks ...
+    - Mutation score: no effect shown. ... ahead on 0 and behind on 1 of 4 decided tasks;
+      1 of 5 tasks were not decided.
+    - Changed-line coverage, Files outside the task, Tests weakened: no effect shown,
+      ahead on 0 and behind on 0 of 5 decided tasks.
+
+By C1, as the owner resolved it, a tie closes the question: on tasks this small the
+skill's value is the record and the review. The README says so, and what else the fifty
+runs show: the plugin arm ahead on `names-csv` alone (0.94 against 0.63 of the hidden
+tests); a byte order mark missed in 10 of 10 runs and a name of spaces only in 9 of 10,
+with or without the skill; the agents' tests killing 0.72 of mutants with the skill and
+0.77 without, and under 0.9 in every cell that can be scored; 7.9 turns against 4.2.
+
+Red first: 2 of 91 assertions failed before the README held the report.
+
+The two decisions the Goal names are the owner's, on these numbers:
+
+- The mutation CI job. The arms do not differ, so the skill is no substitute for it; in
+  both, a fifth to two fifths of the mutants in changed code outlive the agent's tests.
+- The skill's step 5. Error paths were right in 49 of 50 runs in both arms, so they need
+  no more than step 5 asks. The two traps every run missed are inputs no prompt or
+  convention named; whether the skill should ask for such inputs is a change of its own,
+  and by C5 of record `2026-11-12-session-quality` needs an eval that shows it helps.
+
+Not done, and limits: one model; a scaffold of forty lines; five runs a cell; mutation not
+scored for `defect-whitespace`; "weakened" counts a rewritten assertion (one run); the
+runs inherit a cloud session's environment. R6: `git diff --stat origin/main..HEAD --
+plugins/change-record/skills` prints nothing.
