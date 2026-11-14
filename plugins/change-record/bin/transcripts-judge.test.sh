@@ -737,7 +737,7 @@ before="$(report "$RA" 2>&1)"
 mv "$RA/scores/$Q1.rubrics.json" "$TMPROOT/held.json"; without="$(report "$RA" 2>&1)"; mv "$TMPROOT/held.json" "$RA/scores/$Q1.rubrics.json"
 lacks "$before" "rubric/"; lacks "$before" "code-quality"; lacks "$before" "verbosity"
 assert_eq "$without" "$before"
-has "$before" "| red-first | fields/2 |"
+has "$before" "| red-first | fields/3 |"
 
 echo "R11: scores and votes to the store, with the read key only"
 PORTF="$TMPROOT/port"; SLOG="$TMPROOT/store.log"; : > "$SLOG"

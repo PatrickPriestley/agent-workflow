@@ -1047,7 +1047,7 @@ def cmd_materialize(args):
 
 # ---- grading ----
 
-GRADER = "fields/2"  # bump when a grader's rules change, so scores from two rule sets are not mixed
+GRADER = "fields/3"  # bump when a grader's rules change, so scores from two rule sets are not mixed
 
 
 def git_run(repo, *args):
@@ -1131,9 +1131,11 @@ def change_skill(entry):
 
 
 def grade_one(fields, lines, sid, entry, repo, scratch, note, root=None):
-    stops = entry or {}
-    first = (stops.get("first_stop") or {}).get("commit")
-    last = (stops.get("last_stop") or {}).get("commit")
+    last = ((entry or {}).get("last_stop") or {}).get("commit")
+    try:  # where the session started: not its first stop, which is already the work of its first turn
+        first = session_commits(repo, entry or {})[0]
+    except LookupError:
+        first = last  # no commit of its own: what was there when it began is what is there now
     if root is None:
         cwd = first_cwd(lines)
         root = (git(cwd, "rev-parse", "--show-toplevel") if cwd and os.path.isdir(cwd) else None) or cwd

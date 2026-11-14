@@ -102,22 +102,27 @@ x
 $3
 EOF
 }
+# at DAY git-args...: a git command whose commit is made on that day. The first commit is made long before
+# any session here began and the others long after each ended, so the first is where a session started
+# and the others are its own (record 2026-11-12-grader-faults).
+at() { local d="$1"; shift; GIT_AUTHOR_DATE="${d}T00:00:00Z" GIT_COMMITTER_DATE="${d}T00:00:00Z" git "$@"; }
 (
   cd "$REPO" && git init -q -b main && git config user.email t@example.com && git config user.name t
   git config core.hooksPath /dev/null
   printf -- '---\nname: change\n---\n# Change\n' > plugins/change-record/skills/change/SKILL.md
   printf 'def greet(n):\n    return n\n' > greet.py; printf 'import unittest\n' > tests/test_greet.py
   shout_record "" > docs/changes/2026-11-08-shout.md
-  git add -A && git commit -qm "docs(change): 2026-11-08-shout" && git remote add origin https://github.com/Owner/Shout
+  git add -A && at 2026-01-01 commit -qm "docs(change): 2026-11-08-shout" && git remote add origin https://github.com/Owner/Shout
   shout_record "Shipped the flag; output pasted." > docs/changes/2026-11-08-shout.md
   printf 'def greet(n):\n    return n.upper()\n' > greet.py
-  git commit -qam "feat: shout"
+  at 2027-01-01 commit -qam "feat: shout"
   mine_record 2026-11-10-mine done "Shipped; output pasted." > docs/changes/2026-11-10-mine.md
   mine_record 2026-11-10-open open "" > docs/changes/2026-11-10-open.md
   # two open records whose task is ticked [x], one with an empty Outcome and one filled (record 2026-11-12-grader-fixes)
   mine_record 2026-11-10-ticked open "" | sed 's/^1\. x$/- [x] x/' > docs/changes/2026-11-10-ticked.md
   mine_record 2026-11-10-ticked-filled open "Shipped; output pasted." | sed 's/^1\. x$/- [x] x/' > docs/changes/2026-11-10-ticked-filled.md
-  git add -A && git commit -qm "docs(change): mine"
+  printf '# A record with no header\n\n## Outcome\nShipped.\n' > docs/changes/2026-11-10-bare.md
+  git add -A && at 2027-01-02 commit -qm "docs(change): mine"
 )
 A="$(git -C "$REPO" rev-parse HEAD~2)"; B="$(git -C "$REPO" rev-parse HEAD~1)"; C="$(git -C "$REPO" rev-parse HEAD)"
 
@@ -467,7 +472,7 @@ assert_eq "True False False False False" "$(look /work/repo /work/repo ls /srv/a
 it "--help is still a probe"
 assert_eq pass "$(v ${R}10 probe-before-record)"
 it "the rows carry the new grader's name"
-has "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["grader"])' "$AR/scores/${R}01.json")" "fields/2"
+has "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["grader"])' "$AR/scores/${R}01.json")" "fields/3"
 
 echo "Rulings: a shell write the shell refused did not happen"
 GONE=docs/changes/2026-11-10-refused.md
@@ -911,6 +916,131 @@ lacks "$out" "stale label"
 it "each of the fifteen fixture sessions has a label file"
 lacks "$out" "no label file"
 has "$out" "of 15 with a transcript here"
+
+echo "Grader faults (record 2026-11-12-grader-faults): where a session started, and commands the graders misread"
+G=44444444-0000-0000-0000-00000000000
+# one turn: code, then the record, then a commit; its only stop is already on that commit
+mk "$W/${G}1.jsonl" ${G}1 <<EOF
+["call","c1","Write",{"file_path":"$REPO/greet.py","content":"x"}]
+["result","c1","ok",false,"a"]
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully at: $REPO/$REC",false,"a"]
+EOF
+add "$W/${G}1.jsonl" > /dev/null; setstops ${G}1 "$C" "$C"
+mkcase ${G}2 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","r1","Bash",{"command":"env -u AGENT_TRANSCRIPTS -u OTHER_VAR bash tests/suite.test.sh 2>&1 | tail -3"}]
+["result","r1","  FAIL the flag\npassed=1 failed=2",false,"a"]
+["call","c1","Edit",{"file_path":"$REPO/greet.py","old_string":"n","new_string":"n.upper()"}]
+["result","c1","ok",false,"a"]
+EOF
+mkcase ${G}3 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","r1","Bash",{"command":"# run the suite; it doesn't pass yet\n$UT"}]
+["result","r1","$RED",false,"a"]
+["call","c1","Edit",{"file_path":"$REPO/greet.py","old_string":"n","new_string":"n.upper()"}]
+["result","c1","ok",false,"a"]
+EOF
+mkcase ${G}4 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","c1","Bash",{"command":"sed -i 's#return n#return n.upper()#' greet.py"}]
+["result","c1","",false,"a"]
+EOF
+mkcase ${G}5 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","f1","Bash",{"command":"mkdir -p tests/fixtures && cd tests/fixtures && python3 - <<'PY'\nopen('sample.jsonl','w').write('x')\nPY"}]
+["result","f1","",false,"a"]
+["call","r1","Bash",{"command":"$UT"}]
+["result","r1","$RED",false,"a"]
+["call","c1","Edit",{"file_path":"$REPO/greet.py","old_string":"n","new_string":"n.upper()"}]
+["result","c1","ok",false,"a"]
+EOF
+mkcase ${G}6 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","r1","Bash",{"command":"grep -c greet <<< \"\$PWD\"\n$UT"}]
+["result","r1","0\n$RED",false,"a"]
+["call","c1","Edit",{"file_path":"$REPO/greet.py","old_string":"n","new_string":"n.upper()"}]
+["result","c1","ok",false,"a"]
+EOF
+mkcase ${G}7 <<EOF
+["call","w1","Write",{"file_path":"$REPO/docs/changes/2026-11-10-bare.md","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+EOF
+mkcase ${G}8 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","x1","Bash",{"command":"echo it's not closed > greet.py"}]
+["result","x1","/bin/bash: -c: line 1: unexpected EOF while looking for a matching quote",true,"b"]
+["call","r1","Bash",{"command":"$UT"}]
+["result","r1","$RED",false,"a"]
+["call","c1","Edit",{"file_path":"$REPO/greet.py","old_string":"n","new_string":"n.upper()"}]
+["result","c1","ok",false,"a"]
+EOF
+mkcase ${G}9 <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","c1","Bash",{"command":"echo \"step # one\" && echo 'step # two' && sed -i 's/n/m/' greet.py"}]
+["result","c1","step # one\nstep # two",false,"a"]
+EOF
+mk "$W/${G}a.jsonl" ${G}a <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","f1","Bash",{"command":"cd tests/fixtures && python3 -c \"open('sample.jsonl','w').write('x')\""}]
+["result","f1","",false,"a"]
+["call","r1","Bash",{"command":"$UT"}]
+["result","r1","$RED",false,"a"]
+["call","c1","Edit",{"file_path":"$REPO/greet.py","old_string":"n","new_string":"n.upper()"}]
+["result","c1","ok",false,"a"]
+EOF
+add "$W/${G}a.jsonl" > /dev/null; setstops ${G}a "$A" "$C"
+# no commit of its own: its last stop is on a commit made before it began; it rewrites a record that commit holds
+mk "$W/${G}b.jsonl" ${G}b <<EOF
+["call","w1","Bash",{"command":"cat > docs/changes/2026-11-08-shout.md <<'E'\nx\nE"}]
+["result","w1","",false,"a"]
+["call","c1","Write",{"file_path":"$REPO/greet.py","content":"x"}]
+["result","c1","ok",false,"a"]
+EOF
+add "$W/${G}b.jsonl" > /dev/null; setstops ${G}b "$A" "$A"
+mkcase ${G}c <<EOF
+["call","w1","Write",{"file_path":"$REPO/$REC","content":"x"}]
+["result","w1","File created successfully",false,"a"]
+["call","c1","Bash",{"command":"sed -i s#n#m# greet.py"}]
+["result","c1","",false,"a"]
+EOF
+out="$(grade --session ${G}1 --session ${G}2 --session ${G}3 --session ${G}4 --session ${G}5 --session ${G}6 --session ${G}7 --session ${G}8 --session ${G}9 --session ${G}a --session ${G}b --session ${G}c)"; rc=$?
+it "a session started where the newest commit made before its first line is, not at its first stop: a record it created itself was not there"
+assert_eq "fail" "$(v ${G}1 record-before-code)"
+lacks "$(ev ${G}1 record-before-code)" "was there when the session started"
+it "a session that made no commit started where it ended: a record that commit holds was there"
+assert_eq not_applicable "$(v ${G}b record-before-code)"
+has "$(ev ${G}b record-before-code)" "was there when the session started"
+it "record-check runs on all the session committed, from that commit to its last"
+has "$(ev ${G}1 record-check)" "\"base\": \"$A\""; has "$(ev ${G}1 record-check)" '"mode": "code"'
+it "a test run under env -u NAME is a test run"
+assert_eq pass "$(v ${G}2 red-first)"
+it "a comment line above a command does not hide the command, whatever the comment holds"
+assert_eq pass "$(v ${G}3 red-first)"
+it "a # inside a word is no comment: sed -i with # as its separator writes the file"
+assert_eq fail "$(v ${G}4 red-first)"; has "$(ev ${G}4 red-first)" '"files": ["greet.py"]'
+assert_eq fail "$(v ${G}c red-first)"; has "$(ev ${G}c red-first)" '"files": ["greet.py"]'
+it "a # inside quotes is no comment either: what follows on the line is still read"
+assert_eq fail "$(v ${G}9 red-first)"; has "$(ev ${G}9 red-first)" '"files": ["greet.py"]'
+it "a file an inline script writes after a cd is placed in that folder: a fixture is not code"
+assert_eq pass "$(v ${G}5 red-first)"; has "$(ev ${G}5 red-first)" '"files": ["greet.py"]'
+assert_eq pass "$(v ${G}a red-first)"; has "$(ev ${G}a red-first)" '"files": ["greet.py"]'
+it "a here-string does not swallow the lines after it"
+assert_eq pass "$(v ${G}6 red-first)"
+it "a command whose quote never closes wrote nothing: its words are not read as commands and files"
+assert_eq pass "$(v ${G}8 red-first)"; has "$(ev ${G}8 red-first)" '"files": ["greet.py"]'
+has "$(ev ${G}8 red-first)" '"call": "c1"'
+it "a record with no header is graded, not a crash: no tier, and its Outcome is not that of a done record"
+assert_eq "fail not_applicable" "$(v ${G}7 tier-declared) $(v ${G}7 outcome-filled)"
+lacks "$out" "Traceback"
 
 echo "transcripts grade: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

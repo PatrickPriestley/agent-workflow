@@ -173,15 +173,43 @@ def heredoc_bodies(cmd):
     return [m.group(3) for m in re.finditer(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n\s*\2\s*(?:\n|$)", cmd, re.S)]
 
 
+def strip_comments(cmd):
+    """cmd without its comments: a # that starts a word, outside quotes, to the end of its line."""
+    out, quote = [], None
+    for ln in cmd.split("\n"):
+        i, cut = 0, len(ln)
+        while i < len(ln):
+            c = ln[i]
+            if c == "\\" and quote != "'":
+                i += 2
+                continue
+            if quote:
+                quote = None if c == quote else quote
+            elif c in "'\"":
+                quote = c
+            elif c == "#" and (i == 0 or ln[i - 1] in " \t;&|("):
+                cut = i
+                break
+            i += 1
+        out.append(ln[:cut])
+    return "\n".join(out)
+
+
 def simple_commands(cmd):
-    """[(argv, [(redirect op, target)])] for each simple command, heredoc bodies left out."""
-    s = strip_heredocs(cmd).replace("\n", " ; ")
-    try:
-        lex = shlex.shlex(s, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        toks = list(lex)
-    except ValueError:
-        toks = s.split()
+    """[(argv, [(redirect op, target)])] for each simple command, heredoc bodies and comments left out."""
+    toks, held = [], []
+    for ln in strip_comments(strip_heredocs(cmd)).split("\n"):
+        # A line is lexed with the lines before it that left a quote open. What never closes is left
+        # out: the shell stops there too, and words split on spaces would be read as commands and files.
+        held.append(ln)
+        try:
+            lex = shlex.shlex(" ; ".join(held), posix=True, punctuation_chars=True)
+            lex.commenters = ""  # comments are already out, and a # inside a word is none
+            lex.whitespace_split = True
+            toks += list(lex) + [";"]
+            held = []
+        except ValueError:
+            pass
     cmds, argv, redir, i = [], [], [], 0
     while i < len(toks):
         t = toks[i]
@@ -213,7 +241,8 @@ def unwrap(argv):
         if b in ("env", "nice", "nohup", "sudo", "time", "command", "exec"):
             argv = [a for a in argv[1:]]
             while argv and (argv[0].startswith("-") or "=" in argv[0]):
-                argv = argv[1:]
+                # env -u NAME, -C DIR and -S STRING take the next word as their value
+                argv = argv[2:] if b == "env" and argv[0] in ("-u", "--unset", "-C", "--chdir", "-S", "--split-string") else argv[1:]
         elif b == "timeout":
             argv = argv[1:]
             while argv and (argv[0].startswith("-") or re.fullmatch(r"[\d.]+[smhd]?", argv[0])):
@@ -235,6 +264,23 @@ def unexpanded(path):
     return "$" in path or "`" in path
 
 
+def cd(target, base):
+    """The directory after `cd target` from base. One the grader cannot expand leaves it unknown until a cd to a known one."""
+    if unexpanded(target):
+        return UNKNOWN
+    return os.path.normpath(os.path.join(base if base not in (None, UNKNOWN) else "/", os.path.expanduser(target)))
+
+
+def base_after(cmd, base):
+    """The directory a command is in once its cd's have run."""
+    for argv, _ in simple_commands(cmd):
+        argv = unwrap(argv)
+        args = [a for a in argv[1:] if not a.startswith("-")]
+        if argv and os.path.basename(argv[0]) == "cd" and args:
+            base = cd(args[0], base)
+    return base
+
+
 def shell_writes(cmd, base):
     """[(path, base)] of the files a command writes: redirects, tee, cp, mv, install, sed -i."""
     out = []
@@ -248,9 +294,7 @@ def shell_writes(cmd, base):
         b = os.path.basename(argv[0])
         args = [a for a in argv[1:] if not a.startswith("-")]
         if b == "cd" and args:
-            # a cd into a path the grader cannot expand leaves the directory unknown until a cd to a known one
-            base = UNKNOWN if unexpanded(args[0]) else os.path.normpath(
-                os.path.join(base if base not in (None, UNKNOWN) else "/", os.path.expanduser(args[0])))
+            base = cd(args[0], base)
         elif b == "tee":
             out += [(a, base) for a in args]
         elif b in ("cp", "mv", "install") or (b == "git" and argv[1:2] == ["mv"]):
@@ -281,25 +325,33 @@ def shell_writes(cmd, base):
 INLINE_PY = re.compile(r"^[^\n]*\bpython[\d.]*(?=\s)[^\n;|&]*<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n\s*\2\s*(?:\n|$)", re.M | re.S)
 
 
-def inline_writes(cmd):
-    """The files an inline Python script opens for writing: python - <<EOF or python -c, with
-    open(X, 'w'|'a'|'x') or X.write_text(, where X is a string or a name set to one in the
-    script. A script only saved to a file is not run, and writes nothing."""
-    bodies = [m.group(3) for m in INLINE_PY.finditer(cmd)]
+def inline_writes(cmd, base):
+    """[(path, base)] of the files an inline Python script opens for writing: python - <<EOF or
+    python -c, with open(X, 'w'|'a'|'x') or X.write_text(, where X is a string or a name set
+    to one in the script. base is the directory the command was in when it ran the script. A
+    script only saved to a file is not run, and writes nothing."""
+    bodies = []
+    for m in INLINE_PY.finditer(cmd):
+        line = m.group(0).split("\n", 1)[0]
+        bodies.append((m.group(3), base_after(cmd[:m.start()] + line[:line.rindex("python")], base)))
+    here = base
     for argv, _ in simple_commands(cmd):
         argv = unwrap(argv)
-        if argv and re.fullmatch(r"python[\d.]*", os.path.basename(argv[0])) and "-c" in argv[1:-1]:
-            bodies.append(argv[argv.index("-c") + 1])
+        args = [a for a in argv[1:] if not a.startswith("-")]
+        if argv and os.path.basename(argv[0]) == "cd" and args:
+            here = cd(args[0], here)
+        elif argv and re.fullmatch(r"python[\d.]*", os.path.basename(argv[0])) and "-c" in argv[1:-1]:
+            bodies.append((argv[argv.index("-c") + 1], here))
     out = []
-    for body in bodies:
+    for body, at in bodies:
         names = dict(re.findall(r"^\s*([A-Za-z_]\w*)\s*=\s*['\"]([^'\"\n]+)['\"]\s*$", body, re.M))
         targets = re.findall(r"\bopen\(\s*([^,()]+?)\s*,\s*['\"][wax]", body)
         targets += re.findall(r"([A-Za-z_]\w*|['\"][^'\"\n]+['\"])\)?\.write_text\(", body)
         for t in (t.strip() for t in targets):
             if t[:1] in "'\"" and t[-1:] == t[:1]:
-                out.append(t[1:-1])
+                out.append((t[1:-1], at))
             elif t in names:
-                out.append(names[t])
+                out.append((names[t], at))
     return out
 
 
@@ -436,7 +488,7 @@ def writes(call, root):
         cmd = str(inp.get("command") or "")
         found = [(p, b) for p, b in shell_writes(cmd, base) if not refused(p, call.result)]
         if not call.is_error:  # a script that failed may have stopped before it wrote
-            found += [(p, base) for p in inline_writes(cmd)]
+            found += inline_writes(cmd, base)
         return [rel(p, b, root) for p, b in found]
     if call.name.startswith("mcp__") and call.name.endswith(("create_or_update_file", "push_files")):
         paths = [inp.get("path")] + [f.get("path") for f in inp.get("files") or [] if isinstance(f, dict)]
@@ -495,7 +547,7 @@ def choose_record(written, named):
 
 def frontmatter(text):
     if not text or not text.startswith("---\n"):
-        return {}, []
+        return {}, 0
     end = text.find("\n---", 4)
     fm = text[4:end] if end > 0 else ""
     fields = {}
