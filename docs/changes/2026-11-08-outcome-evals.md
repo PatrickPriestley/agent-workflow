@@ -246,6 +246,27 @@ result is for that model. Patrick Priestley, in chat, 2026-11-14.
   greeting a line. The prompts do not repeat them. Rejected: traps that neither the prompt
   nor the repository lets an agent find out, which would measure guessing and not care.
   (Added while building task 1.)
+- A hidden check must follow from the prompt or from the scaffold's README. Two things
+  changed on that ground after the shake-out of task 2, before any run of the matrix: the
+  check that `-n 0` prints nothing is gone, since the prompt leaves open whether a count of
+  0 is valid and both arms' agents refused it; and a probe accepts a refusal that names the
+  option or the value, since a message such as "argument -n: must be at least 1" has named
+  the input. Rejected: keeping them, which would count one reasonable reading against both
+  arms alike and add noise to every cell of that task.
+- The measures are one module, `measures.py`, called by `run.py` behind `run.sh`, and not
+  the five scripts task 2 listed. They share the diff of the agent's commits and the clone
+  they run in. Rejected: five scripts that each work those out again.
+- Task 2 goes up as two pull requests, the harness with its measures and then the
+  reporter. Together they are 1,098 reviewable lines, over the plugin's stop of 1,000.
+  Rejected: one pull request, as the task list has it.
+- A measure's status says what became of the measuring, not how well the agent did: pass
+  when it ran and has a value, skip when there was nothing to measure, error when it could
+  not run; `red-check` keeps its own pass, fail or warn. How well the agent did is the
+  value. Rejected: fail for a low value, which would make a count read as a verdict (R4).
+- The agent inherits the caller's environment but for this repository's path. Started from
+  a cloud session, it therefore knows that session's id, and one agent of the shake-out put
+  it into a commit message. It is the same for both arms. Rejected for now: an empty
+  environment, which would also drop what the CLI signs in with.
 - The hidden tests are named `acceptance.py`, not `hidden_test.py`. Rejected: a name that
   `red-check` and pytest take for a test of this repository.
 - Deterministic measures only. Rejected: the Haiku judge of error-message wording that the
@@ -407,3 +428,50 @@ R6: `git diff --stat origin/main..HEAD -- plugins/change-record/skills` prints n
 
 Not done in this task: no agent has run against the checks; `selftest.sh` is not yet in
 CI, which task 2 adds with its own suite.
+
+### Task 2, part one: the harness and its measures (2026-11-14)
+
+Shipped under `plugins/change-record/outcome-evals/`: `run.sh` with `run.py` (the scratch
+repository, the plugin's copy, the two arms, the pinned model, the budget and time of a
+run, the cost stop, one JSON line a run), `measures.py` (the ten measures), `run.test.sh`,
+and both suites in `.github/workflows/test.yml`. `.gitignore` there keeps everything a run
+leaves but the JSON lines out of the repository. The reporter is part two.
+
+Red first, against a harness that does nothing: 49 of 58 assertions failed. `run.test.sh`
+passes with 58, with a fake `claude`, `mutmut` and `coverage` first on `PATH`: no model,
+nothing installed. `checks/selftest.sh` passes with 175.
+
+Guards: 39 broken by hand in `run.py` and `measures.py`. 34 failed the suite at once. Five
+survived, each for want of a test and not of the guard: two of the environment's cleaning
+(the test's own `PATH` and `OLDPWD` never reached the harness; bash drops an `OLDPWD` that
+names no folder), two skips that another skip behind them hid, and `README.md` counting as
+inside the task. Each has a test now, and all 39 fail the suite.
+
+Use: the shake-out, one real run an arm of `repeat` on Sonnet 5.5, with the real mutmut
+3.8.1 and coverage from a virtual environment the harness made. 21 cents in all.
+
+    $ outcome-evals/run.sh --tasks repeat --runs 1 --keep ... --out ...
+    outcome-evals: repeat plugin 1: ok, 0.15 dollars, 0.15 in all
+    outcome-evals: repeat baseline 1: ok, 0.06 dollars, 0.21 in all
+
+    plugin:   model claude-sonnet-5-5, the skill listed and called, 14 turns
+              hidden 2 of 3, probes 3 of 4, mutation 29 of 45 in main and positive_int,
+              coverage 12 of 12 changed lines, red-check: 1 file, red on the base
+    baseline: model claude-sonnet-5-5, no skill, 4 turns
+              hidden 2 of 3, probes 4 of 4, mutation 40 of 46 in main and usage_error,
+              coverage 18 of 18 changed lines, red-check: 1 file, red on the base
+
+What it showed that the fakes could not: the event stream is read right (model, skill,
+turns, cost); `--setting-sources ""` with `--plugin-dir` gives the skill to one arm only;
+mutmut and coverage give real numbers on what a real agent wrote. And two checks that were
+not fair, changed as Decisions say: with them both arms pass 2 of 2 and 4 of 4 on this
+task. The checks are now 39, 25 traps and 14 plain.
+
+Error path, by the fakes only: an agent that fails, runs out of time, is stopped at its
+budget, looks at a check, or has the skill in the wrong arm; a tool that cannot run; the
+cost stop. None of these happened in the shake-out.
+
+R6: `git diff --stat origin/main..HEAD -- plugins/change-record/skills` prints nothing.
+
+Not done here: the reporter, which is part two, and the matrix. One run an arm says nothing
+about the skill; at the shake-out's price the fifty runs would cost about five dollars.

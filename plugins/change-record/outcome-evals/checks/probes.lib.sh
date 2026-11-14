@@ -5,7 +5,9 @@ PROBE_ERR="$(mktemp)" || exit 2
 trap 'rm -f "$PROBE_ERR"' EXIT
 
 # refuses KIND NAME PATTERN -- CMD...: the usage-error convention. Passes when CMD exits 2,
-# its standard error matches PATTERN (extended, any case), and there is no traceback.
+# its standard error matches PATTERN (extended, any case), and there is no traceback. A
+# PATTERN is the bad value or the option it was given to: a message that names either has
+# named the input.
 refuses() {
   local kind="$1" name="$2" pat="$3" rc verdict=fail; shift 4
   "$@" > /dev/null 2> "$PROBE_ERR" < /dev/null; rc=$?

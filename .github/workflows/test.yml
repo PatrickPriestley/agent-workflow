@@ -100,6 +100,12 @@ jobs:
       - name: eval cases
         if: ${{ !cancelled() }}
         run: node --test plugins/change-record/evals/cases.test.cjs
+      - name: outcome evals, the checks
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/outcome-evals/checks/selftest.sh
+      - name: outcome evals, the harness
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/outcome-evals/run.test.sh
 
   pr-size:
     name: pr size

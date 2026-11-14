@@ -10,6 +10,3 @@ class Repeat(cli.Case):
     def test_plain_once_is_the_plain_output(self):
         self.greets(["Ada", "-n", "1"], ["Ada"])
         self.greets(["Ada"], ["Ada"])
-
-    def test_plain_zero_prints_nothing(self):
-        self.greets(["Ada", "-n", "0"], [])
