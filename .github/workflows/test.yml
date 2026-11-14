@@ -4,9 +4,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  # by hand, on any branch: the whole matrix, for a change that might behave differently on macOS
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# A newer push to a pull request replaces the run of the one before it. A run on main is never
+# cancelled: each merge keeps its own result.
+concurrency:
+  group: test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -14,7 +22,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS minutes are free for a public repository and about ten times a Linux minute for a
+        # private one (record docs/changes/2026-11-14-ci-macos-cost.md). So a pull request to a
+        # private repository runs on Linux alone; a push to main, a run started by hand and
+        # anything on a public repository run on both.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.repository.private && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -41,6 +53,8 @@ jobs:
         run: bash pr-agent/verify-image.test.sh
       - name: pr-size
         run: bash bin/pr-size.test.sh
+      - name: CI workflow
+        run: bash bin/ci-workflow.test.sh
 
   # A job of its own, so these suites run whatever happens in the job above, and a step per
   # suite that runs even after an earlier one failed, so one red suite does not hide the next.
@@ -49,7 +63,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS minutes are free for a public repository and about ten times a Linux minute for a
+        # private one (record docs/changes/2026-11-14-ci-macos-cost.md). So a pull request to a
+        # private repository runs on Linux alone; a push to main, a run started by hand and
+        # anything on a public repository run on both.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.repository.private && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
