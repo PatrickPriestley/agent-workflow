@@ -211,7 +211,11 @@ tried again at the next push; a store that cannot be reached or fails as a whole
 push at once. Before anything leaves the machine, every string in every line is redacted:
 email addresses, GitHub, Anthropic, AWS, Supabase, Slack and `sk-` keys, JWTs, bearer and basic
 tokens, URL passwords and private key blocks become `<redacted:kind>`; the local archive keeps
-the original. `transcripts redact` shows what would be sent. Each stream goes as gzip chunks
+the original. The ids of the account are taken out too: a value under `organizationUuid`,
+`accountUuid`, `userID`, `organization_uuid` or `account_uuid` becomes `<redacted:account-id>`,
+and so does the same value wherever else it stands, in a URL or a folder name, and a UUID
+joined to it by `_`. `transcripts redact` shows what would be sent; it reads all its input
+before it writes. Each stream goes as gzip chunks
 keyed by a hash chain over the redacted bytes, so two machines sending the same session store
 each chunk once, and a rewritten transcript or a new redaction version starts a new generation;
 the session's index entry follows as a new row version, never an update.

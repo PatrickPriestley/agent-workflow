@@ -1,7 +1,7 @@
 # Fixtures: eval runs for the labelling set
 
 Thirteen Claude Code transcripts from `claude plugin eval` runs of the change-record cases
-(2026-11-08 and 2026-11-09), redacted with `transcripts redact` (redaction version 1) and
+(2026-11-08 and 2026-11-09), redacted with `transcripts redact` (redaction version 2) and
 gzipped. They are part of the set a person labels under 2026-11-11-grading-trust: one run per
 eval prompt that used the Skill tool, then runs that did not. They carry no labels here; the
 labels live in `grade/labels/`.

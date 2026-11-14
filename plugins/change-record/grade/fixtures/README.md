@@ -1,7 +1,7 @@
 # Fixtures: the two real `dispatch` sessions
 
 Two Claude Code transcripts from the first real `dispatch` runs of the `shout` task
-(2026-11-08), redacted with `transcripts redact` (redaction version 1) and gzipped. They are
+(2026-11-08), redacted with `transcripts redact` (redaction version 2) and gzipped. They are
 the fixtures the record's task 3 names ("cut from the two real `dispatch` sessions"); task 3
 may cut them down further.
 

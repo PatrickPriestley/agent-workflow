@@ -106,7 +106,7 @@ for l in sys.stdin:
         except ValueError: print("not JSON:", x[:80])')"
 has "$(cat "$AR/parts/$SID/main/"g1-*.jsonl)" "$GHTOK"
 it "the index entry records what was sent and the redaction version"
-assert_eq "1 3 1" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d["sent"]["streams"]["main"]; print(d["redaction_version"], s["lines"], s["generation"])' "$AR/sessions/$SID.json" 2>&1)"
+assert_eq "2 3 1" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d["sent"]["streams"]["main"]; print(d["redaction_version"], s["lines"], s["generation"])' "$AR/sessions/$SID.json" 2>&1)"
 it "a push with nothing new sends nothing"
 before="$(wc -l < "$LOG")"; out="$(push)"; rc=$?
 assert_eq 0 "$rc"; assert_eq "$before" "$(wc -l < "$LOG")"
@@ -194,16 +194,16 @@ ARR="$TMPROOT/arR"; pushR() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARR" AGENT_TRAN
 gens() { python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["sent"]; print(s["redaction"], " ".join("%s=%d/%d" % (k, v["generation"], v["parts"]) for k, v in sorted(s["streams"].items())))' "$ARR/sessions/$SID7.json"; }
 (cd "$REPO" && AGENT_TRANSCRIPTS="$ARR" "$T" archive --transcript "$TRR" < /dev/null 2>/dev/null)
 standin sr1; out="$(pushR)"
-assert_eq "1 main=1/1 subagents/agent-a1=1/1" "$(gens)"
+assert_eq "2 main=1/1 subagents/agent-a1=1/1" "$(gens)"
 python3 -c '
 import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["sent"]["redaction"]=0; open(p,"w").write(json.dumps(d))' "$ARR/sessions/$SID7.json"
 standin sr2 --refuse-after 1; out="$(pushR)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "503"
 it "after the stop, the entry says the stream that was not reached is still owed"
-assert_eq "1 main=2/1 subagents/agent-a1=2/0" "$(gens)"
+assert_eq "2 main=2/1 subagents/agent-a1=2/0" "$(gens)"
 it "the next push sends the stream that was not reached, as the next generation, and the first one is not sent a third time"
 standin sr3; out="$(pushR)"; rc=$?
-assert_eq "0 1 main=2/1 subagents/agent-a1=2/1" "$rc $(gens)"
+assert_eq "0 2 main=2/1 subagents/agent-a1=2/1" "$rc $(gens)"
 assert_eq "subagents/agent-a1 2" "$(sent | python3 -c 'import json,sys; print(" ".join("%s %d" % (c["stream"], c["generation"]) for c in map(json.loads, sys.stdin)))')"
 it "and a push after that has nothing to send"
 standin sr4; out="$(pushR)"
@@ -384,12 +384,14 @@ done
 SIDN=30000000-2222-3333-4444-555555555555; WORD="SHORTENME$(python3 -c 'print("x" * 400)')"
 line 2026-11-01T10:00:00.000Z user "\"Take $WORD out of this.\"" | sed "s/$SID/$SIDN/" > "$PROJ/$SIDN.jsonl"
 ARN="$TMPROOT/arN"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARN" "$T" archive --transcript "$PROJ/$SIDN.jsonl" < /dev/null 2>/dev/null)
-mkdir -p "$TMPROOT/v2/bin"; python3 - "$T" "$TMPROOT/v2/bin/transcripts" <<'PY'
-import os, sys
+mkdir -p "$TMPROOT/v2/bin"; python3 - "$T" "$TMPROOT/v2/bin/transcripts" "$TMPROOT/v2/next" <<'PY'
+import os, re, sys
 s = open(sys.argv[1]).read()
-a = s.replace("\nREDACTION = 1", "\nREDACTION = 2", 1).replace("\nPATTERNS = [", "\nPATTERNS = [\n    (_R(r\"SHORTENMEx*\"), \"\"),", 1)
-assert a.count("REDACTION = 2") == 1 and "SHORTENMEx*" in a
+now = int(re.search(r"\nREDACTION = (\d+)", s).group(1))
+a = s.replace("\nREDACTION = %d" % now, "\nREDACTION = %d" % (now + 1), 1).replace("\nPATTERNS = [", "\nPATTERNS = [\n    (_R(r\"SHORTENMEx*\"), \"\"),", 1)
+assert a.count("REDACTION = %d" % (now + 1)) == 1 and "SHORTENMEx*" in a
 open(sys.argv[2], "w").write(a); os.chmod(sys.argv[2], 0o755)
+open(sys.argv[3], "w").write(str(now + 1))
 PY
 standin sn1
 (cd "$REPO" && AGENT_TRANSCRIPTS="$ARN" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
@@ -399,7 +401,7 @@ assert_eq "2 2" "$(count chunks) $(count sessions)"
 out="$(mat "$TMPROOT/matN" --session $SIDN)"
 got="$(cat "$TMPROOT/matN"/projects/*/"$SIDN.jsonl" 2>/dev/null)"
 has "$got" "out of this"; lacks "$got" "SHORTENME"
-assert_eq 2 "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["redaction_version"])' "$TMPROOT/matN/sessions/$SIDN.json")"
+assert_eq "$(cat "$TMPROOT/v2/next")" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["redaction_version"])' "$TMPROOT/matN/sessions/$SIDN.json")"
 
 it "addresses are redacted exactly as the one pattern redacts them: 30,000 made-up strings and the hard cases"
 assert_eq "same 30012" "$(python3 - "$T" <<'PY'
@@ -427,6 +429,104 @@ try:
     print("done", len(r.stdout.splitlines()))
 except subprocess.TimeoutExpired:
     print("not done in 5 s")
+PY
+)"
+
+echo "account ids (record 2026-11-14-redact-account-id): the ids of the owner's account do not leave the machine"
+# made-up ids: ORG under the key and in text, ACC only inside a string that is itself JSON, as a command's output
+ORG="0a1b2c3d-1111-2222-3333-444455556666"; ACC="5e6f7a8b-9999-8888-7777-666655554444"; MARK="<redacted:account-id>"
+SIDA=40000000-2222-3333-4444-555555555555; mkdir -p "$PROJ/$SIDA/subagents"
+TRA="$PROJ/$SIDA.jsonl"; SUBA="$PROJ/$SIDA/subagents/agent-b1.jsonl"
+linea() { line "$@" | sed "s/$SID/$SIDA/"; }
+# att SESSION TIME KEY VALUE: the line a harness writes about the account
+att() { printf '{"sessionId":"%s","timestamp":"%s","cwd":"%s","gitBranch":"work","type":"attachment","attachment":{"type":"account","%s":"%s"}}\n' "$1" "$2" "$REPO" "$3" "$4"; }
+{ linea 2026-11-02T10:00:00.000Z user '"start"'
+  att "$SIDA" 2026-11-02T10:00:01.000Z organizationUuid "$ORG"
+  att "$SIDA" 2026-11-02T10:00:02.000Z userID u1
+  linea 2026-11-02T10:00:03.000Z user '"Connect at https://claude.ai/connect-github?org='"$ORG"' first"'
+  linea 2026-11-02T10:00:04.000Z assistant '[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls /root/.claude/skills/synced/'"$ORG"'/x; cat ~/.claude.json"}}]'
+  linea 2026-11-02T10:00:05.000Z user '[{"type":"tool_result","tool_use_id":"t1","content":"{\"oauthAccount\":{\"accountUuid\":\"'"$ACC"'\"}}\nseen '"$ACC"' and u1 again"}]'
+} > "$TRA"
+linea 2026-11-02T10:00:06.000Z user '"the subagent reads synced/'"$ORG"'/y"' > "$SUBA"
+ARA="$TMPROOT/arA"
+archivea() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARA" "$T" archive --transcript "$1" < /dev/null 2>&1); }
+pusha() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARA" AGENT_TRANSCRIPTS_URL="$URL" "$T" push "$@" 2>&1); }
+standin sa1; archivea "$TRA" > /dev/null; out="$(pusha)"; rc=$?
+it "a session with the account's id under its key and in text is sent"
+assert_eq "0 2" "$rc $(sent | wc -l | tr -d ' ')"
+it "the id is in no chunk and no request: not under its key, not in a URL, not as a folder name"
+lacks "$(sent)" "$ORG"; lacks "$(cat "$LOG")" "$ORG"
+has "$(sent)" "\\\"organizationUuid\\\":\\\"$MARK\\\""; has "$(sent)" "org=$MARK first"; has "$(sent)" "synced/$MARK/x"
+it "an id named only inside a string that is itself JSON is learned from it, and taken out there and after"
+lacks "$(sent)" "$ACC"; has "$(sent)" "seen $MARK and"
+it "a subagent's stream that has the id in text only is redacted with what the main stream taught"
+has "$(sent)" "synced/$MARK/y"
+it "a short value is masked at its key and not learned: the same letters elsewhere stay"
+has "$(sent)" "\\\"userID\\\":\\\"$MARK\\\""; has "$(sent)" "and u1 again"
+it "every line sent is still JSON"
+assert_eq "ok" "$(sent | python3 -c 'import json,sys
+for l in sys.stdin:
+    for x in json.loads(l)["text"].splitlines(): json.loads(x)
+print("ok")' 2>&1)"
+it "a later run sends a later part that has the id in text and no key: it learns from the first part"
+linea 2026-11-02T10:09:00.000Z user '"again '"$ORG"' later"' >> "$TRA"; archivea "$TRA" > /dev/null
+standin sa2; out="$(pusha)"
+has "$(sent)" "again $MARK later"; lacks "$(sent)" "$ORG"; lacks "$(cat "$LOG")" "$ORG"
+it "the key in a subagent's stream teaches the main stream, which is redacted first"
+SIDB=50000000-2222-3333-4444-555555555555; mkdir -p "$PROJ/$SIDB/subagents"; ORGB="9f8e7d6c-aaaa-bbbb-cccc-ddddeeeeffff"
+linea 2026-11-02T11:00:00.000Z user '"main names '"$ORGB"' only in text"' | sed "s/$SIDA/$SIDB/" > "$PROJ/$SIDB.jsonl"
+att "$SIDB" 2026-11-02T11:00:01.000Z organizationUuid "$ORGB" > "$PROJ/$SIDB/subagents/agent-c1.jsonl"
+ARB="$TMPROOT/arB"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARB" "$T" archive --transcript "$PROJ/$SIDB.jsonl" < /dev/null > /dev/null 2>&1)
+standin sb1; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARB" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+has "$(sent)" "main names $MARK only"; lacks "$(sent)" "$ORGB"; lacks "$(cat "$LOG")" "$ORGB"
+it "redact reads all its input first: text before the key's line, and a line that is not JSON, lose the id too"
+got="$( { linea 2026-11-02T12:00:00.000Z user '"early '"$ORG"' use"'; att "$SIDA" 2026-11-02T12:00:01.000Z organizationUuid "$ORG"; printf 'not json org=%s here\n' "$ORG"; } | "$T" redact 2>&1)"
+lacks "$got" "$ORG"; has "$got" "early $MARK use"; has "$got" "not json org=$MARK here"
+assert_eq 3 "$(printf '%s\n' "$got" | wc -l | tr -d ' ')"
+it "a line with no id keeps its exact bytes"
+assert_eq "$(linea 2026-11-02T12:00:00.000Z user '"nothing here"' | cksum)" "$( { linea 2026-11-02T12:00:00.000Z user '"nothing here"'; att "$SIDA" 2026-11-02T12:00:01.000Z organizationUuid "$ORG"; } | "$T" redact | head -1 | cksum)"
+it "an id that begins another is taken out whole: the longer one first, no tail left"
+got="$( { att "$SIDA" 2026-11-02T12:00:00.000Z userID abcdefgh1234; att "$SIDA" 2026-11-02T12:00:01.000Z accountUuid abcdefgh1234-5678-wxyz; linea 2026-11-02T12:00:02.000Z user '"both abcdefgh1234-5678-wxyz and abcdefgh1234."'; } | "$T" redact 2>&1)"
+has "$got" "both $MARK and $MARK.\""; lacks "$got" "5678"
+it "under an account key only a string is replaced: a null stays, and an object is redacted like any other"
+got="$(printf '{"userID":null,"accountUuid":{"note":"mail %s","organizationUuid":"%s"}}\n' "$EMAIL" "$ORG" | "$T" redact 2>&1)"
+assert_eq "{\"userID\":null,\"accountUuid\":{\"note\":\"mail <redacted:email>\",\"organizationUuid\":\"$MARK\"}}" "$got"
+it "a part that names a new id, as a session resumed under another account would, teaches the redactor before that part is sent"
+ORGC="77777777-1234-1234-1234-121212121212"
+{ att "$SIDA" 2026-11-02T10:20:00.000Z organizationUuid "$ORGC"; linea 2026-11-02T10:20:01.000Z user '"now under '"$ORGC"' here"'; } >> "$TRA"; archivea "$TRA" > /dev/null
+standin sa3; out="$(pusha)"
+has "$(sent)" "now under $MARK here"; lacks "$(sent)" "$ORGC"; lacks "$(cat "$LOG")" "$ORGC"
+it "a sheet made from the archive's own lines shows the placeholder too"
+mkdir -p "$TMPROOT/labelsA2"; out="$(cd "$REPO" && "$T" sheet "$ARA" --labels "$TMPROOT/labelsA2" 2>&1)"
+sheet="$(cat "$ARA/sheets/$SIDA.md" 2>/dev/null)"
+lacks "$sheet" "$ORG"; has "$sheet" "synced/$MARK/x"
+it "the other spelling of the key, as a tool's result has it, is known too"
+ACCS="31313131-4444-4444-4444-565656565656"
+got="$( { linea 2026-11-02T12:00:00.000Z user '"listed {\"creator\":{\"account_uuid\":\"'"$ACCS"'\",\"organization_uuid\":\"'"$ORGB"'\"}} then '"$ACCS"' and '"$ORGB"'"'; } | "$T" redact 2>&1)"
+lacks "$got" "$ACCS"; lacks "$got" "$ORGB"; has "$got" "then $MARK and $MARK\""
+it "an id joined to a known one in a folder name, with no key of its own anywhere, is learned from the name"
+ACCJ="42424242-5555-5555-5555-676767676767"
+got="$( { att "$SIDA" 2026-11-02T12:00:00.000Z organizationUuid "$ORG"; linea 2026-11-02T12:00:01.000Z user '"ls skills/synced/'"${ORG}_$ACCJ"'/x"'; linea 2026-11-02T12:00:02.000Z user '"alone '"$ACCJ"' too"'; } | "$T" redact 2>&1)"
+lacks "$got" "$ACCJ"; has "$got" "synced/${MARK}_$MARK/x"; has "$got" "alone $MARK too"
+it "a later part sent by a later run with only the joined name loses both ids"
+linea 2026-11-02T10:30:00.000Z user '"cat synced/'"${ORG}_$ACCJ"'/SKILL.md, then '"$ACCJ"'"' >> "$TRA"; archivea "$TRA" > /dev/null
+standin sa4; out="$(pusha)"
+has "$(sent)" "synced/${MARK}_$MARK/SKILL.md, then $MARK"; lacks "$(sent)" "$ACCJ"; lacks "$(sent)" "$ORG"
+it "a UUID that merely follows an underscore, with no known id before it, stays, though an id is known"
+got="$( { att "$SIDA" 2026-11-02T12:00:00.000Z organizationUuid "$ORG"; linea 2026-11-02T12:00:01.000Z user '"run_'"$ACCJ"' kept"'; } | "$T" redact 2>&1)"
+has "$got" "run_$ACCJ kept"
+it "a sheet made from a local transcript shows the placeholder where a command named the id"
+mkdir -p "$TMPROOT/sheetsA" "$TMPROOT/labelsA"; out="$(cd "$REPO" && "$T" sheet --transcript "$TRA" --out "$TMPROOT/sheetsA" --labels "$TMPROOT/labelsA" 2>&1)"
+sheet="$(cat "$TMPROOT/sheetsA"/*.md 2>/dev/null)"
+lacks "$sheet" "$ORG"; has "$sheet" "synced/$MARK/x"
+it "no archived fixture holds an account id: each has the placeholder under the key"
+assert_eq "15 0" "$(python3 - "$here/../grade/fixtures" <<'PY'
+import glob, gzip, re, sys
+files = sorted(glob.glob(sys.argv[1] + "/**/*.jsonl.gz", recursive=True)); bad = 0
+for f in files:
+    vals = set(re.findall(r'\\*"(?:organizationUuid|accountUuid|userID)\\*"\s*:\s*\\*"([^"\\]*)', gzip.open(f, "rt", errors="replace").read()))
+    bad += vals != {"<redacted:account-id>"}
+print(len(files), bad)
 PY
 )"
 

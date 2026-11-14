@@ -569,7 +569,7 @@ def cmd_import(args):
 
 # ---- the store: redaction, push, materialize ----
 
-REDACTION = 1  # bump when the patterns change: every stream is then sent again as a new generation
+REDACTION = 2  # bump when the patterns change: every stream is then sent again as a new generation
 CHUNK_BYTES = 2_000_000  # redacted bytes per chunk before gzip; the real project took a 4 MB body
 PUSH_LIMIT = 60  # seconds a background push may run
 
@@ -623,9 +623,32 @@ def redact_emails(t):
     return "".join(out) + t[pos:] if out else t
 
 
+# The ids of the owner's account. A harness writes them under these keys; the same value then turns
+# up in text no pattern can know (a folder name, a URL), so a value seen under a key is learned and
+# taken out of every string after that. Learn before redacting: learn_ids on the lines first.
+ACCOUNT_KEYS = ("organizationUuid", "accountUuid", "userID", "organization_uuid", "account_uuid")
+ACCOUNT_MARK = "<redacted:account-id>"
+# on raw bytes, so the key inside a string that is itself JSON (its quotes escaped) counts too
+ACCOUNT_ID = re.compile(rb'\\*"(?:' + "|".join(ACCOUNT_KEYS).encode() + rb')\\*"\s*:\s*\\*"([A-Za-z0-9_-]{8,})\\*"')
+# a harness names a folder <organization id>_<account id>: a UUID joined so to a known id is one too
+JOINED_ID = rb"_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+KNOWN_IDS = set()
+
+
+def learn_ids(data):
+    """Remember the account ids named in these raw lines (bytes, or a list of lines)."""
+    if not isinstance(data, (bytes, bytearray)):
+        data = b"\n".join(data)
+    KNOWN_IDS.update(m.decode() for m in ACCOUNT_ID.findall(data))
+    for known in sorted(KNOWN_IDS):
+        KNOWN_IDS.update(m.decode() for m in re.findall(re.escape(known.encode()) + JOINED_ID, data))
+
+
 def redact_text(t):
     for pat, rep in PATTERNS:
         t = pat.sub(rep, t)
+    for known in sorted(KNOWN_IDS, key=len, reverse=True):  # the longest first: one id may begin another
+        t = t.replace(known, ACCOUNT_MARK)
     return redact_emails(t)
 
 
@@ -635,7 +658,8 @@ def redact_obj(o):
     if isinstance(o, list):
         return [redact_obj(x) for x in o]
     if isinstance(o, dict):
-        return {redact_text(k): redact_obj(v) for k, v in o.items()}
+        return {redact_text(k): ACCOUNT_MARK if k in ACCOUNT_KEYS and isinstance(v, str) else redact_obj(v)
+                for k, v in o.items()}
     return o
 
 
@@ -768,13 +792,20 @@ def push_session(ar, url, key, sid, sender):
             restart(name, st)
     sent["redaction"] = REDACTION
     chunks = 0
+    for name, st in entry["streams"].items():  # the key's line is among a stream's first; a later part has none
+        try:
+            learn_ids(open(os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], 1)), "rb").read())
+        except OSError:
+            pass
     for name, st in sorted(entry["streams"].items()):
         s = sent["streams"].get(name)
         if s is None or s["archive_generation"] != st["generation"]:
             s = restart(name, st)
         for n in range(s["parts"] + 1, st["parts"] + 1):
             p = os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], n))
-            data = b"".join(redact_line(x) for x in open(p, "rb").read().splitlines(keepends=True))
+            data = open(p, "rb").read()
+            learn_ids(data)
+            data = b"".join(redact_line(x) for x in data.splitlines(keepends=True))
             pieces, cur = [], b""
             for x in data.splitlines(keepends=True):
                 if cur and len(cur) + len(x) > CHUNK_BYTES:
@@ -1120,7 +1151,9 @@ def session_lines(d, sid, entry):
         files = sorted(glob.glob(os.path.join(d, "projects", "*", sid + ".jsonl")))
     if not files:
         raise LookupError("no transcript for the session")
-    return b"".join(open(f, "rb").read() for f in files).splitlines()
+    lines = b"".join(open(f, "rb").read() for f in files).splitlines()
+    learn_ids(lines)  # what is shown from them passes through redact_text
+    return lines
 
 
 def change_skill(entry):
@@ -1181,7 +1214,7 @@ def cmd_grade(args):
     repo = os.path.abspath(repo)
     if transcript:
         try:
-            lines = (gzip.open(transcript) if transcript.endswith(".gz") else open(transcript, "rb")).read().splitlines()
+            lines = read_transcript(transcript)
             sid = os.path.basename(transcript).split(".")[0]
             _, rows = grade_one(fields, lines, sid, None, repo, None, say, root=os.path.abspath(cwd) if cwd else None)
         except (OSError, fields.Unparsable) as e:
@@ -1287,9 +1320,16 @@ def load_labels_modules():
     return fields, labels
 
 
+def read_transcript(path):
+    """The lines of a transcript file, gzipped or not; the account ids in them are learned."""
+    lines = (gzip.open(path) if path.endswith(".gz") else open(path, "rb")).read().splitlines()
+    learn_ids(lines)
+    return lines
+
+
 def transcript_file(path):
     """(session id, lines) of a transcript file, gzipped or not; the id is the one its lines carry."""
-    lines = (gzip.open(path) if path.endswith(".gz") else open(path, "rb")).read().splitlines()
+    lines = read_transcript(path)
     sid = None
     for raw in lines:
         try:
@@ -1591,7 +1631,7 @@ def cmd_judge(args):
     limit = limit or (20 if kind == "claude" else 10)
     if transcript:
         try:
-            lines = (gzip.open(transcript) if transcript.endswith(".gz") else open(transcript, "rb")).read().splitlines()
+            lines = read_transcript(transcript)
             text = open(record_file).read()
             commands = fields.commands_run(lines)
         except (OSError, fields.Unparsable) as e:
@@ -1818,7 +1858,9 @@ def main(argv):
         import agent_sample
         return agent_sample.main(argv[1:])
     if argv[:1] == ["redact"]:
-        for raw in sys.stdin.buffer:
+        data = sys.stdin.buffer.read()  # all of it first: an id may be used above the line that names it
+        learn_ids(data)
+        for raw in data.splitlines(keepends=True):
             sys.stdout.buffer.write(redact_line(raw))
         return 0
     print(__doc__.strip().split("\n\n")[0], file=sys.stderr)
