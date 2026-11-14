@@ -49,33 +49,32 @@ it "a push runs /review only: without push_commands PR-Agent falls back to /desc
 assert_eq "'true'" "$(envval GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER)"
 assert_eq "'[\"/review\"]'" "$(envval GITHUB_ACTION_CONFIG__PUSH_COMMANDS)"
 
-it "the model is OpenCode Go's GLM-5.3 unless the variable names another, with no fallback"
-assert_eq "\${{ vars.PR_AGENT_MODEL || 'openai/glm-5.3' }}" "$(envval CONFIG__MODEL)"
+it "the model is OpenAI's gpt-6.1-sol, under the bare name PR-Agent knows, unless the variable names another, with no fallback"
+assert_eq "\${{ vars.PR_AGENT_MODEL || 'gpt-6.1-sol' }}" "$(envval CONFIG__MODEL)"
 assert_eq "'[]'" "$(envval CONFIG__FALLBACK_MODELS)"
 
-it "PR-Agent reaches OpenCode Go as an OpenAI-compatible endpoint, with the Go key"
-assert_eq "'https://opencode.ai/zen/go/v1'" "$(envval OPENAI__API_BASE)"
-assert_eq '${{ secrets.OPENCODE_GO_KEY }}' "$(envval OPENAI__KEY)"
+it "PR-Agent calls OpenAI itself with the OpenAI key: no base URL, and nothing of OpenCode Go is left"
+assert_eq "" "$(envval OPENAI__API_BASE)"
+assert_eq '${{ secrets.OPENAI_API_KEY }}' "$(envval OPENAI__KEY)"
+printf '%s\n' "$w" | grep -v '^ *#' | grep -qiE 'OPENCODE|opencode\.ai|openai/glm' && bad "an OpenCode Go setting remains" || ok
+assert_eq "" "$(envval LITELLM__EXTRA_HEADERS)"
+assert_eq "" "$(envval CONFIG__CUSTOM_MODEL_MAX_TOKENS)"
 printf '%s\n' "$w" | grep -v '^ *#' | grep -q 'OPENROUTER' && bad "an OpenRouter setting remains" || ok
 
-it "the model is checked before PR-Agent runs, excluding the authors' families"
-has "$w" 'bash pr-agent/check-model.sh "$MODEL" '"'"'[]'"'"' --exclude claude --exclude gpt --exclude codex'
-printf '%s\n' "$w" | grep -q -- '--exclude openai/' && bad "openai/ is excluded, but PR-Agent needs that prefix for OpenCode Go" || ok
-assert_eq "\${{ vars.PR_AGENT_MODEL || 'openai/glm-5.3' }}" "$(envval MODEL)"
-has "$w" "KEY_SET: \${{ secrets.OPENCODE_GO_KEY != '' }}"
+it "the model is checked before PR-Agent runs: Claude, who writes the pull requests here, is refused, and the reviewer's own family is not"
+has "$w" 'bash pr-agent/check-model.sh "$MODEL" '"'"'[]'"'"' --exclude claude'
+printf '%s\n' "$w" | grep -qE -- '--exclude (gpt|codex|openai)' && bad "the reviewer's own family is excluded" || ok
+assert_eq "\${{ vars.PR_AGENT_MODEL || 'gpt-6.1-sol' }}" "$(envval MODEL)"
+has "$w" "KEY_SET: \${{ secrets.OPENAI_API_KEY != '' }}"
+has "$w" "add the secret OPENAI_API_KEY"
+it "the default model passes the guard as the workflow calls it, and a Claude model named in the variable does not"
+out=$(check gpt-6.1-sol '[]' --exclude claude); assert_eq 0 "$?"
+out=$(check claude-sonnet-5-5 '[]' --exclude claude); assert_eq 2 "$?"
+out=$(check anthropic/Claude-opus '[]' --exclude claude); assert_eq 2 "$?"
+it "the key is named on the review step and in the one expression that asks whether it is set, nowhere else"
+assert_eq 2 "$(printf '%s\n' "$w" | grep -v '^ *#' | grep -c 'secrets.OPENAI_API_KEY')"
+printf '%s\n' "$w" | awk '/^    env:/{job=1} /^    steps:/{job=0} job' | grep -q 'secrets\.' && bad "a secret is set for the whole job" || ok
 has "$w" "if: steps.check.outputs.ready == 'true'"
-
-it "requests identify PR-Agent and carry one OpenCode session per pull request (Go requires both)"
-python3 -I - "$(envval LITELLM__EXTRA_HEADERS)" <<'PY' && ok || bad "LITELLM__EXTRA_HEADERS is not the expected JSON"
-import json, sys
-raw = sys.argv[1]
-assert raw.startswith("'") and raw.endswith("'"), raw
-h = json.loads(raw[1:-1])
-assert set(h) == {"User-Agent", "x-opencode-session"}, h
-assert h["User-Agent"].startswith("pr-agent/"), h
-s = h["x-opencode-session"]
-assert "${{ github.repository_id }}" in s and "${{ github.event.pull_request.number }}" in s, s
-PY
 
 it "Kimi gets no temperature: PR-Agent 0.49.0's no_temperature_models lacks it, later releases list it"
 python3 -I - "$(envval CONFIG__NO_TEMPERATURE_MODELS)" <<'PY' && ok || bad "CONFIG__NO_TEMPERATURE_MODELS is missing kimi-k3.1-pro or 0.49.0's defaults"

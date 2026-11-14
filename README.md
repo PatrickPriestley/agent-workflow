@@ -189,13 +189,14 @@ the receiver's code; PR-Agent makes one call over the diff after it.
 
 `.github/workflows/pr-agent.yml` runs it on each pull request (opened, reopened, ready for
 review, and on every push to it; not drafts or forks) and posts the review as a comment. Only `/review` runs. The model
-is served by OpenCode Go, which PR-Agent reaches as an OpenAI-compatible endpoint. To turn it
-on, add under Settings > Secrets and variables > Actions:
+is OpenAI's, called with an OpenAI API key. To turn it on, add under Settings > Secrets and
+variables > Actions:
 
-- secret `OPENCODE_GO_KEY`: the OpenCode Go API key. Without it the job ends with a notice.
-- optional variable `PR_AGENT_MODEL`: another Go model, as `openai/<go-model-id>`. The default
-  is `openai/glm-5.3`. Claude, GPT, Codex and local models are refused, since Claude and
-  Codex author the pull requests here.
+- secret `OPENAI_API_KEY`: an OpenAI API key. Without it the job ends with a notice.
+- optional variable `PR_AGENT_MODEL`: another OpenAI model, under the bare name PR-Agent knows
+  it by. The default is `gpt-6.1-sol`. Claude and local models are refused, since Claude
+  writes the pull requests here; a pull request written by Codex would be reviewed by its
+  own family.
 - optional variable `PR_AGENT_VERBOSITY=2` for a first run: the job log then shows the full
   prompt, to check that the skill loads and secret files stay out. Remove it afterwards.
 
@@ -211,8 +212,7 @@ see `docs/plans/2026-11-02-pr-agent-review-skill.md`.
 To try it locally, with nothing posted anywhere:
 
     python3.12 -m venv ~/.venvs/pr-agent && ~/.venvs/pr-agent/bin/pip install pr-agent==0.49.0
-    export CONFIG__MODEL=openai/glm-5.3 OPENAI__API_BASE=https://opencode.ai/zen/go/v1 \
-           OPENAI__KEY=<OpenCode Go key>      # or any hosted model not of the author's family
+    export CONFIG__MODEL=gpt-6.1-sol OPENAI__KEY=<OpenAI API key>   # or any hosted model not of the author's family
     pr-agent/scratch.sh            # two local test branches, and the three checks to run on them
     pr-agent/try.sh                # review this branch; also describe, improve
     pr-agent/try.sh --no-skill     # control run; --no-ignore and --verbose (log the prompts) too
