@@ -272,7 +272,7 @@ def failed_step(r, cell, false_fail, votes, read, red):
                  "this fail is a known false fail.")
     out.append(line)
     cites = cited(ev)
-    rest = [f"{k} {red(shown(v))[:200]}" for k, v in ev.items()
+    rest = [f"{red(str(k))} {red(shown(v))[:200]}" for k, v in ev.items()
             if k not in NOT_SHOWN and not (k in CITES and any(key == k for key, _, _ in cites))]
     if rest:
         out += ["", f"Its evidence: {'; '.join(rest)}."]
@@ -307,7 +307,7 @@ def failed_step(r, cell, false_fail, votes, read, red):
         if key == BEFORE.get(r["step"]):
             anchor = n
         path = str(c["input"].get("file_path") or c["input"].get("notebook_path") or "")
-        out += ["", f"{what}, **[{n}] {c['name']}** `{red(cid)}`" + (f" {red(path)}" if path else "") + ":", ""] + excerpt(n, c, red)
+        out += ["", f"{what}, **[{n}] {red(str(c['name']))}** `{red(cid)}`" + (f" {red(path)}" if path else "") + ":", ""] + excerpt(n, c, red)
     if anchor is not None:
         out += shell_before(calls, anchor, red)
     return out
@@ -419,8 +419,8 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
         return (min((s_time.get(s, far) for s in v_sessions(vr)), default=far), skill, blob or "")
     ordered = sorted(versions.items(), key=v_start)
 
-    def label(skill, blob):
-        return f"{skill}, blob {blob[:8] if blob else 'unknown'}"
+    def label(skill, blob):  # a row's own words, like every other: a skill's name is whatever the row holds
+        return f"{red(str(skill))}, blob {red(str(blob))[:8] if blob else 'unknown'}"
 
     def day(t):
         return t.astimezone(timezone.utc).strftime("%Y-%m-%d") if t and t != far else "unknown"
@@ -441,9 +441,9 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
         return counts_section(groups, taken, len(everyone), label, len(unreadable)) + coverage_section(used)
 
     if not rows:
-        return "\n".join(["# Change skill report", "",
-                          "No score rows here: run `transcripts grade` for the steps. The counts and the coverage below "
-                          "need only the transcripts and the index entries."] + taken_and_used()) + "\n"
+        return red("\n".join(["# Change skill report", "",
+                              "No score rows here: run `transcripts grade` for the steps. The counts and the coverage below "
+                              "need only the transcripts and the index entries."] + taken_and_used()) + "\n")
 
     out = ["# Change skill report", "",
            f"Score rows from {len({r['session_id'] for r in rows})} sessions, grouped by skill version (the git blob of "
@@ -523,4 +523,6 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
                                false_fails.get((r["grader"], r["session_id"], r["step"])), votes_of(r), read, red)
     if not any_failed:
         out += ["", "No step's latest row is a fail."]
-    return "\n".join(out) + "\n"
+    # Each text above is redacted where it is taken, before any cut. This is the net under them: a text
+    # that reached the page some other way (a step's or a grader's name, a field added later) is redacted here.
+    return red("\n".join(out) + "\n")
