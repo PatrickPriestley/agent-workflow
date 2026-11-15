@@ -371,9 +371,9 @@ mkdir -p "$PO/taken/codex-stop.json"   # the sample's own name is a folder: the 
 out="$(codex_hook "\"$CXT\"" | probe "$PO/taken" --agent codex)"; rc=$?
 assert_eq "0 codex-stop.json" "$rc $(ls "$PO/taken" | tr '\n' ' ' | sed 's/ $//')"; has "$(cat "$TMPROOT/probe.err")" "cannot write"
 it "a value with a dot is kept only where every dot stands between digits: a model's version is, a host name or a dotted name is not"
-out="$(printf '{"hook_event_name":"stop","model":"db.internal.corp.example.com","reason":"jane.doe.example.org","source":"gpt-5.2-codex","kind":"v2.1.321","status":"ok.","transcript_path":null}' | probe "$PO/dots" --agent cursor)"; rc=$?
+out="$(printf '{"hook_event_name":"stop","model":"db.internal.corp.example.com","reason":"jane.doe.example.org","source":"gpt-5.2-codex","kind":"v2.1.321","status":"ok.","subtype":"node1.example","event":"example.2x","transcript_path":null}' | probe "$PO/dots" --agent cursor)"; rc=$?
 s="$(cat "$PO/dots/cursor-stop.json" 2>/dev/null)"
-assert_eq 0 "$rc"; for x in internal corp example jane doe '"ok."'; do lacks "$s" "$x"; done
+assert_eq 0 "$rc"; for x in internal corp example jane doe '"ok."' node1 2x; do lacks "$s" "$x"; done
 has "$s" '"gpt-5.2-codex": 1'; has "$s" '"v2.1.321": 1'
 it "a text transcript whose last line has no newline after it has that line counted, though another line reads as JSON"
 printf 'user:\nhello\n42\nassistant: bye' > "$PH/.cursor/projects/SECRET-PROJECT/agent-transcripts/tail.txt"
