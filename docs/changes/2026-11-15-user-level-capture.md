@@ -200,6 +200,18 @@ Resolved: the owner's own machines only. Patrick Priestley, in chat, 2026-11-15.
   checkout where the plugin is not installed.
 - The scope list is plain lines, not JSON, so the owner can write it with an editor and
   read it at a glance.
+- Decided while building task 1. A session is in scope only when the folder it is in at the
+  stop and the folder its transcript began in are both in scope. Rejected: the stop's
+  folder alone, as the index entry takes its repository; a session begun in a client's
+  repository and moved to one on the list would then be kept whole. What this does not
+  cover: a session that visits another folder in between, or reads a file by its full
+  path; scope is by where a session runs, not by what it reads.
+- Decided while building task 1. A scope list that is there and cannot be read archives
+  nothing and starts no push, and says so on standard error: it is a fault to see, not
+  one of R2's seven quiet cases. `#` starts a comment anywhere on a line, since no
+  repository's name holds one. `import --scoped` with `--repo` or `--evals` is a usage
+  error, so that the list alone says what is taken. When several of the seven reasons
+  hold, `transcripts scope` gives the list's before the folder's.
 - The outcome evals are unaffected: their plugin copy has no `hooks` folder and their
   agents load no user settings.
 
@@ -256,3 +268,59 @@ Open: no second round was run, so these fixes have not been read by a fresh sess
 
 ## Outcome
 
+### Task 1: the scope list and its commands
+
+Built test first: 47 assertions of `bin/transcripts.test.sh` and 2 of
+`bin/transcripts-judge.test.sh` failed before the code (`--scoped` a usage error, no
+`transcripts scope`, no size in the report), committed red, then the code. Suites after:
+transcripts 342, transcripts-judge 228, transcripts-store 156, transcripts-grade 212, none
+failing.
+
+Guards shown by breaking them by hand, one at a time, each caught by a named test: 35
+breaks of `bin/transcripts`. Among them the one task 1 said is true today for the wrong
+reason: with `--scoped` made to archive everything, 21 assertions fail. Also: no list, an
+empty list and no match each treated as in scope; exclusions ignored, or winning only
+when first; patterns keeping their case, or matching a part of the repository; only one of
+the two folders checked; an out-of-scope stop starting a push, or printing; an unreadable
+list treated as in scope; `import --scoped` ignoring the list; the store's size counting
+chunks, reading one page, or not split by version. Two breaks were caught by one assertion
+only (the reason `transcripts scope` prints): with "no repository" or "no origin" not
+checked, the session still falls to a later refusal, so nothing was archived.
+
+Real use, in this container, on this session's own transcript (43 MB with 22 subagent
+transcripts) in the real checkout, with a scratch scope list and a scratch archive:
+
+```
+--- 1. no scope list
+exit 0 ; archive: (none)
+not in scope: there is no scope list at <scratch>/config/agent-transcripts/scope
+the archive <scratch>/archive holds 0 sessions, 0.0 MB of transcripts, not redacted
+exit 1
+--- 2. a list that names another owner
+exit 0 ; archive: (none)
+not in scope: no line of <scratch>/config/agent-transcripts/scope matches github.com/patrickpriestley/agent-workflow
+exit 1
+--- 3. the list names this repository's owner (github.com/PatrickPriestley/*)
+exit 0 in 615 ms; archive: locks parts sessions ; sessions: 1
+github.com/patrickpriestley/agent-workflow is in scope: line 2 of <scratch>/config/agent-transcripts/scope, github.com/PatrickPriestley/*
+the archive <scratch>/archive holds 1 session, 53.3 MB of transcripts, not redacted
+exit 0
+--- 4. the same session, but the stop is in a repository the list does not name
+exit 0
+not in scope: no line of <scratch>/config/agent-transcripts/scope matches github.com/someone-else/client-code
+exit 1
+--- 5. timing out of scope (no list), ten runs
+55 56 56 57 57 57 59 59 59 63 ms
+```
+
+And `transcripts report --store` on the real store, read through the environment
+`agent-workflow-admin`: it agrees with the probe of the same day.
+
+```
+# Change skill report
+
+The store holds 14 sessions and 60.4 MB of redacted text: under redaction 1, 14 sessions and 60.4 MB.
+```
+
+Not done here: the hook itself and the README (task 2). Until task 2 nothing calls
+`archive --scoped`.

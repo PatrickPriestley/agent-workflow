@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """transcripts: keep agent session transcripts in a local archive, one index entry per session.
 
-  transcripts archive [--transcript PATH]
+  transcripts archive [--scoped] [--transcript PATH]
   transcripts import [--claude-home DIR] [--repo URL]... [--evals]
+  transcripts import [--claude-home DIR] --scoped
+  transcripts scope [DIR]
   transcripts push [--session ID]... [--background]
   transcripts materialize DIR [--session ID]... [--repo-dir DIR]
   transcripts redact < lines > redacted-lines
@@ -21,10 +23,21 @@ AGENT_TRANSCRIPTS as numbered parts, then writes the session's index entry. With
 AGENT_TRANSCRIPTS unset it does nothing. It never fails a session: every problem is a message
 on stderr and exit 0, and the lines not archived are archived at the next stop.
 
+archive --scoped is the hook the plugin ships (hooks/hooks.json), which runs in every repository
+of whoever installed the plugin: it archives a session only when the repository it is in, and
+the one it began in, are on the owner's scope list, <config>/agent-transcripts/scope. One pattern
+a line, matched against the whole repository as the index entry names it (github.com/owner/name)
+without regard to case, with the shell's wildcards, * crossing /; # starts a comment; !pattern
+excludes, and an exclusion wins over any match. With no list, an empty one, no line that matches
+or one that excludes, and for a session outside any repository, in one with no origin or one
+whose origin is a local path, it archives nothing, starts no push, prints nothing and exits 0.
+scope says which of these holds for the repository at DIR (default: here), then how much the
+archive on this machine holds; it exits 0 when in scope and 1 when not.
+
 import archives the sessions already under <claude-home>/projects (default ~/.claude) whose
 working directory is a checkout of a repository in scope: the current directory's repository,
-or each --repo URL. --evals also takes eval-runner sessions. Running it again adds only what is
-new. It needs AGENT_TRANSCRIPTS set.
+or each --repo URL; with --scoped, every repository on the scope list instead. --evals also takes
+eval-runner sessions. Running it again adds only what is new. It needs AGENT_TRANSCRIPTS set.
 
 The archive:
   sessions/<sessionId>.json                    the index entry (schema 1, below)
@@ -98,6 +111,7 @@ probe is a Codex or Cursor hook command that writes a sample of what the hook pa
 structure and no content, to DIR (default grade/fixtures/agents): see probe/agent_sample.py.
 """
 import base64
+import fnmatch
 import glob
 import gzip
 import hashlib
@@ -162,6 +176,66 @@ def normalise_url(url):
 
 def repository(cwd):
     return normalise_url(git(cwd, "remote", "get-url", "origin"))
+
+
+def scope_file():
+    return os.path.join(conf_dir(), "scope")
+
+
+def scope_lines():
+    """The owner's scope list as (line number, whether it excludes, the pattern as written); None when there is no list."""
+    try:
+        with open(scope_file(), encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return None
+    out = []
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.split("#", 1)[0].strip()
+        excludes = line.startswith("!")
+        pattern = line[1:].strip() if excludes else line
+        if pattern:
+            out.append((n, excludes, pattern))
+    return out
+
+
+def scope_of(cwd, lines=False):
+    """(whether a session in the folder cwd is in scope, why, in words that follow "in scope: " or "not in scope: ").
+
+    Nothing is in scope until a line of the owner's list names its repository, and a folder with no
+    repository to name, or one that only a path on this machine names, never is. lines: the list as
+    scope_lines gives it, when the caller has read it. A list that cannot be read raises OSError.
+    """
+    lines = scope_lines() if lines is False else lines
+    listed = scope_file()
+    if lines is None:
+        return False, f"there is no scope list at {listed}"
+    if not lines:
+        return False, f"the scope list {listed} names no repository"
+    if not git(cwd, "rev-parse", "--git-dir"):
+        return False, f"{cwd} is in no git repository"
+    repo = repository(cwd)
+    if not repo:
+        return False, f"the repository at {cwd} has no origin"
+    if repo.startswith("/") or "/" not in repo:
+        return False, f"the origin of the repository at {cwd} is a local path, {repo}"
+    hits = [(n, excludes, pattern) for n, excludes, pattern in lines if fnmatch.fnmatchcase(repo, pattern.lower())]
+    for n, excludes, pattern in hits:
+        if excludes:
+            return False, f"line {n} of {listed} excludes {repo}, !{pattern}"
+    if not hits:
+        return False, f"no line of {listed} matches {repo}"
+    return True, f"line {hits[0][0]} of {listed}, {hits[0][2]}"
+
+
+def session_in_scope(cwd, path):
+    """Whether the session whose transcript is at path, now in cwd, may be archived: the folder it is in
+    and the folder it began in must both be in scope, so a session that left a repository the list does
+    not name for one it does is not kept."""
+    lines = scope_lines()
+    began = head_fields(path)[1]
+    cwd = cwd or began or os.getcwd()
+    return all(scope_of(d, lines)[0] for d in dict.fromkeys([cwd, began or cwd]))
 
 
 def machine():
@@ -487,12 +561,15 @@ def archive_dir():
 
 
 def cmd_archive(args):
-    transcript = None
-    if args[:1] == ["--transcript"] and len(args) == 2:
-        transcript = args[1]
-    elif args:
-        say("usage: transcripts archive [--transcript PATH]")
-        return 0
+    transcript, scoped, i = None, False, 0
+    while i < len(args):
+        if args[i] == "--scoped" and not scoped:
+            scoped, i = True, i + 1
+        elif args[i] == "--transcript" and transcript is None and i + 1 < len(args):
+            transcript, i = args[i + 1], i + 2
+        else:
+            say("usage: transcripts archive [--scoped] [--transcript PATH]")
+            return 0
     try:
         ar = archive_dir()
         if ar is None:
@@ -506,8 +583,16 @@ def cmd_archive(args):
             except (ValueError, KeyError, TypeError) as e:
                 say(f"the hook input is not JSON with a transcript_path ({e}); nothing archived")
                 return 0
+        transcript = os.path.abspath(os.path.expanduser(transcript))
+        if scoped:
+            try:
+                if not session_in_scope(cwd, transcript):
+                    return 0  # not the owner's to keep: nothing archived, nothing sent, nothing said
+            except OSError as e:
+                say(f"the scope list cannot be read ({e}); nothing archived")
+                return 0
         try:
-            archive_session(ar, os.path.abspath(os.path.expanduser(transcript)), cwd)
+            archive_session(ar, transcript, cwd)
         finally:
             if hook is not None and os.environ.get("AGENT_TRANSCRIPTS_URL"):
                 start_background_push(ar)
@@ -519,7 +604,7 @@ def cmd_archive(args):
 
 
 def cmd_import(args):
-    home, repos, evals = os.path.join(HOME, ".claude"), [], False
+    home, repos, evals, scoped = os.path.join(HOME, ".claude"), [], False, False
     i = 0
     while i < len(args):
         a = args[i]
@@ -531,9 +616,14 @@ def cmd_import(args):
             i += 2
         elif a == "--evals":
             evals, i = True, i + 1
+        elif a == "--scoped":
+            scoped, i = True, i + 1
         else:
-            say("usage: transcripts import [--claude-home DIR] [--repo URL]... [--evals]")
-            return 2
+            i = len(args) + 1
+    if i > len(args) or (scoped and (repos or evals)):  # with --scoped the list alone says what is taken
+        say("usage: transcripts import [--claude-home DIR] [--repo URL]... [--evals]\n"
+            "       transcripts import [--claude-home DIR] --scoped")
+        return 2
     try:
         ar = archive_dir()
     except PermissionError as e:
@@ -542,7 +632,21 @@ def cmd_import(args):
     if ar is None:
         say("AGENT_TRANSCRIPTS is not set; set it to the archive directory to import into")
         return 2
-    if not repos:
+    listed, known = None, {}
+    if scoped:
+        try:
+            listed = scope_lines()
+        except OSError as e:
+            say(f"cannot read the scope list ({e})")
+            return 2
+
+    def taken(cwd):
+        if not scoped:
+            return (evals and is_eval(cwd)) or (not is_eval(cwd) and repository(cwd) in repos)
+        if cwd not in known:
+            known[cwd] = scope_of(cwd, listed)[0]
+        return known[cwd]
+    if not repos and not scoped:
         here = repository(os.getcwd())
         if not here:
             say("the current directory has no origin remote; run import in a checkout or pass --repo URL")
@@ -551,7 +655,7 @@ def cmd_import(args):
     imported = unchanged = skipped = failed = 0
     for path in sorted(glob.glob(os.path.join(home, "projects", "*", "*.jsonl"))):
         _, cwd, _, _ = head_fields(path)
-        if not (evals and is_eval(cwd)) and (is_eval(cwd) or repository(cwd) not in repos):
+        if not taken(cwd):
             skipped += 1
             continue
         try:
@@ -565,6 +669,35 @@ def cmd_import(args):
     print(f"transcripts: imported {imported}, unchanged {unchanged}, skipped {skipped} (not in scope)"
           + (f", failed {failed}" if failed else "") + f"; archive {ar}")
     return 1 if failed else 0
+
+
+def megabytes(n):
+    return "%.1f MB" % (n / 1e6)
+
+
+def cmd_scope(args):
+    if len(args) > 1 or (args and not os.path.isdir(args[0])):
+        say("usage: transcripts scope [DIR]   (DIR: a folder, default the current one)")
+        return 2
+    d = os.path.abspath(args[0]) if args else os.getcwd()
+    try:
+        ok, why = scope_of(d)
+    except OSError as e:
+        ok, why = False, f"the scope list cannot be read ({e})"
+    print(f"{repository(d)} is in scope: {why}" if ok else f"not in scope: {why}")
+    try:
+        ar = archive_dir()
+        if ar is None:
+            print("AGENT_TRANSCRIPTS is not set: no session is archived on this machine, in scope or not")
+        else:
+            size = 0
+            for root, _, files in os.walk(os.path.join(ar, "parts")):
+                size += sum(os.path.getsize(os.path.join(root, f)) for f in files)
+            n = len(glob.glob(os.path.join(ar, "sessions", "*.json")))
+            print(f"the archive {ar} holds {n} session{'s' if n != 1 else ''}, {megabytes(size)} of transcripts, not redacted")
+    except (PermissionError, OSError) as e:
+        print(f"the archive cannot be read: {e}")
+    return 0 if ok else 1
 
 
 # ---- the store: redaction, push, materialize ----
@@ -1770,7 +1903,7 @@ def cmd_report(args):
     except (PermissionError, StoreError) as e:
         say(str(e))
         return 2
-    rows, entries, judges = [], {}, []
+    rows, entries, judges, holds = [], {}, [], None
     for p in sorted(glob.glob(os.path.join(d, "scores", "*.json"))):
         got = read_json(p)
         rows += [r for r in got if isinstance(r, dict) and r.get("session_id")] if isinstance(got, list) else []
@@ -1799,6 +1932,7 @@ def cmd_report(args):
             for r in read_rows(url, key, "/rest/v1/sessions?select=session_id,entry&order=session_id,row_id"):
                 entries.setdefault(r["session_id"], r.get("entry") or {})  # only the time is read
             judges += votes_to_judges(read_rows(url, key, "/rest/v1/judge_votes?select=session_id,question,judge,vote,status,verdict,reason,record_sha256,judged_at&order=session_id,question,judged_at,vote"), judge)
+            holds = store_size(read_rows(url, key, "/rest/v1/chunks?select=session_id,bytes,redaction&order=session_id,stream,chunk_id"))
         except StoreError as e:
             say(str(e))
             return 1
@@ -1811,8 +1945,23 @@ def cmd_report(args):
         say(f"no score rows in {d}/scores" + (" or the store" if store else "") + " and no session in "
             f"{d}/sessions; run transcripts grade first")
         return 1
+    if holds:  # under the title, where the owner reading the report sees it (concern C3 of 2026-11-15-user-level-capture)
+        title, rest = text.split("\n", 1)
+        text = f"{title}\n\n{holds}\n{rest}"
     sys.stdout.write(text)
     return 1 if bad else 0
+
+
+def store_size(chunks):
+    """One line: how many sessions and how much redacted text the store's chunk rows hold, by redaction version."""
+    def some(rows):
+        n = len({r["session_id"] for r in rows})
+        return f"{n} session{'s' if n != 1 else ''} and {megabytes(sum(r.get('bytes') or 0 for r in rows))}"
+    by = {}
+    for r in chunks:
+        by.setdefault(r.get("redaction"), []).append(r)
+    parts = "; ".join(f"under redaction {v}, {some(by[v])}" for v in sorted(by, key=str))
+    return f"The store holds {some(chunks)} of redacted text" + (f": {parts}." if parts else ".")
 
 
 def votes_to_judges(votes, judge):
@@ -1838,6 +1987,8 @@ def main(argv):
         return cmd_archive(argv[1:])
     if argv[:1] == ["import"]:
         return cmd_import(argv[1:])
+    if argv[:1] == ["scope"]:
+        return cmd_scope(argv[1:])
     if argv[:1] == ["push"]:
         return cmd_push(argv[1:])
     if argv[:1] == ["materialize"]:

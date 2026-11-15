@@ -384,4 +384,141 @@ assert_eq 0 "$rc"; has "$out" "grade/fixtures/agents/codex-stop.json"
 [ -f "$TMPROOT/plugin/grade/fixtures/agents/codex-stop.json" ] && ok || bad "expected [a sample under the plugin's grade/fixtures/agents] got [none]"
 [ -e "$TMPROOT/plugin/probe/__pycache__" ] && bad "expected [no __pycache__ beside the plugin's code] got [one]" || ok
 
+echo "user-level capture: the owner's scope list (record 2026-11-15-user-level-capture, R1 to R4 and R6)"
+# A config folder of its own, five repositories and a folder that is none, an archive, and a stand-in for the store.
+SC="$TMPROOT/scope-config"; mkdir -p "$SC/agent-transcripts"; cp "$XDG_CONFIG_HOME/agent-transcripts/machine-id" "$SC/agent-transcripts/"
+LIST="$SC/agent-transcripts/scope"; SAR="$TMPROOT/scope-archive"; SHOME="$TMPROOT/scope-claude"
+RIN="$TMPROOT/s-wanted"; repo "$RIN" "git@github.com:Owner/Wanted.git"
+ROUT="$TMPROOT/s-client"; repo "$ROUT" "https://github.com/Client/Private"
+REX="$TMPROOT/s-secret"; repo "$REX" "https://github.com/Owner/Secret-Thing.git"
+RNO="$TMPROOT/s-no-origin"; repo "$RNO" "https://github.com/Owner/Gone"; git -C "$RNO" remote remove origin
+RLOC="$TMPROOT/s-local"; repo "$RLOC" "$RIN"
+NOREPO="$TMPROOT/s-no-repo"; mkdir -p "$NOREPO"
+export no_proxy="127.0.0.1,localhost" NO_PROXY="127.0.0.1,localhost"
+SPORT="$TMPROOT/scope.port"; SLOG="$TMPROOT/scope-store.log"; : > "$SLOG"
+python3 "$here/../store/stand-in.py" "$SPORT" "$SLOG" read-key-made-up & STANDIN_PID=$!
+trap 'kill $STANDIN_PID 2>/dev/null; rm -rf "$TMPROOT"' EXIT
+for _ in $(seq 600); do [ -s "$SPORT" ] && break; sleep 0.05; done
+SURL="http://127.0.0.1:$(cat "$SPORT")"
+# sess DIR ID [FIRST-DIR]: the transcript of session ID in DIR (begun in FIRST-DIR, when given); prints its path
+sess() {
+  local p="$SHOME/projects/-scoped/$2.jsonl"; mkdir -p "$SHOME/projects/-scoped"
+  printf '{"sessionId":"%s","timestamp":"2026-11-02T10:00:00.000Z","cwd":"%s","gitBranch":"work","type":"user","message":{"role":"user","content":"hello"}}\n' "$2" "${3:-$1}" > "$p"
+  printf '{"sessionId":"%s","timestamp":"2026-11-02T10:00:05.000Z","cwd":"%s","gitBranch":"work","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n' "$2" "$1" >> "$p"
+  printf '%s' "$p"
+}
+# sstop DIR ID [FIRST-DIR]: the Stop hook of session ID in DIR, with archive --scoped and the store's URL set
+sstop() {
+  printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$2" "$(sess "$@")" "$1" \
+    | (cd "$1" && XDG_CONFIG_HOME="$SC" AGENT_TRANSCRIPTS="$SAR" AGENT_TRANSCRIPTS_URL="${STORE-$SURL}" "$T" archive --scoped 2>&1)
+}
+kept() { ls "$SAR/sessions" 2>/dev/null | sed 's/\.json$//' | tr '\n' ' '; }
+# snap: every file of the archive with its content's hash; a started push leaves push.log there
+snap() { [ -d "$SAR" ] && (cd "$SAR" && find . -type f | sort | while read -r f; do printf '%s %s\n' "$(git hash-object "$f")" "$f"; done); }
+requests() { wc -l < "$SLOG" | tr -d ' '; }
+
+it "R1: a session in a repository a line of the list matches is archived, the pattern written with the capitals GitHub shows"
+printf '# the repositories whose sessions are kept\n\ngithub.com/Owner/*   # all of mine\n!github.com/Owner/Secret-*\n' > "$LIST"
+out="$(STORE="" sstop "$RIN" s-in-1)"; rc=$?
+assert_eq "0 [] s-in-1 " "$rc [$out] $(kept)"
+assert_eq "github.com/owner/wanted" "$(json "$SAR/sessions/s-in-1.json" 'd["repository"]')"
+it "R1: a line with no wildcard is the whole repository: its owner alone, or its name without the host, matches nothing"
+printf 'github.com/Owner\nOwner/Wanted\nwanted\n' > "$LIST"
+out="$(STORE="" sstop "$RIN" s-partial)"; assert_eq "0 [] s-in-1 " "$? [$out] $(kept)"
+printf 'GitHub.com/Owner/Wanted\n' > "$LIST"
+out="$(STORE="" sstop "$RIN" s-in-2)"; assert_eq "0 [] s-in-1 s-in-2 " "$? [$out] $(kept)"
+it "R1: archive --scoped --transcript PATH takes the repository from the transcript, in either order of the two options"
+out="$(cd "$NOREPO" && XDG_CONFIG_HOME="$SC" AGENT_TRANSCRIPTS="$SAR" "$T" archive --scoped --transcript "$(sess "$RIN" s-in-3)" 2>&1 < /dev/null)"
+assert_eq "0 [] s-in-1 s-in-2 s-in-3 " "$? [$out] $(kept)"
+out="$(cd "$NOREPO" && XDG_CONFIG_HOME="$SC" AGENT_TRANSCRIPTS="$SAR" "$T" archive --transcript "$(sess "$ROUT" s-out-t)" --scoped 2>&1 < /dev/null)"
+assert_eq "0 [] s-in-1 s-in-2 s-in-3 " "$? [$out] $(kept)"
+
+# From here the archive holds three sessions in scope that no push has sent, and every stop has the store's URL.
+before="$(snap)"
+# outside ID DIR [FIRST-DIR]: the stop archives nothing, says nothing, exits 0 and leaves the archive as it was
+outside() {
+  local id="$1"; shift
+  out="$(sstop "$1" "$id" "${@:2}")"; rc=$?
+  assert_eq "0 []" "$rc [$out]"
+  [ "$(snap)" = "$before" ] && ok || bad "the archive changed: $(snap | diff <(printf '%s\n' "$before") - | head -5)"
+}
+it "R2: with no scope list, nothing is archived, nothing is printed and no push starts"
+rm -f "$LIST"; outside s-none "$RIN"
+it "R2: with a list of comments and blank lines only"
+printf '# nothing yet\n\n   \n' > "$LIST"; outside s-empty "$RIN"
+it "R2: in a repository no line matches"
+printf 'github.com/Owner/*\n' > "$LIST"; outside s-client "$ROUT"
+it "R2: in a repository a line excludes, whether the exclusion comes after the match or before it"
+printf 'github.com/Owner/*\n!github.com/owner/secret-*\n' > "$LIST"; outside s-secret-1 "$REX"
+printf '!github.com/owner/secret-*\n*\n' > "$LIST"; outside s-secret-2 "$REX"
+it "R2: outside any repository, though the list says *"
+printf '*\n' > "$LIST"; outside s-no-repo "$NOREPO"
+it "R2: in a repository with no origin, though the list says *"
+outside s-no-origin "$RNO"
+it "R2: in a repository whose origin is a local path, though the list says * and names the path"
+printf '*\n%s\n' "$RIN" >> "$LIST"; outside s-local "$RLOC"
+it "a session begun in a repository out of scope is not archived from one in scope, nor one that ends up out of scope"
+printf 'github.com/Owner/*\n' > "$LIST"
+outside s-moved-in "$RIN" "$ROUT"; outside s-moved-out "$ROUT" "$RIN"
+it "R2: the store got no request from any of those stops"
+sleep 0.5; assert_eq 0 "$(requests)"
+it "a scope list that cannot be read archives nothing and starts no push, and says so"
+rm -f "$LIST"; mkdir "$LIST"; out="$(sstop "$RIN" s-unreadable)"; rc=$?; rmdir "$LIST"
+assert_eq "0 True" "$rc $([ "$(snap)" = "$before" ] && echo True)"; has "$out" "$LIST"
+it "the control: a stop in scope, with the same store, is archived and what the archive held is sent"
+printf 'github.com/Owner/*\n' > "$LIST"
+out="$(sstop "$RIN" s-in-4)"; rc=$?
+for _ in $(seq 100); do [ "$(grep -c '"/rest/v1/sessions"' "$SLOG")" -ge 4 ] && break; sleep 0.1; done
+assert_eq "0 [] 4" "$rc [$out] $(grep -c '"/rest/v1/sessions"' "$SLOG")"
+assert_eq "s-in-1 s-in-2 s-in-3 s-in-4 " "$(kept)"
+it "R3: without --scoped the hook archives whatever session it is given, as before"
+out="$(printf '{"session_id":"s-any","transcript_path":"%s","cwd":"%s"}' "$(sess "$ROUT" s-any)" "$ROUT" | (cd "$ROUT" && XDG_CONFIG_HOME="$SC" AGENT_TRANSCRIPTS="$TMPROOT/scope-archive-2" "$T" archive 2>&1))"
+assert_eq "0 [] s-any.json" "$? [$out] $(ls "$TMPROOT/scope-archive-2/sessions" 2>&1)"
+
+# scope DIR [ARG]: transcripts scope, run in DIR
+scope() { (cd "$1" && XDG_CONFIG_HOME="$SC" AGENT_TRANSCRIPTS="$SAR" "$T" scope "${@:2}" 2>&1); }
+it "R4: scope says the repository is in scope and by which line, then the archive's size, and exits 0"
+printf '# mine\n!github.com/owner/secret-*\nGitHub.com/Owner/*\n' > "$LIST"
+out="$(scope "$RIN")"; rc=$?
+assert_eq 0 "$rc"; has "$out" "github.com/owner/wanted is in scope: line 3 of $LIST, GitHub.com/Owner/*"
+has "$out" "the archive $SAR holds 4 sessions, 0.0 MB"
+it "R4: scope DIR is the repository at DIR, from anywhere"
+out="$(scope "$NOREPO" "$RIN")"; assert_eq 0 "$?"; has "$out" "github.com/owner/wanted is in scope"
+it "R4: out of scope it exits 1 and says which of the seven reasons it is"
+out="$(scope "$REX")"; assert_eq 1 "$?"; has "$out" "not in scope: line 2 of $LIST excludes github.com/owner/secret-thing, !github.com/owner/secret-*"
+has "$out" "the archive $SAR holds 4 sessions"
+out="$(scope "$ROUT")"; assert_eq 1 "$?"; has "$out" "not in scope: no line of $LIST matches github.com/client/private"
+out="$(scope "$NOREPO")"; assert_eq 1 "$?"; has "$out" "not in scope: $NOREPO is in no git repository"
+out="$(scope "$RNO")"; assert_eq 1 "$?"; has "$out" "not in scope: the repository at $RNO has no origin"
+out="$(scope "$RLOC")"; assert_eq 1 "$?"; has "$out" "not in scope: the origin of the repository at $RLOC is a local path"
+printf '# nothing yet\n' > "$LIST"
+out="$(scope "$RIN")"; assert_eq 1 "$?"; has "$out" "not in scope: the scope list $LIST names no repository"
+rm -f "$LIST"
+out="$(scope "$RIN")"; assert_eq 1 "$?"; has "$out" "not in scope: there is no scope list at $LIST"
+it "R4: the archive's size is the bytes of its parts, in MB"
+printf 'github.com/Owner/*\n' > "$LIST"; head -c 1500000 /dev/zero > "$SAR/parts/s-in-1/main/g1-000009.jsonl"; head -c 800000 /dev/zero > "$SAR/push.log"
+has "$(scope "$RIN")" "the archive $SAR holds 4 sessions, 1.5 MB of transcripts, not redacted"; rm -f "$LIST"
+it "R4: with AGENT_TRANSCRIPTS unset it says that nothing is archived on this machine"
+out="$(cd "$RIN" && XDG_CONFIG_HOME="$SC" "$T" scope 2>&1)"; assert_eq 1 "$?"; has "$out" "AGENT_TRANSCRIPTS is not set"
+it "R4: a folder that is not there, or a second argument, is a usage error"
+scope "$RIN" "$TMPROOT/no-such-folder" > /dev/null; a=$?; scope "$RIN" "$RIN" "$ROUT" > /dev/null; b=$?
+assert_eq "2 2" "$a $b"
+
+echo "user-level capture: import --scoped (R6)"
+printf 'github.com/Owner/*\n!github.com/owner/secret-*\n' > "$LIST"
+SAR2="$TMPROOT/scope-archive-3"; rm -rf "$SHOME"
+sess "$RIN" i-wanted > /dev/null; sess "$ROUT" i-client > /dev/null; sess "$REX" i-secret > /dev/null
+sess "$NOREPO" i-no-repo > /dev/null; sess "$RLOC" i-local > /dev/null
+simp() { (cd "$NOREPO" && XDG_CONFIG_HOME="$SC" AGENT_TRANSCRIPTS="$SAR2" "$T" import --claude-home "$SHOME" "$@" 2>&1); }
+it "it registers the sessions whose repository is in scope and no other, from a folder that is no repository"
+out="$(simp --scoped)"; rc=$?
+assert_eq "0 i-wanted.json" "$rc $(ls "$SAR2/sessions" 2>&1 | tr '\n' ' ' | sed 's/ $//')"
+has "$out" "imported 1"; has "$out" "skipped 4"
+it "with no scope list it registers nothing"
+rm -f "$LIST"; rm -rf "$SAR2"; out="$(simp --scoped)"; rc=$?
+assert_eq "0 " "$rc $(ls "$SAR2/sessions" 2>/dev/null)"; has "$out" "imported 0"; has "$out" "skipped 5"
+it "--scoped with --repo or --evals is a usage error: the list alone says what is taken"
+simp --scoped --repo https://github.com/Client/Private > /dev/null; a=$?; simp --evals --scoped > /dev/null; b=$?
+assert_eq "2 2 " "$a $b $(ls "$SAR2/sessions" 2>/dev/null)"
+
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

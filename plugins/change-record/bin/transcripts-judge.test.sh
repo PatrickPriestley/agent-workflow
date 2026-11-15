@@ -766,6 +766,25 @@ has "$vrow" '"prompt_sha256"'
 lacks "$(cat "$SLOG" 2>/dev/null)" "$TOKEN"
 it "the report reads the store's rows with the read key"
 has "$(cd "$TMPROOT" && AGENT_TRANSCRIPTS_URL="$URL" "$T" report "$TMPROOT/empty" --store 2>&1)" "| decisions-alternative | judge/1:haiku | 1 | 0 | 0 | 100% |"
+it "the report on the store says how much the store holds, by redaction version (record 2026-11-15-user-level-capture, R8)"
+# 250 chunks of one session under redaction 1 (more than one page of rows), then one chunk each of two sessions under 2
+py - "$URL" <<'PYEOF'
+import json, sys, urllib.request
+def chunk(sid, n, size, redaction):
+    return {"session_id": sid, "stream": "main", "chunk_id": "%064x" % (n + redaction * 1000), "start_id": "%064x" % n, "sender": "t",
+            "generation": redaction, "number": n, "lines": 1, "bytes": size, "redaction": redaction, "data": ""}
+rows = [chunk("s-one", n, 10_000, 1) for n in range(1, 251)] + [chunk("s-one", 1, 500_000, 2), chunk("s-two", 1, 1_240_000, 2)]
+for i in range(0, len(rows), 100):
+    req = urllib.request.Request(sys.argv[1] + "/rest/v1/chunks", data=json.dumps(rows[i:i + 100]).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    assert urllib.request.urlopen(req).status == 201
+PYEOF
+r="$(cd "$TMPROOT" && AGENT_TRANSCRIPTS_URL="$URL" "$T" report "$TMPROOT/empty" --store 2>&1)"
+has "$r" "The store holds 2 sessions and 4.2 MB of redacted text: under redaction 1, 1 session and 2.5 MB; under redaction 2, 2 sessions and 1.7 MB."
+assert_eq "# Change skill report" "$(printf '%s\n' "$r" | head -1)"
+assert_eq "3" "$(printf '%s\n' "$r" | grep -n '^The store holds' | cut -d: -f1)"
+it "without --store the report says nothing of the store"
+lacks "$(cd "$TMPROOT" && "$T" report "$AR6" 2>&1)" "The store holds"
 
 echo "a question left with no verdict is asked again, and --store sends what was judged before (record 2026-11-12-judge-asks-again)"
 # sent TABLE: how many inserts into TABLE the stand-in has taken so far
