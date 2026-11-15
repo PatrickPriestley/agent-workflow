@@ -1107,6 +1107,11 @@ python3 -c 'import socket,sys; socket.create_connection(("127.0.0.1", int(sys.ar
 d=\$(mktemp -d) && echo "temporary folder: ok"
 python3 greet.py 2>&1 | grep -q IndexError
 EOF
+# Two more ways to change the clone that leave every tracked file's content as it was: a new, empty folder,
+# and a file swapped for a link to a copy of itself. Each is a change.
+printf "mkdir left-folder\n$crash\n" "" "" > "$FRD/.review/defect-7.sh"
+printf 'cp greet.py "$(mktemp -d)/copy.py" && c="$(ls -d "${TMPDIR:-/tmp}"/tmp.*/copy.py | tail -1)" && rm greet.py && ln -s "$c" greet.py\n' > "$FRD/.review/defect-8.sh"
+printf "$crash\n" "" "" >> "$FRD/.review/defect-8.sh"
 # A script that plants a command in the clone's own git configuration, for git to run when the tool next
 # looks at the clone (found by the review of pull request 1): nothing may come of it, boxed or not.
 cat > "$FRD/.review/escape.sh" <<EOF
@@ -1173,9 +1178,9 @@ it "R2: it does not inherit the caller's archive, session or other variables"
 assert_eq "None None" "$(rl 'str(c[1]["env"]["AGENT_TRANSCRIPTS"]) + " " + str(c[1]["env"]["CLAUDE_CODE_SESSION_ID"])')"
 it "R3: a defect is shown only if its script exits 0 at the last commit and not at the base, and leaves the clone as it was"
 st() { py -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" | ".join("%s %s %s" % (x["script"], x["status"], "named" if x["named"] else "not named") for x in d["defects"]))' "$VJ"; }
-assert_eq "defect-1.sh shown named | defect-2.sh shown at the base too named | defect-3.sh not shown at the last commit named | defect-4.sh timed out named | defect-5.sh changed the clone named | defect-6.sh named and missing named | box.sh shown not named | escape.sh shown not named | extra.sh shown not named" "$(st)"
+assert_eq "defect-1.sh shown named | defect-2.sh shown at the base too named | defect-3.sh not shown at the last commit named | defect-4.sh timed out named | defect-5.sh changed the clone named | defect-6.sh named and missing named | box.sh shown not named | defect-7.sh changed the clone not named | defect-8.sh changed the clone not named | escape.sh shown not named | extra.sh shown not named" "$(st)"
 assert_eq "reviewed 4 False 2 1 0.3 $VB $VL" "$(rj "$VJ" '" ".join(str(d[k]) for k in ("status", "shown", "looked_outside", "experiments", "unverified", "cost_usd", "base", "last"))')"
-has "$out" "${V1:0:8} review: 4 defects shown (1 crash, 3 not named in the answer); not counted: 1 shown at the base too, 1 not shown at the last commit, 1 timed out, 1 changed the clone, 1 named and missing"
+has "$out" "${V1:0:8} review: 4 defects shown (1 crash, 3 not named in the answer); not counted: 1 shown at the base too, 1 not shown at the last commit, 1 timed out, 3 changed the clone, 1 named and missing"
 it "R3: a shown defect's id is made from its script, and what the reviewer said of it is kept, redacted"
 assert_eq "$(sha256sum "$FRD/.review/defect-1.sh" | cut -c1-6) crash greet.py" "$(rj "$VJ" '" ".join(d["defects"][0][k] for k in ("id", "kind", "file"))')"
 lacks "$(cat "$VJ" 2>/dev/null)" "$EMAIL"; has "$(cat "$VJ" 2>/dev/null)" "<redacted:email>"
