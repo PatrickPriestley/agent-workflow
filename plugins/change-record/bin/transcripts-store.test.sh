@@ -404,7 +404,10 @@ has "$got" "out of this"; lacks "$got" "SHORTENME"
 assert_eq "$(cat "$TMPROOT/v2/next")" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["redaction_version"])' "$TMPROOT/matN/sessions/$SIDN.json")"
 
 it "addresses are redacted exactly as the one pattern redacts them: 30,000 made-up strings and the hard cases"
-assert_eq "same 30012" "$(python3 - "$T" <<'PY'
+# The program is a file, not a here-document inside "$( )": there bash 3.2 (macOS) expands the braces of the
+# pattern's {2,} as it does a word's, and Python is given a pattern ending in 2 that finds no address at all
+# (seen on the macOS runner, record 2026-11-15-suites-on-macos).
+cat > "$TMPROOT/addresses.py" <<'ADDRESSES'
 import importlib.machinery, importlib.util, random, re, sys
 sys.dont_write_bytecode = True
 loader = importlib.machinery.SourceFileLoader("tr", sys.argv[1])
@@ -416,10 +419,15 @@ parts = ["a", "b", "1", "4", "0", ".", "%", "+", "-", "_", "@", " ", "\n", "/", 
 cases = ["".join(random.choice(parts) for _ in range(random.randint(1, 30))) for _ in range(30000)]
 cases += ["jane.doe@example.org1@a.co", "a@b.orgc@d.com", "x%40y.io%40z.io", "a%40b@c.org", "@a.co", "a@", "a@b", "a@b.c", "%40%40%40a.io",
           "mailto:jane.doe@example.org,john%40example.com.", "a@b.co" * 50, ""]
-same = sum(tr.redact_emails(t) == plain.sub("<redacted:email>", t) for t in cases)
-print("same" if same == len(cases) else "differ", same)
-PY
-)"
+wrong = [t for t in cases if tr.redact_emails(t) != plain.sub("<redacted:email>", t)]
+print("same" if not wrong else "differ", len(cases) - len(wrong))
+for t in wrong[:4]:  # which, when they differ: a difference seen on one machine only cannot be found without them
+    print("input %r | redactor %r | pattern %r" % (t, tr.redact_emails(t), plain.sub("<redacted:email>", t)))
+if wrong:  # and whether the pattern this program holds is the one written above
+    print("python %s | the pattern as compiled: %r | it finds jane.doe@example.org: %s"
+          % (sys.version.split()[0], plain.pattern, bool(plain.search("jane.doe@example.org"))))
+ADDRESSES
+assert_eq "same 30012" "$(python3 "$TMPROOT/addresses.py" "$T" 2>&1)"
 it "redaction of a long run of letters, digits and dots takes well under a second, not a time that grows with its square"
 python3 -c 'import json; print(json.dumps({"type": "user", "message": {"role": "user", "content": "0f" * 30000 + " and " + "a." * 30000 + " and " + "%40" * 20000}}))' > "$TMPROOT/long.jsonl"
 assert_eq "done 1" "$(python3 - "$T" "$TMPROOT/long.jsonl" <<'PY'
