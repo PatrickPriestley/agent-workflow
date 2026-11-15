@@ -156,7 +156,7 @@ def agent_verdict(arm, rc, seen):
 
 
 def one_run(task, arm, n, o, copy, tools_bin):
-    scratch = tempfile.mkdtemp(prefix="oe-")
+    scratch = os.path.realpath(tempfile.mkdtemp(prefix="oe-"))  # /var is a link on macOS: PWD must be where the agent is
     repo = os.path.join(scratch, "repo")
     os.makedirs(repo)
     line = {"task": task, "arm": arm, "run": n, "model": None, "skill_listed": False, "skill_called": False,
@@ -231,7 +231,7 @@ def main(argv):
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     if o.keep:
         os.makedirs(o.keep, exist_ok=True)
-    holder = tempfile.mkdtemp(prefix="oe-plugin-")
+    holder = os.path.realpath(tempfile.mkdtemp(prefix="oe-plugin-"))
     spent, stopped = 0.0, False
     try:
         copy = plugin_copy(holder)

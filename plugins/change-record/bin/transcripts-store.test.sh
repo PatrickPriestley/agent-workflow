@@ -416,8 +416,10 @@ parts = ["a", "b", "1", "4", "0", ".", "%", "+", "-", "_", "@", " ", "\n", "/", 
 cases = ["".join(random.choice(parts) for _ in range(random.randint(1, 30))) for _ in range(30000)]
 cases += ["jane.doe@example.org1@a.co", "a@b.orgc@d.com", "x%40y.io%40z.io", "a%40b@c.org", "@a.co", "a@", "a@b", "a@b.c", "%40%40%40a.io",
           "mailto:jane.doe@example.org,john%40example.com.", "a@b.co" * 50, ""]
-same = sum(tr.redact_emails(t) == plain.sub("<redacted:email>", t) for t in cases)
-print("same" if same == len(cases) else "differ", same)
+wrong = [t for t in cases if tr.redact_emails(t) != plain.sub("<redacted:email>", t)]
+print("same" if not wrong else "differ", len(cases) - len(wrong))
+for t in wrong[:4]:  # which, when they differ: a difference seen on one machine only cannot be found without them
+    print("input %r | redactor %r | pattern %r" % (t, tr.redact_emails(t), plain.sub("<redacted:email>", t)), "| python", sys.version.split()[0])
 PY
 )"
 it "redaction of a long run of letters, digits and dots takes well under a second, not a time that grows with its square"

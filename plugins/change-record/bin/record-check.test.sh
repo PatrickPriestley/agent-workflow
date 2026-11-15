@@ -234,9 +234,13 @@ assert_eq 00000 "$res"
 # Each suite of the plugin, started where no temporary folder can be made, must stop at once and remove
 # nothing (record 2026-11-12-sheet-and-scaffolding). The suites started here do not start others in turn.
 if [ -z "${SCAFFOLDING_CHECK:-}" ]; then
+  # A mktemp that fails, first on PATH. A TMPDIR that is not there does not do it: macOS's mktemp -d makes
+  # its folder elsewhere and succeeds (seen on the macOS runner, record 2026-11-15-suites-on-macos).
+  nomk="$TMPROOT/no-mktemp"; mkdir -p "$nomk"
+  printf '#!/bin/sh\necho "mktemp: made to fail by record-check.test.sh" >&2\nexit 1\n' > "$nomk/mktemp"; chmod +x "$nomk/mktemp"
   for s in dispatch record-check record-review red-check transcripts transcripts-grade transcripts-judge transcripts-store; do
     start="$TMPROOT/start-$s"; mkdir -p "$start"; printf 'keep\n' > "$start/keep"
-    out="$(cd "$start" && SCAFFOLDING_CHECK=1 TMPDIR="$TMPROOT/no-such-folder" bash "$here/$s.test.sh" 2>&1)"; rc=$?
+    out="$(cd "$start" && SCAFFOLDING_CHECK=1 PATH="$nomk:$PATH" bash "$here/$s.test.sh" 2>&1)"; rc=$?
     it "$s.test.sh stops when it cannot make its temporary folder, and leaves the folder it was started in alone"
     [ "$rc" -ne 0 ] && ok || bad "expected [a non-zero exit] got [0]"
     assert_eq "keep" "$(cat "$start/keep" 2>/dev/null)"

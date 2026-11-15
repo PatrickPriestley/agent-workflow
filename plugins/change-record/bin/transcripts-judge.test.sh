@@ -992,6 +992,15 @@ for s in $R1 $R2 $R3; do (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$RAR" "$T" archive
 # run with an archive named in the environment, as a hook's shell has: the judge's own call must not inherit it
 repeats() { (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$RAR" FAKE_ANSWER_FILE="$RW/answer.json" "$T" judge --repeats "$@" 2>&1); }
 rj() { py -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"d": d}))' "$1" "$2"; }
+# appendix NAME NEXT: the text indented under the record's heading "## NAME", up to "## NEXT", with the indent and
+# the blank lines around it taken off: what the brief file must hold
+appendix() {
+  python3 - "$here/../../../docs/changes/2026-11-15-checkable-judges.md" "$1" "$2" <<'PY'
+import sys
+block = open(sys.argv[1]).read().split("\n## " + sys.argv[2], 1)[1].split("\n## " + sys.argv[3], 1)[0]
+print("\n".join(l[4:] for l in block.splitlines()[1:] if l.startswith("    ") or not l.strip()).strip("\n"))
+PY
+}
 pid() { python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\n"+sys.argv[2]).encode()).hexdigest()[:6])' "$1" "$2"; }
 
 it "R6: with neither --session nor --limit no call is made, and it says which two options choose the sessions"
@@ -1018,7 +1027,7 @@ sent="$(py -c 'import json,sys; print(json.loads(open(sys.argv[1]).readlines()[-
 assert_eq "$(cat "$BRIEF" 2>&1; sed "s/$EMAIL/<redacted:email>/" "$RW/closing.md")" "$sent"
 lacks "$(cat "$F" 2>/dev/null)" "$EMAIL"
 it "the brief is Appendix A of the record, word for word"
-assert_eq "$(sed -n '/^## Appendix A/,/^## Appendix B/p' "$here/../../../docs/changes/2026-11-15-checkable-judges.md" | sed -n 's/^    //p; /^$/p' | sed -e '1,/./{/^$/d}' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')" "$(cat "$BRIEF" 2>&1)"
+assert_eq "$(appendix "Appendix A" "Appendix B")" "$(cat "$BRIEF" 2>&1)"
 it "the call: Sonnet, no tools, no settings, no saved session, a spending limit, in a folder of its own that is gone after, no archive in its environment"
 assert_eq "True" "$(py -c '
 import json,os,sys
@@ -1168,7 +1177,7 @@ assert_eq "[] [] 2 $VL False" "$(rl '"[%s] [%s] %s %s %s" % (c[1]["remotes"], c[
 assert_eq "False False False" "$(py -c 'import json,os,sys; c=[json.loads(l) for l in open(sys.argv[1])]; w=c[1]["cwd"]; print(w.startswith(sys.argv[2]), w.startswith(sys.argv[3]), os.path.exists(w))' "$RLOG" "$RV" "$VAR")"
 it "R2: the brief is grade/briefs/review.md with the two commits, which is Appendix B of the record, and names no path of the repository"
 assert_eq "$(sed "s/@BASE@/${VB:0:10}/g; s/@HEAD@/${VL:0:10}/g" "$here/../grade/briefs/review.md" 2>&1)" "$(rl 'c[1]["prompt"].rstrip("\n")')"
-assert_eq "$(sed -n '/^## Appendix B/,/^## Outcome/p' "$here/../../../docs/changes/2026-11-15-checkable-judges.md" | sed -n 's/^    //p; /^$/p' | sed -e '1,/./{/^$/d}' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')" "$(cat "$here/../grade/briefs/review.md" 2>&1)"
+assert_eq "$(appendix "Appendix B" "Outcome")" "$(cat "$here/../grade/briefs/review.md" 2>&1)"
 lacks "$(rl 'c[1]["prompt"]')" "$RV"
 it "R2: its settings turn the sandbox on, with no leave to run a command outside it, and deny reading the repository, the archive and the settings themselves"
 assert_eq "True False True True True" "$(py -c '
