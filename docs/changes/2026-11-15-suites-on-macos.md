@@ -1,7 +1,7 @@
 ---
 id: 2026-11-15-suites-on-macos
 tier: 1
-status: open
+status: done
 requester: Patrick Priestley, in chat on 2026-11-15 ("Continue development work on the public"); the first CI runs in the public repository showed the failures
 approvers: []
 ---
@@ -58,7 +58,12 @@ the one failure that may be a fault in the tool is explained.
 - The harness gives the agent the real path of its scratch folder. Rejected: comparing
   real paths in the test, which would leave an agent on a Mac with a `PWD` that is not
   where it is.
-- The address redactor is not changed until the difference is seen. The test now prints
+- Decided from the runner's answer: the address redactor is right and is not changed.
+  The test's program is moved out of the here-document inside `"$( )"` into a file. Bash
+  3.2 expands braces in such a here-document, so the pattern's `{2,}` reached Python as
+  `2`. Rejected: writing the pattern without braces, which leaves the trap for the next
+  program put there.
+- Until that answer came: the address redactor is not changed until the difference is seen. The test now prints
   the first strings on which the two disagree and the Python that ran it; the next macOS
   run shows them, and the fix, in the tool or in the test, follows in this same change.
 
@@ -76,3 +81,32 @@ the one failure that may be a fault in the tool is explained.
 here can stand in for a Mac.
 
 ## Outcome
+
+Task 1, three causes fixed, seen on the macOS runner (run 43712625701, `change-record
+(macos-latest)`): `record-check.test.sh` 117 passed and none failed, in 16 seconds where it
+had taken 220 to 300; `transcripts-judge.test.sh` 280 and none; `outcome-evals/run.test.sh`
+91 and none. One assertion was left, in `transcripts-store.test.sh`.
+
+Task 2, the address test. The first run with the strings printed showed that the
+redactor redacts and the test's own pattern leaves every string as it was:
+
+```
+input '-.@a.co--.jane.doe@example.org-1b@@é.com' | redactor '<redacted:email>@example.org-1b@@é.com' | pattern '-.@a.co--.jane.doe@example.org-1b@@é.com' | python 3.15.2
+```
+
+The second (run 43714085731), with the pattern printed, showed why:
+
+```
+the pattern as compiled: '[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]2' | it finds 'jane.doe@example.org': False
+  '[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+' finds: 'jane.doe@example'
+```
+
+The test wrote `[A-Za-z]{2,}`; Python was given `[A-Za-z]2`. The program was a
+here-document inside `"$( )"`, and bash 3.2 on the runner expanded the braces. So the
+difference was in the test, on one shell, and the tool redacts addresses on macOS as on
+Linux. The cause was not found by reading: it took two runs on the runner, each made to
+say more. That the fix holds there is shown by the macOS job of the pull request that
+carries it.
+
+Not done: other here-documents inside `"$( )"` were not searched for a brace word of
+that kind; the suites that pass on the runner hold none that changes a result.
