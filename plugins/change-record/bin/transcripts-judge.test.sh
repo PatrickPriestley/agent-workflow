@@ -714,7 +714,9 @@ has "$(badline 'defects: maybe abcdef')" "defects: 'maybe abcdef' is neither \`w
 has "$(badline 'defects: wrong abcdef | right abcdef')" "defects: abcdef is ruled both wrong and right"
 has "$(badline 'said-again: wrong abcdef | wrong 123456')" "said-again: wrong is there twice"
 it "R5: a ruling needs a person's name and date like a verdict does, and a line with no ruling is no ruling"
-copy unsigned; sed -i.bak 's/^labelled-by:.*/labelled-by:/' "$TMPROOT/unsigned/labels/$R5.txt"; printf 'defects: right abcdef\n' >> "$TMPROOT/unsigned/labels/$R5.txt"
+copy unsigned; f="$TMPROOT/unsigned/labels/$R5.txt"   # a label with no name and no verdict, which is no problem until it rules a claim
+sed -E -e 's/^(labelled-by:).*/\1/' -e 's/^([a-z]+-[a-z-]+:) ?[a-z]+ \|.*/\1/' "$f" > "$f.new" && mv "$f.new" "$f"
+assert_eq "" "$(report "$TMPROOT/unsigned" 2>&1 >/dev/null)"; printf 'defects: right abcdef\n' >> "$f"
 has "$(report "$TMPROOT/unsigned" 2>&1 >/dev/null)" "$R5.txt: verdicts with no labelled-by"
 copy blank; printf 'said-again:\ndefects:\n' >> "$TMPROOT/blank/labels/$R5.txt"
 assert_eq "" "$(report "$TMPROOT/blank" 2>&1 >/dev/null)"
@@ -725,6 +727,8 @@ d, r4, email = sys.argv[1:]
 p = f"{d}/repeats/{r4}.json"; doc = json.load(open(p)); doc["detail"] = "refused, see " + email; json.dump(doc, open(p, "w"))
 p = f"{d}/reviews/{r4}/sonnet/review.json"; doc = json.load(open(p)); doc.update(status="error", detail="no clone for " + email); json.dump(doc, open(p, "w"))
 json.dump(["not", "an", "answer"], open(f"{d}/repeats/odd.json", "w"))
+doc = json.load(open(f"{d}/repeats/a2000000-0000-0000-0000-000000000002.json"))   # a counted answer for a session the folder does not know
+json.dump(dict(doc, points=5), open(f"{d}/repeats/e9000000-0000-0000-0000-000000000009.json", "w"))
 os.makedirs(f"{d}/reviews/{r4}/opus")
 json.dump({"status": "reviewed", "defects": ["x", {"status": "shown"}], "changed_lines": "lots"}, open(f"{d}/reviews/{r4}/opus/review.json", "w"))
 PY2
@@ -732,16 +736,19 @@ r="$(report "$TMPROOT/leak3" 2>&1)"; rc=$?
 assert_eq 0 "$rc"; lacks "$r" "$EMAIL"; lacks "$r" "Traceback"
 has "$r" "Not counted: b4000000 (malformed: refused, see <redacted:email>); odd (not an answer)."
 has "$r" "b4000000 sonnet (error: no clone for <redacted:email>)"; has "$r" "| b4000000 | opus | unknown | 0 | - | none |"
+it "R4: lines that are unknown for one session are unknown for the sessions together; an answer for a session the folder does not know is shown apart"
+has "$r" "| Together (2) | opus | unknown | 2 | - | 1 data lost or leaked, 1 not named in the answer |"
+has "$r" "### Sessions with no index entry and no score row here"; has "$r" "| e9000000 | 5 | 0 | 0.00 |"; has "$r" "4 of 7 sessions here have a counted answer"
 it "R5: the sheet lists a session's pairs and its shown defects with their ids, redacted, and says how to rule them"
 copy sheets; (cd "$TMPROOT" && "$T" sheet "$TMPROOT/sheets" --labels "$TMPROOT/sheets/labels" > /dev/null 2>&1)
 s3="$(cat "$TMPROOT/sheets/sheets/$R3.md" 2>&1)"; s1="$(cat "$TMPROOT/sheets/sheets/$R1.md" 2>&1)"
 has "$s3" "## Claims to rule"; has "$s3" "- \`cb33eb\`: \"Point 1 is made.\" and again \"Point 1, again.\""
 has "$s3" "- \`f7c8a1\` (opus, data lost or leaked, in greet.py): made up"; has "$s3" "reviews/$R3/opus/scripts/defect-4.sh"
-has "$s3" "\`said-again: wrong <id>... | right <id>...\`"
+has "$s3" "\`said-again: wrong <id>... | right <id>...\`"; has "$s3" "They are at the end, under Claims to rule"
 it "R5: a script that also passes at the base is no claim, nor is a defect of a review that looked outside; and an address in a pair is redacted"
 lacks "$s3" "662740"; lacks "$s1" "f454a3"; lacks "$s1" "alice@example.org"; has "$s1" "\"Write to <redacted:email> for the key.\""
 it "R5: a session with no claim has no such section in its sheet"
-lacks "$(cat "$TMPROOT/sheets/sheets/$R5.md" 2>&1)" "Claims to rule"
+s5="$(cat "$TMPROOT/sheets/sheets/$R5.md" 2>&1)"; has "$s5" "# Label sheet: $R5"; lacks "$s5" "Claims to rule"
 it "a folder with no score rows is an error"
 mkdir -p "$TMPROOT/empty"; (cd "$TMPROOT" && "$T" report "$TMPROOT/empty" > /dev/null 2>&1); assert_eq 1 "$?"
 
