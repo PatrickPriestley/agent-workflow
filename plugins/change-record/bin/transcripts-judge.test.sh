@@ -1106,6 +1106,13 @@ python3 -c 'import socket,sys; socket.create_connection(("127.0.0.1", int(sys.ar
 d=\$(mktemp -d) && echo "temporary folder: ok"
 python3 greet.py 2>&1 | grep -q IndexError
 EOF
+# A script that plants a command in the clone's own git configuration, for git to run when the tool next
+# looks at the clone (found by the review of pull request 1): nothing may come of it, boxed or not.
+cat > "$FRD/.review/escape.sh" <<EOF
+printf '#!/bin/sh\ntouch "$VROOT/escaped"\n' > .git/planted.sh 2>/dev/null; chmod +x .git/planted.sh 2>/dev/null
+git config core.fsmonitor .git/planted.sh 2>/dev/null   # a path from the clone's root: the same in the box and out of it
+python3 greet.py 2>&1 | grep -q IndexError
+EOF
 cat > "$FRD/answer.json" <<EOF
 Done.
 {"defects": [
@@ -1165,9 +1172,9 @@ it "R2: it does not inherit the caller's archive, session or other variables"
 assert_eq "None None" "$(rl 'str(c[1]["env"]["AGENT_TRANSCRIPTS"]) + " " + str(c[1]["env"]["CLAUDE_CODE_SESSION_ID"])')"
 it "R3: a defect is shown only if its script exits 0 at the last commit and not at the base, and leaves the clone as it was"
 st() { py -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" | ".join("%s %s %s" % (x["script"], x["status"], "named" if x["named"] else "not named") for x in d["defects"]))' "$VJ"; }
-assert_eq "defect-1.sh shown named | defect-2.sh shown at the base too named | defect-3.sh not shown at the last commit named | defect-4.sh timed out named | defect-5.sh changed the clone named | defect-6.sh named and missing named | box.sh shown not named | extra.sh shown not named" "$(st)"
-assert_eq "reviewed 3 False 2 1 0.3 $VB $VL" "$(rj "$VJ" '" ".join(str(d[k]) for k in ("status", "shown", "looked_outside", "experiments", "unverified", "cost_usd", "base", "last"))')"
-has "$out" "${V1:0:8} review: 3 defects shown (1 crash, 2 not named in the answer); not counted: 1 shown at the base too, 1 not shown at the last commit, 1 timed out, 1 changed the clone, 1 named and missing"
+assert_eq "defect-1.sh shown named | defect-2.sh shown at the base too named | defect-3.sh not shown at the last commit named | defect-4.sh timed out named | defect-5.sh changed the clone named | defect-6.sh named and missing named | box.sh shown not named | escape.sh shown not named | extra.sh shown not named" "$(st)"
+assert_eq "reviewed 4 False 2 1 0.3 $VB $VL" "$(rj "$VJ" '" ".join(str(d[k]) for k in ("status", "shown", "looked_outside", "experiments", "unverified", "cost_usd", "base", "last"))')"
+has "$out" "${V1:0:8} review: 4 defects shown (1 crash, 3 not named in the answer); not counted: 1 shown at the base too, 1 not shown at the last commit, 1 timed out, 1 changed the clone, 1 named and missing"
 it "R3: a shown defect's id is made from its script, and what the reviewer said of it is kept, redacted"
 assert_eq "$(sha256sum "$FRD/.review/defect-1.sh" | cut -c1-6) crash greet.py" "$(rj "$VJ" '" ".join(d["defects"][0][k] for k in ("id", "kind", "file"))')"
 lacks "$(cat "$VJ" 2>/dev/null)" "$EMAIL"; has "$(cat "$VJ" 2>/dev/null)" "<redacted:email>"
@@ -1178,6 +1185,8 @@ it "R7: a script runs in a box: it cannot write outside its clone, see the repos
 b="$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)"
 for x in "repository: hidden" "archive: hidden" "home: hidden" "variable: []" "network: none" "temporary folder: ok"; do has "$b" "$x"; done
 [ -e "$VROOT/outside-box" ] && bad "the script wrote outside its clone" || ok
+it "R7: a command a script plants in its clone's git configuration is never run: the tool runs no git where a script has been"
+[ -e "$VROOT/escaped" ] && bad "the planted command ran, outside the box" || ok
 it "R3: what a script printed is kept redacted, and a link among the scripts is not taken for one"
 o="$(cat "$VAR/reviews/$V1/sonnet/runs/defect-2.sh.last.out" 2>&1)"; lacks "$o" "$EMAIL"; has "$o" "always, says <redacted:email>"
 lacks "$(st)" "link.sh"; [ -e "$VAR/reviews/$V1/sonnet/scripts/link.sh" ] && bad "the link was copied" || ok
@@ -1225,9 +1234,18 @@ else
 fi
 it "R7: with --local on a machine with no box the scripts run as the caller, and it says so"
 rm -f "$VROOT/outside-box"; out="$(PATH="$NOBOX:$PATH" review "$VAR" --repo-dir "$RV" --session $V1 --again --local)"; rc=$?
-assert_eq "0 reviewed 3" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"; has "$out" "with your own access"
+assert_eq "0 reviewed 4" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"; has "$out" "with your own access"
+[ -e "$VROOT/escaped" ] && bad "the planted command ran, with no box: the tool ran git in the script's clone" || ok
 [ -e "$VROOT/outside-box" ] && ok || bad "expected the unboxed script to have written outside its clone"
 has "$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)" "variable: []"
+it "a script that prints without end is stopped at its time with only the end of its output kept, not all of it held in memory"
+printf 'while :; do printf "%%01000d\\n" 7; done\n' > "$TMPROOT/noisy.sh"; mkdir -p "$TMPROOT/noisy-clone"
+assert_eq "None True" "$(cd "$here/../grade" && python3 -B -c '
+import sys
+sys.dont_write_bytecode = True
+import review
+code, out = review.run_script(sys.argv[1], sys.argv[2], [], False, 2)
+print(code, len(out) <= review.OUTPUT_CAP)' "$TMPROOT/noisy.sh" "$TMPROOT/noisy-clone" 2>&1)"
 it "more than ten sessions are not reviewed in one run"
 out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out" "at most 10"
 
