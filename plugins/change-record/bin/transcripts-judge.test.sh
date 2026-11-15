@@ -1064,6 +1064,7 @@ mkdir -p "$VROOT/home"; printf 'x\n' > "$VROOT/home/marker"
 RV="$VROOT/rv"; mkdir -p "$RV"; (
   cd "$RV" && git init -q -b main && git config user.email t@example.com && git config user.name t && git config core.hooksPath /dev/null
   printf 'import sys\nprint("Hello, " + (sys.argv[1] if len(sys.argv) > 1 else "world") + "!")\n' > greet.py
+  printf 'the same\n' > twin-a; printf 'the same\n' > twin-b
   git add -A && at 09 commit -qm init
   printf 'import sys\nargs = sys.argv[1:]\nnames = [a for a in args if a != "--shout"]\ntext = "Hello, " + names[0] + "!"\nprint(text.upper() if "--shout" in args else text)\n' > greet.py
   git add -A && at 10 commit -qm "feat: shout"
@@ -1107,10 +1108,10 @@ python3 -c 'import socket,sys; socket.create_connection(("127.0.0.1", int(sys.ar
 d=\$(mktemp -d) && echo "temporary folder: ok"
 python3 greet.py 2>&1 | grep -q IndexError
 EOF
-# Two more ways to change the clone that leave every tracked file's content as it was: a new, empty folder,
-# and a file swapped for a link to a copy of itself. Each is a change.
+# Two more ways to change the clone that leave what every tracked file reads as: a new, empty folder, and a file
+# swapped for a link to its twin (twin-a and twin-b hold the same in every commit). Each is a change.
 printf "mkdir left-folder\n$crash\n" "" "" > "$FRD/.review/defect-7.sh"
-printf 'cp greet.py "$(mktemp -d)/copy.py" && c="$(ls -d "${TMPDIR:-/tmp}"/tmp.*/copy.py | tail -1)" && rm greet.py && ln -s "$c" greet.py\n' > "$FRD/.review/defect-8.sh"
+printf 'rm twin-a && ln -s twin-b twin-a\n' > "$FRD/.review/defect-8.sh"
 printf "$crash\n" "" "" >> "$FRD/.review/defect-8.sh"
 # A script that plants a command in the clone's own git configuration, for git to run when the tool next
 # looks at the clone (found by the review of pull request 1): nothing may come of it, boxed or not.
