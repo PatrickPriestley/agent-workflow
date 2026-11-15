@@ -26,6 +26,10 @@ As a Claude Code plugin, from this repository's marketplace:
     claude plugin marketplace add PatrickPriestley/agent-workflow
     claude plugin install change-record@agent-workflow
 
+The plugin also brings a `Stop` and `SessionEnd` hook that keeps transcripts of your sessions,
+which does nothing until you set `AGENT_TRANSCRIPTS` and write a scope list: see "Capture in
+your other repositories" under Transcripts.
+
 The skill then refers to this plugin's files through `${CLAUDE_PLUGIN_ROOT}`. For other
 agents, point their instructions file at `RULES.md` and put `skills/change` where they read
 skills (`~/.agents/skills/change`), as `install.sh --wire` does for the other plugin.
@@ -176,8 +180,10 @@ turns of reading the repository and 3.62 dollars.
 
 ### Transcripts
 
-    transcripts archive [--transcript PATH]
+    transcripts archive [--scoped] [--transcript PATH]
     transcripts import [--claude-home DIR] [--repo URL]... [--evals]
+    transcripts import [--claude-home DIR] --scoped
+    transcripts scope [DIR]
     transcripts push [--session ID]... [--background]
     transcripts materialize DIR [--session ID]... [--repo-dir DIR]
     transcripts redact < lines
@@ -222,6 +228,46 @@ deletes them after `cleanupPeriodDays`, 30 by default) whose working directory i
 of this repository, or of each `--repo URL`; `--evals` adds eval-runner sessions. Running it
 again adds only what is new. Imported sessions have no `dispatch` parent and no commit, since
 no stop was seen.
+
+**Capture in your other repositories** (record
+`docs/changes/2026-11-15-user-level-capture.md`). The plugin ships the same hook
+(`hooks/hooks.json`) as `transcripts archive --scoped`, so once the plugin is installed for
+your user it runs at every stop of every session, in every repository. It keeps a session
+only when the repository is on your scope list, `~/.config/agent-transcripts/scope`, which
+you write yourself and which is in no repository:
+
+    # one pattern a line, against github.com/owner/name; case does not matter
+    github.com/YourName/*
+    github.com/your-org/one-project
+    !github.com/YourName/private-*
+
+`*` crosses `/`, so `github.com/YourName/*` is every repository of that owner; a line with no
+wildcard is one whole repository; `!` excludes, and an exclusion wins over any match wherever
+it stands. Nothing is in scope until a line names it. With no list, an empty one, no matching
+line or an excluding one, and for a session outside any repository, in one with no `origin`,
+or one whose `origin` is a path on the machine, the hook archives nothing, starts no push,
+prints nothing and exits 0, in about 60 ms. Both the folder a session is in at the stop and
+the folder it began in must be in scope. A transcript holds the code and command output of
+the repository it ran in, and redaction takes out keys, addresses and account ids, not code:
+name repositories you hold the rights to, not `*`. To set a machine up:
+
+    claude plugin install change-record@agent-workflow     # for your user, the default scope
+    export AGENT_TRANSCRIPTS=~/agent-transcripts           # and AGENT_TRANSCRIPTS_URL, to send
+    $EDITOR ~/.config/agent-transcripts/scope
+    alias transcripts=/path/to/agent-workflow/plugins/change-record/bin/transcripts   # a checkout of this repository
+    transcripts scope                                      # in a repository: in scope, and by which line?
+    transcripts import --scoped                            # the sessions already on this machine
+
+`transcripts scope [DIR]` says whether the repository at DIR is in scope and by which line, or
+which reason keeps it out, then how much the archive on this machine holds; it exits 0 in
+scope and 1 not. `transcripts report --store` says under its title how many sessions and MB
+of redacted text the store holds, by redaction version, which is the only place the store's
+size shows (only the read key can see it). If you install the plugin and set neither
+`AGENT_TRANSCRIPTS` nor a scope list, the hook does nothing but take those 60 ms, and nothing
+can reach the owner's store without the owner's key. This repository's own hook stays,
+unscoped, so in this checkout and in `dispatch`'s worktrees both run; the second finds
+nothing new. This covers your own machines only: a cloud session in another repository does
+not have the plugin, and how it would get it is not worked out.
 
 **The store.** The owner's Supabase project holds `sessions` (index rows), `chunks` and
 `scores`; `store/schema.sql` creates them, and `store/probe` checks against the real project
@@ -597,6 +643,12 @@ Whether the code that comes out is better was measured separately, on 2026-11-14
 plugin, five runs each on Sonnet 5.5. No effect was shown on hidden tests, error paths,
 mutation score, coverage or scope; the plugin's arm took about twice the turns. On tasks
 that small the skill's value is the record and the review, not better code.
+
+The plugin's capture hook was run for real on 2026-11-15 (Claude Code 2.1.325): the plugin
+installed for the user from this repository as a local marketplace, then sessions with no
+`--plugin-dir`. A session in a scratch repository on a scratch scope list was archived; one in
+a repository off the list, and one with no list, were not. In this checkout, where the
+repository's own hook also runs, the two left one index entry and the transcript's lines once.
 
 ## Tests
 

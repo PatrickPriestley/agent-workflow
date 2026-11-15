@@ -1,7 +1,7 @@
 ---
 id: 2026-11-15-user-level-capture
 tier: 2
-status: approved
+status: done
 requester: Patrick Priestley, in chat on 2026-11-15 ("Can we do this next ... User-level capture, so sessions from your other work flow in. Ten sessions from one repository is too small a base to find skill failures in.")
 approvers: [Patrick Priestley, 2026-11-15]
 ---
@@ -322,5 +322,64 @@ And `transcripts report --store` on the real store, read through the environment
 The store holds 14 sessions and 60.4 MB of redacted text: under redaction 1, 14 sessions and 60.4 MB.
 ```
 
-Not done here: the hook itself and the README (task 2). Until task 2 nothing calls
-`archive --scoped`.
+### Task 2: the hook
+
+Test first: 8 assertions of `bin/transcripts.test.sh` failed with no `hooks/hooks.json`,
+committed red, then the file and the README's section "Capture in your other repositories".
+Suites after: transcripts 350, outcome-evals run 91 (its assertion that the plugin copy
+holds `.claude-plugin RULES.md bin skills templates` and nothing else now has a `hooks`
+folder to leave out). `claude plugin validate plugins/change-record`: passed.
+
+Guards shown by breaking them by hand, each caught: the hook without `--scoped`, without
+`|| true`, with another time limit, on another event, and run from the project's folder
+instead of the plugin's; and the outcome evals' plugin copy taking the `hooks` folder.
+
+Real use, Claude Code 2.1.325 in this container, 2026-11-15. This repository added as a
+local marketplace (`claude plugin marketplace add /home/user/agent-workflow`), the plugin
+installed with `claude plugin install change-record@agent-workflow --scope user`, then real
+sessions on Haiku with no `--plugin-dir`, in two scratch repositories, with a scratch
+config folder and a scratch archive. The scope list was one line,
+`github.com/Scratch-Owner/*`; the repositories' origins were
+`https://github.com/scratch-owner/wanted.git` and `https://github.com/some-client/private.git`.
+
+```
+--- 1. a session in the repository on the list
+session 0bfc1951-b2af-4628-9502-c39b5467e845 | result: done | turns 1
+archive holds: 0bfc1951-b2af-4628-9502-c39b5467e845.json
+github.com/scratch-owner/wanted is in scope: line 2 of <scratch>/config/agent-transcripts/scope, github.com/Scratch-Owner/*
+the archive <scratch>/archive holds 1 session, 0.1 MB of transcripts, not redacted
+exit 0
+--- 2. a session in a repository off the list
+session 726d081b-fbb1-4dcc-b973-f3bf2123c4e5 | result: done | turns 1
+archive holds: 0bfc1951-b2af-4628-9502-c39b5467e845.json
+not in scope: no line of <scratch>/config/agent-transcripts/scope matches github.com/some-client/private
+exit 1
+--- 3. the listed repository again, with no scope list (the error path)
+session 2727d387-895a-41a1-9460-78ba9052f3c5 | result: done | turns 1
+archive holds: 0bfc1951-b2af-4628-9502-c39b5467e845.json
+not in scope: there is no scope list at <scratch>/config/agent-transcripts/scope
+exit 1
+entry: {'session_id': '0bfc1951-...', 'repository': 'github.com/scratch-owner/wanted'} lines 24
+```
+
+Both hooks at once, in this checkout, with the list naming this repository's owner: the
+repository's own hook and the plugin's each ran at the stop.
+
+```
+session 17d028d1-8c9b-4af1-bfc5-fe8a62108e88 | result: done
+entries: ['17d028d1-8c9b-4af1-bfc5-fe8a62108e88.json'] | parts: ['g1-000001.jsonl', 'g1-000002.jsonl']
+lines in entry 24 | lines in parts 24 | transcript lines 24 | parts are a prefix of the transcript: True | locks left: []
+```
+
+The plugin was then uninstalled and the marketplace removed; `claude plugin list` shows
+neither.
+
+### What is left for the owner
+
+Nothing is captured anywhere new until the owner does this on their own machine (C1, C4):
+install the plugin for the user, set `AGENT_TRANSCRIPTS` (and `AGENT_TRANSCRIPTS_URL` to
+send), write `~/.config/agent-transcripts/scope`, and run `transcripts scope` in a
+repository to see it took. The README's section has the commands. Not verified: the
+owner's machine itself, and a session started from the desktop app or an IDE rather than
+the CLI. Open from C3: the store holds 60.4 MB, all under redaction 1, and the next push
+from a machine that still has its archives sends those sessions again under version 2.

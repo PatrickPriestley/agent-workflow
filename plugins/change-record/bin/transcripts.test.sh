@@ -521,4 +521,32 @@ it "--scoped with --repo or --evals is a usage error: the list alone says what i
 simp --scoped --repo https://github.com/Client/Private > /dev/null; a=$?; simp --evals --scoped > /dev/null; b=$?
 assert_eq "2 2 " "$a $b $(ls "$SAR2/sessions" 2>/dev/null)"
 
+echo "user-level capture: the hook the plugin ships (R5)"
+HOOKS="$here/../hooks/hooks.json"
+it "Stop and SessionEnd, and no other event, each run one command with a limit of 10 seconds"
+assert_eq "SessionEnd Stop" "$(python3 -c 'import json,sys; print(" ".join(sorted(json.load(open(sys.argv[1]))["hooks"])))' "$HOOKS" 2>&1)"
+for ev in Stop SessionEnd; do
+  assert_eq "1 1 command 10" "$(python3 -c '
+import json,sys
+g=json.load(open(sys.argv[1]))["hooks"][sys.argv[2]]; h=g[0]["hooks"]
+print(len(g), len(h), h[0]["type"], h[0]["timeout"])' "$HOOKS" "$ev" 2>&1)"
+done
+it "the command is the plugin's own transcripts archive --scoped, never failing the session"
+for ev in Stop SessionEnd; do
+  pcmd="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"][sys.argv[2]][0]["hooks"][0]["command"])' "$HOOKS" "$ev" 2>&1)"
+  assert_eq '"${CLAUDE_PLUGIN_ROOT}/bin/transcripts" archive --scoped || true' "$pcmd"
+done
+# phook DIR ID: the plugin's hook command, run as Claude Code runs it for a stop of session ID in DIR
+phook() {
+  printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$2" "$(sess "$1" "$2")" "$1" \
+    | (cd "$1" && CLAUDE_PLUGIN_ROOT="$(cd "$here/.." && pwd)" XDG_CONFIG_HOME="$SC" AGENT_TRANSCRIPTS="$HAR" sh -c "$pcmd" 2>&1)
+}
+HAR="$TMPROOT/hook-archive"; printf 'github.com/Owner/*\n' > "$LIST"
+it "run as Claude Code runs it, it archives a session in a repository on the list"
+out="$(phook "$RIN" h-wanted)"; assert_eq "0 [] h-wanted.json" "$? [$out] $(ls "$HAR/sessions" 2>&1)"
+it "and none in a repository off it"
+out="$(phook "$ROUT" h-client)"; assert_eq "0 [] h-wanted.json" "$? [$out] $(ls "$HAR/sessions" 2>&1)"
+it "a plugin folder with no transcripts tool in it does not fail the session"
+out="$(printf '{}' | (cd "$RIN" && CLAUDE_PLUGIN_ROOT="$TMPROOT/no-such-plugin" sh -c "$pcmd" 2>/dev/null))"; assert_eq "0 []" "$? [$out]"
+
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]
