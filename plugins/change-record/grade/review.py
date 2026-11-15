@@ -14,18 +14,26 @@ commit and not at the base, in time, and leaves the clone as it was. A script th
 everywhere, or shows something the session inherited, is not a defect of the session.
 
 The scripts are a model's shell commands, so they run in a box (bwrap): no network, the file
-system read-only but for the clone and an empty /tmp, the repository, the archive and the home
-folder hidden, the environment cleared. Where no box can be started the caller has to say
---local, and they run with the caller's own access.
+system read-only but for the clone and an empty /tmp, the clone's .git read-only too, the
+repository, the archive and the home folder hidden, the environment cleared. Where no box can be
+started the caller has to say --local, and they run with the caller's own access.
+
+The tool runs no git in a folder a script has been in. A script can write its clone's git
+configuration, and git runs commands that configuration names (core.fsmonitor on a status):
+that would be the script's command, run by the tool, outside the box. So each script gets a copy
+of the clean clone to run in, the copy is compared with the clean clone by reading its files,
+and it is thrown away. What a script prints is read as it comes and only its end is kept.
 
 A shown defect's id is the first six hex digits of the SHA-256 of its script, so that a person's
 ruling names the defect and not its place in a list.
 """
+import collections
 import hashlib
 import json
 import os
 import re
 import secrets
+import select
 import shlex
 import shutil
 import signal
@@ -56,6 +64,42 @@ def sha(data):
 def seconds(name, default):
     v = os.environ.get(name, "")
     return int(v) if v.isdigit() and int(v) > 0 else default
+
+
+def run_keeping_the_end(cmd, cwd, env, limit, keep):
+    """As run, for a command whose output cannot be trusted to end: it is read as it comes and only its last
+    keep bytes are held, so a script that prints for ever costs no more memory than one that prints nothing."""
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+    except OSError as e:
+        return 127, f"{cmd[0]} did not start ({e})"
+    tail, held, late, deadline, fd = collections.deque(), 0, False, time.time() + limit, p.stdout.fileno()
+    while True:
+        left = deadline - time.time()
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            late = True
+            break
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        tail.append(chunk)
+        held += len(chunk)
+        while held - len(tail[0]) >= keep:
+            held -= len(tail.popleft())
+    if not late:
+        try:
+            p.wait(timeout=max(0.1, deadline - time.time()))
+        except subprocess.TimeoutExpired:  # it closed its output and went on
+            late = True
+    if late:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+    p.stdout.close()
+    return (None if late else p.returncode), b"".join(tail)[-keep:].decode("utf-8", "replace")
 
 
 def run(cmd, cwd, env, stdin=None, limit=None, out=None):
@@ -158,26 +202,56 @@ def run_script(script, clone, hidden, boxed, limit):
     path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     if boxed:
         hide = [a for h in hidden if h not in ("/", "/tmp") for a in ("--tmpfs", h)]
+        dot_git = os.path.join(clone, ".git")
         cmd = (["bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
-               + hide + ["--bind", clone, "/tmp/work", "--ro-bind", script, "/tmp/defect.sh", "--chdir", "/tmp/work", "--clearenv",
+               + hide + ["--bind", clone, "/tmp/work"] + (["--ro-bind", dot_git, "/tmp/work/.git"] if os.path.exists(dot_git) else [])
+               + ["--ro-bind", script, "/tmp/defect.sh", "--chdir", "/tmp/work", "--clearenv",
                          "--setenv", "PATH", path, "--setenv", "HOME", "/tmp", "--setenv", "TMPDIR", "/tmp", "--setenv", "LANG", "C.UTF-8",
                          "--setenv", "PYTHONDONTWRITEBYTECODE", "1", "bash", "/tmp/defect.sh"])
-        return run(cmd, clone, {"PATH": path}, limit=limit)
+        return run_keeping_the_end(cmd, clone, {"PATH": path}, limit, OUTPUT_CAP)
     scratch = clone + ".tmp"
     os.makedirs(scratch, exist_ok=True)
     try:
-        return run(["bash", script], clone, {"PATH": path, "HOME": scratch, "TMPDIR": scratch, "LANG": "C.UTF-8",
-                                           "PYTHONDONTWRITEBYTECODE": "1"}, limit=limit)
+        return run_keeping_the_end(["bash", script], clone, {"PATH": path, "HOME": scratch, "TMPDIR": scratch, "LANG": "C.UTF-8",
+                                                           "PYTHONDONTWRITEBYTECODE": "1"}, limit, OUTPUT_CAP)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def changed(clone):
-    """Whether the clone differs from its commit; it is put back either way."""
-    dirty = bool(git(clone, "status", "--porcelain")[1])
-    git(clone, "reset", "-q", "--hard")
-    git(clone, "clean", "-qfdx")
-    return dirty
+def tree_state(root):
+    """What a folder holds outside .git: each file with the hash of its content, each link with where it points,
+    each folder by name. Read with no git, and following no link: the folder may be one a script has written."""
+    state = {}
+    for where, dirs, files in os.walk(root):
+        if where == root and ".git" in dirs:
+            dirs.remove(".git")
+        for name in dirs + files:
+            p = os.path.join(where, name)
+            rel = os.path.relpath(p, root)
+            try:
+                if os.path.islink(p):
+                    state[rel] = "link to " + os.readlink(p)
+                elif os.path.isdir(p):
+                    state[rel] = "folder"
+                elif os.path.isfile(p):
+                    state[rel] = sha(open(p, "rb").read())
+                else:
+                    state[rel] = "neither a file nor a folder"
+            except OSError:
+                state[rel] = "unreadable"
+    return state
+
+
+def try_script(script, clean, was, work, hidden, boxed, limit):
+    """Run one script in a copy of the clean clone: (exit status or None, what it printed, whether it changed the
+    copy). The copy is thrown away, and no git is run in it: see the module's note."""
+    trial = os.path.join(work, "trial")
+    shutil.copytree(clean, trial, symlinks=True)
+    try:
+        code, printed = run_script(script, trial, hidden, boxed, limit)
+        return code, printed, tree_state(trial) != was
+    finally:
+        shutil.rmtree(trial, ignore_errors=True)
 
 
 def verdict(last, base):
@@ -282,6 +356,7 @@ def review_session(root, repo, base, last, model, settings, hidden, boxed, out, 
             if isinstance(d, dict) and isinstance(d.get("script"), str):
                 named.setdefault(os.path.basename(d["script"]), d)
         limit = seconds("AGENT_TRANSCRIPTS_SCRIPT_LIMIT", SCRIPT_LIMIT)
+        was = {"last": tree_state(clean), "base": tree_state(at_base)}
         for name in list(named) + [n for n in scripts if n not in named]:
             said = named.get(name) or {}
             row = {"id": None, "script": name, "named": name in named, "kind": said.get("kind") if said.get("kind") in KINDS else "other",
@@ -292,8 +367,8 @@ def review_session(root, repo, base, last, model, settings, hidden, boxed, out, 
             row["id"] = sha(open(scripts[name], "rb").read())[:6]
             seen = {}
             for at, clone in (("last", clean), ("base", at_base)):
-                code, printed = run_script(scripts[name], clone, hidden, boxed, limit)
-                seen[at] = (code, changed(clone))
+                code, printed, dirty = try_script(scripts[name], clone, was[at], work, hidden, boxed, limit)
+                seen[at] = (code, dirty)
                 with open(os.path.join(out, "runs", f"{name}.{at}.out"), "w") as f:
                     f.write(redact(printed[-OUTPUT_CAP:]))
                 row[at] = {"exit": code, "changed_the_clone": seen[at][1]}

@@ -1102,6 +1102,7 @@ cat > "$FRD/.review/box.sh" <<EOF
 [ -e "$VAR/sessions" ] && echo "archive: seen" || echo "archive: hidden"
 [ -e "$VROOT/home/marker" ] && echo "home: seen" || echo "home: hidden"
 echo "variable: [\${SECRET_FROM_CALLER:-}]"
+(echo x > .git/probe) 2>/dev/null && echo "git folder: written" || echo "git folder: read-only"
 python3 -c 'import socket,sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 3)' "${URL##*:}" 2>/dev/null; [ \$? = 0 ] && echo "network: reached" || echo "network: none"
 d=\$(mktemp -d) && echo "temporary folder: ok"
 python3 greet.py 2>&1 | grep -q IndexError
@@ -1183,7 +1184,7 @@ assert_eq "$(cat "$FRD/.review/defect-1.sh")" "$(cat "$VAR/reviews/$V1/sonnet/sc
 has "$(cat "$VAR/reviews/$V1/sonnet/runs/defect-1.sh.last.out" 2>&1)" "IndexError"; has "$(cat "$VAR/reviews/$V1/sonnet/runs/defect-1.sh.base.out" 2>&1)" "Hello, --shout!"
 it "R7: a script runs in a box: it cannot write outside its clone, see the repository, the archive or the home folder, read the caller's variables or reach the network"
 b="$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)"
-for x in "repository: hidden" "archive: hidden" "home: hidden" "variable: []" "network: none" "temporary folder: ok"; do has "$b" "$x"; done
+for x in "repository: hidden" "archive: hidden" "home: hidden" "variable: []" "network: none" "temporary folder: ok" "git folder: read-only"; do has "$b" "$x"; done
 [ -e "$VROOT/outside-box" ] && bad "the script wrote outside its clone" || ok
 it "R7: a command a script plants in its clone's git configuration is never run: the tool runs no git where a script has been"
 [ -e "$VROOT/escaped" ] && bad "the planted command ran, outside the box" || ok
