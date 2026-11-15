@@ -87,7 +87,10 @@ of what was said.
   whose tip is its root; all 17 sessions as before beside an index row whose redaction
   version is a text and whose streams are a list; a session's 278 rows beside an index
   row of its own whose version is 999 and whose streams are a list (none, before the
-  ranking asked for both to be readable); the same rows in the same order when a
+  ranking asked for both to be readable), and beside one whose version is a text and
+  whose streams are the session's own, also when the good row has no version; no row of
+  a session whose only index row has a text for a version; the same rows in the same
+  order when a
   chain's chunk numbers are reversed; and a session's own rows when others are planted
   under `shape` 999.
 - Mock only (the same): the view answers a count over every row in 77 to 83 ms.
@@ -129,16 +132,18 @@ machine that holds the read key.
   It shows no row of a session `materialize` refuses for a reason SQL can see: an id that
   begins with a dot, a stream name that is no transcript's, a chain that does not reach
   its root, a chain that comes back on itself. It reads the rows of the one `shape` its
-  own text names, which is the tool's. An index row it cannot read (a version that is no
-  number, or streams that are no object, whatever the other says) counts as version 0
-  with no stream, so that it ranks below any row that can be read, and stops nothing;
-  this is by this record and is not what `materialize` does today (Decisions).
+  own text names, which is the tool's. An index row it cannot read (streams that are no
+  object, or a version that is neither a number nor absent, whatever the other says)
+  ranks below every row that can be read, has no stream, and stops nothing; this is by
+  this record and is not what `materialize` does today (Decisions).
   Check: the same suite, on made-up rows, one assertion for each clause: two index rows
   that tie are settled as `materialize` settles them; a stream with no chunk; an id
   `.x`; a stream `../x`; a chunk missing; two chunks that name each other, answered in
-  under a second; a malformed index row, and one whose version is a high number and
-  whose streams are a list, beside a good one, which is still the one shown; chunk
-  numbers out of order; rows of another
+  under a second; an index row that cannot be read in each of three ways (a text for a
+  version and a list for streams; a high number and a list; a text and good streams),
+  each beside a good row, one of them with no version, which is still the one shown; a
+  session whose only row has a text for a version and good streams, which shows
+  nothing; chunk numbers out of order; rows of another
   shape; and the number after `m.shape =` in `schema.sql` is the tool's `SHAPE`.
 - R3. `store/probe` gains the checks of the new table with the hooks' key, on the real
   store: a request of two rows is stored; the same request again is 409; a request of one
@@ -491,8 +496,10 @@ rightly. What is left is a part sent again after a stopped push whose request an
 hand has half written, which the sender cannot tell from its own earlier request; that
 is C9's case and the command's to mend. Its third pass found one more, right again: an
 index row whose streams were a list kept its version in the ranking, so with a high
-number it outranked the good row and the session showed nothing. A row now ranks by its
-version only when both can be read (R2, Appendix A), run in the probe.
+number it outranked the good row and the session showed nothing. Its fourth pass found
+the other half: a row whose version was a text kept its streams. A row that cannot be
+read in either way now ranks below every row that can and has no stream (R2, Appendix
+A); each case was run in the probe.
 
 ## Appendix A: the table and the view, as run in the probe
 
@@ -530,15 +537,18 @@ create policy messages_insert on public.messages for insert to anon with check (
 create or replace view public.transcript as
 with recursive best as (
   select distinct on (s.session_id) s.session_id,
-         case when jsonb_typeof(s.entry->'sent'->'streams') = 'object' then s.entry->'sent'->'streams' else '{}'::jsonb end as streams
+         case when r.ok then s.entry->'sent'->'streams' else '{}'::jsonb end as streams
   from public.sessions s
+  -- a row can be read when its streams are an object and its version is a number or is not there
+  cross join lateral (select coalesce(jsonb_typeof(s.entry->'sent'->'streams') = 'object', false)
+                             and coalesce(jsonb_typeof(s.entry->'redaction_version'), 'null') in ('number', 'null') as ok) r
   order by s.session_id,
-           case when jsonb_typeof(s.entry->'redaction_version') = 'number' and jsonb_typeof(s.entry->'sent'->'streams') = 'object'
+           r.ok desc,
+           case when r.ok and jsonb_typeof(s.entry->'redaction_version') = 'number'
                 then (s.entry->>'redaction_version')::numeric else 0 end desc,
            coalesce(s.entry->>'last_timestamp', '') collate "C" desc,
            (select coalesce(sum(case when jsonb_typeof(x.value->'bytes') = 'number' then (x.value->>'bytes')::numeric else 0 end), 0)
-              from jsonb_each(case when jsonb_typeof(s.entry->'sent'->'streams') = 'object'
-                                   then s.entry->'sent'->'streams' else '{}'::jsonb end) x) desc,
+              from jsonb_each(case when r.ok then s.entry->'sent'->'streams' else '{}'::jsonb end) x) desc,
            s.version desc,
            s.row_id collate "C"
 ), tips as (
