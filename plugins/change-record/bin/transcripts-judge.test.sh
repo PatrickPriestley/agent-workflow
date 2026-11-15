@@ -1254,25 +1254,32 @@ import review
 tracemalloc.start()
 code, out = review.run_script(sys.argv[1], sys.argv[2], [], False, 2)
 print(code, len(out) <= review.OUTPUT_CAP, tracemalloc.get_traced_memory()[1] < 5_000_000)' "$TMPROOT/noisy.sh" "$TMPROOT/noisy-clone" 2>&1)"
-it "what a script left is compared without reading more than the clean clone held: a new file, or one of another size, is not read"
-assert_eq "False True True True True | read: big big | small" "$(cd "$here/../grade" && python3 -B -c '
+it "what a script left is compared without reading more than the clean clone held: a new file, or one of another size, is not read, in whichever order the folder is listed"
+want="False True True True True | read: the file as it was, no new file, no grown file, the file with another byte"
+assert_eq "$want / $want | small" "$(cd "$here/../grade" && python3 -B -c '
 import os, sys, tracemalloc
 sys.dont_write_bytecode = True
 import review
 work, clean, x_at = sys.argv[1], sys.argv[1] + "/clean", "printf x | dd bs=1 conv=notrunc 2>/dev/null seek=%d of=%s"
 os.makedirs(clean); os.system("cd %s && %s" % (clean, x_at % (1 << 25, "big"))); was = review.tree_state(clean)
-read, entry = [], review.entry
+read, entry, entries = [], review.entry, review.entries
 def noting(path, like=None):
     got = entry(path, like)
     read.extend([os.path.basename(path)] if got[0] == "file" and got[2] else [])
     return got
 review.entry = noting
-def after(command):   # whether the tool finds the clone changed after a script that runs the command
-    open(work + "/left.sh", "w").write(command + "\n")
-    return review.try_script(work + "/left.sh", clean, was, work, [], False, 60)[2]
-tracemalloc.start()   # the copy as it was (read), a new file, the file grown, the file gone, the file with another byte (read)
-got = [after("true"), after(x_at % (1 << 31, "new")), after(x_at % (1 << 31, "big")), after("rm big"), after(x_at % (8, "big"))]
-print(*got, "| read:", *read, "| small" if tracemalloc.get_traced_memory()[1] < 5_000_000 else "| too much held")' "$TMPROOT/left" 2>&1 | tail -1)"
+def after(command):   # (whether the tool finds the clone changed after a script that runs the command, the files it read)
+    open(work + "/left.sh", "w").write(command + "\n"); del read[:]
+    return review.try_script(work + "/left.sh", clean, was, work, [], False, 60)[2], list(read)
+def one(order):       # a file system lists a folder in an order of its own: the new file before the old one, or after it
+    review.entries = lambda root: sorted(entries(root), reverse=order)
+    same, new, grown, gone, byte = after("true"), after(x_at % (1 << 31, "new")), after(x_at % (1 << 31, "big")), after("rm big"), after(x_at % (8, "big"))
+    return "%s %s %s %s %s | read: %s, %s, %s, %s" % (
+        same[0], new[0], grown[0], gone[0], byte[0], "the file as it was" if same[1] == ["big"] else same[1],
+        "no new file" if "new" not in new[1] else "the new file", "no grown file" if not grown[1] else "the grown file",
+        "the file with another byte" if byte[1] == ["big"] else byte[1])
+tracemalloc.start()
+print(one(False), "/", one(True), "| small" if tracemalloc.get_traced_memory()[1] < 5_000_000 else "| too much held")' "$TMPROOT/left" 2>&1 | tail -1)"
 it "more than ten sessions are not reviewed in one run"
 out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out" "at most 10"
 
