@@ -45,6 +45,8 @@ run "$bindir/pg_ctl" -D "$PG/data" -l "$PG/server.log" -w -o "-c listen_addresse
 # sql STATEMENTS...: run in one session, the last line of what it prints (an error included)
 sql() { run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -v ON_ERROR_STOP=1 "${@/#/-c}" 2>&1 | tail -1; }
 sql_file() { cp "$1" "$PG/file.sql"; chmod 644 "$PG/file.sql"; run "$bindir/psql" -h "$PG" -U postgres -d postgres -q -v ON_ERROR_STOP=1 -f "$PG/file.sql" 2>&1 | grep -v '^psql:.*NOTICE' ; return "${PIPESTATUS[0]}"; }
+# sql_all STATEMENT: everything it prints, on one line (an error's message is not its last line)
+sql_all() { run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "$1" 2>&1 | tr '\n' ' '; }
 # as ROLE STATEMENT: the statement's answer as that role
 as_role() { sql "set role $1" "$2"; }
 
@@ -79,8 +81,8 @@ sql_file "$here/schema.sql" >/dev/null
 assert_eq "1" "$(sql "select count(*) from public.messages")"
 has "$(as_role anon "select count(*) from public.messages")" "permission denied for table messages"
 it "R1: a row the table's checks refuse: a kind that is none of the three, a text with no end to it"
-has "$(sql "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, text) values ('r1', 'main', repeat('a', 64), 1, 2, 0, 'user', 'thought', 'x')")" "violates check constraint"
-has "$(sql "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, text) values ('r1', 'main', repeat('a', 64), 1, 3, 0, 'user', 'text', repeat('x', 3000001))")" "violates check constraint"
+has "$(sql_all "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, text) values ('r1', 'main', repeat('a', 64), 1, 2, 0, 'user', 'thought', 'x')")" 'violates check constraint "messages_kind_check"'
+has "$(sql_all "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, text) values ('r1', 'main', repeat('a', 64), 1, 3, 0, 'user', 'text', repeat('x', 3000001))" | cut -c1-200)" 'violates check constraint "messages_text_check"'
 
 # Made-up sessions, one for each thing R2 says of the view. A chunk here is its id, its start and its
 # number; its bytes are never read. Each message's text says where it should come in its session.
@@ -159,9 +161,10 @@ it "R2: no row of a session one of whose streams is no transcript's"
 assert_eq "nothing" "$(shown dots)"
 it "R2: no row of a session whose chain does not reach its root"
 assert_eq "nothing" "$(shown missing)"
-it "R2: no row of a session whose chain comes back on itself, answered in under a second"
-t0="$(python3 -c 'import time; print(time.time())')"; out="$(shown ring)"
-assert_eq "nothing True" "$out $(python3 -c 'import sys, time; print(time.time() - float(sys.argv[1]) < 1)' "$t0")"
+it "R2: no row of a session whose chain comes back on itself, and the server spends under a second on it"
+assert_eq "nothing" "$(shown ring)"
+ms="$(run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -c '\timing on' -c "select count(*) from public.transcript where session_id = 'ring'" 2>&1 | sed -n 's/^Time: \([0-9]*\).*/\1/p')"
+[ -n "$ms" ] && [ "$ms" -lt 1000 ] && ok || bad "the query took [$ms] ms"
 it "R2: an index row that cannot be read ranks below the good one, however late or large: a text for a version and a list for streams"
 assert_eq "1:bad1-1 2:bad1-2 3:bad1-3 4:bad1-4" "$(shown bad1)"
 it "R2: the same with a high number for a version and a list for streams"

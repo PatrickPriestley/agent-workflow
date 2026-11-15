@@ -97,3 +97,108 @@ create policy chunks_insert on public.chunks for insert to anon with check (true
 create policy sessions_insert on public.sessions for insert to anon with check (true);
 -- No SELECT, UPDATE or DELETE policy exists for anon or authenticated, and no privilege either.
 -- service_role bypasses row-level security.
+
+-- ---- The text of a session, for a person to read (record docs/changes/2026-11-15-readable-store.md) ----
+--
+-- `chunks.data` is gzip, which no query can open. `messages` holds the same redacted text once
+-- more, a row for each text, tool call and tool result of a transcript line, written by `push`
+-- beside each chunk and by `transcripts messages` for what is already stored. The chunks stay
+-- what `materialize` and the graders read; if the two ever disagree the chunks are right, and
+-- `transcripts messages --check` says so.
+--
+-- The hooks' key (role `anon`) may INSERT into `messages` and nothing else. The view
+-- `transcript` is for the dashboard and the read key. `shape` is the version of the rule that
+-- read the rows: the view reads the one shape its text names, so that rows inserted under
+-- another are not shown. When the rule changes, the number changes here and in the tool
+-- (SHAPE in bin/transcripts) together, and this file is run again.
+
+create table if not exists public.messages (
+  session_id text    not null check (session_id ~ '^[A-Za-z0-9._-]{1,100}$'),
+  stream     text    not null check (length(stream) between 1 and 300),
+  chunk_id   text    not null check (chunk_id ~ '^[0-9a-f]{64}$'),  -- the chunk the row was read from
+  shape      integer not null check (shape >= 1),                   -- the version of the rule that read it
+  line       integer not null check (line >= 1),                    -- the line's number in that chunk
+  block      integer not null check (block >= 0),                   -- the block's place in the line
+  at         timestamptz,                                           -- the line's own timestamp
+  who        text    not null check (who in ('user', 'assistant', 'tool', 'context')),
+  kind       text    not null check (kind in ('text', 'call', 'result')),
+  tool       text    check (length(tool) <= 200),                   -- the tool called, on a call
+  call_id    text    check (length(call_id) <= 200),                -- ties a result to its call
+  failed     boolean not null default false,                        -- a result the tool marked an error
+  side       boolean not null default false,                        -- a subagent's line kept inline
+  text       text    not null check (length(text) <= 3000000),      -- redacted, as the chunk holds it
+  created_at timestamptz not null default now(),
+  primary key (session_id, stream, chunk_id, shape, line, block)
+);
+
+alter table public.messages enable row level security;
+revoke all on public.messages from public, anon, authenticated;
+grant insert on public.messages to anon;
+grant all on public.messages to service_role;
+drop policy if exists messages_insert on public.messages;
+create policy messages_insert on public.messages for insert to anon with check (true);
+
+-- Each session's text in order, from the copy `materialize` rebuilds: the index row it ranks first, and for
+-- each stream the chain of chunks that row's tip ends. A session `materialize` would not write (a stream whose
+-- name is no transcript's, or whose chain does not reach its root, or a session whose id begins with a dot)
+-- is not shown at all. A stream with no chunk yet has its root for a tip, and is whole.
+create or replace view public.transcript as
+with recursive best as (
+  select distinct on (s.session_id) s.session_id,
+         case when r.ok then s.entry->'sent'->'streams' else '{}'::jsonb end as streams
+  from public.sessions s
+  -- a row can be read when its streams are an object and its version is a number or is not there
+  cross join lateral (select coalesce(jsonb_typeof(s.entry->'sent'->'streams') = 'object', false)
+                             and coalesce(jsonb_typeof(s.entry->'redaction_version'), 'null') in ('number', 'null') as ok) r
+  order by s.session_id,
+           r.ok desc,
+           case when r.ok and jsonb_typeof(s.entry->'redaction_version') = 'number'
+                then (s.entry->>'redaction_version')::numeric else 0 end desc,
+           coalesce(s.entry->>'last_timestamp', '') collate "C" desc,
+           (select coalesce(sum(case when jsonb_typeof(x.value->'bytes') = 'number' then (x.value->>'bytes')::numeric else 0 end), 0)
+              from jsonb_each(case when r.ok then s.entry->'sent'->'streams' else '{}'::jsonb end) x) desc,
+           s.version desc,
+           s.row_id collate "C"
+), tips as (
+  select b.session_id, x.key as stream, x.value->>'tip' as tip,
+         encode(sha256(convert_to(b.session_id || '/' || x.key, 'UTF8')), 'hex') as root,
+         x.key ~ '^(?:main|subagents/(?!(?:.*/)?\.\.?(?:/|$))[A-Za-z0-9._/-]+)$' as named
+  from best b cross join lateral jsonb_each(b.streams) x
+), chain as (
+  select t.session_id, t.stream, t.root, c.chunk_id, c.start_id, 1 as depth, array[c.chunk_id] as seen
+  from tips t
+  join public.chunks c on c.session_id = t.session_id and c.stream = t.stream and c.chunk_id = t.tip
+  where t.named
+  union all
+  select c.session_id, c.stream, h.root, c.chunk_id, c.start_id, h.depth + 1, h.seen || c.chunk_id
+  from chain h
+  join public.chunks c on c.session_id = h.session_id and c.stream = h.stream and c.chunk_id = h.start_id
+  where c.chunk_id <> all (h.seen)          -- a chain that comes back on itself stops, and never reaches its root
+), whole as (
+  select session_id, stream from chain where start_id = root
+  union
+  select session_id, stream from tips where named and tip = root
+), written as (
+  select b.session_id from best b
+  where b.session_id !~ '^\.'
+    and not exists (select 1 from tips t
+                    where t.session_id = b.session_id
+                      and (not t.named or not exists (select 1 from whole w
+                                                      where w.session_id = t.session_id and w.stream = t.stream)))
+)
+select m.session_id, m.stream,
+       row_number() over (partition by m.session_id, m.stream order by h.depth desc, m.line, m.block) as n,
+       m.at, m.who, m.kind, m.tool, m.failed, m.side, m.text, m.call_id
+from chain h
+join written s on s.session_id = h.session_id
+join public.messages m on m.session_id = h.session_id and m.stream = h.stream and m.chunk_id = h.chunk_id
+where m.shape = 1;
+
+revoke all on public.transcript from public, anon, authenticated;
+grant select on public.transcript to service_role;
+-- From PostgreSQL 15 a view can read as the one who asks, which is what Supabase's advisor wants of a view.
+do $$ begin
+  if current_setting('server_version_num')::int >= 150000 then
+    execute 'alter view public.transcript set (security_invoker = true)';
+  end if;
+end $$;
