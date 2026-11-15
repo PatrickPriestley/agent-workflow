@@ -60,7 +60,7 @@ Test first: 9 assertions failed before the fix (the address or the token in the 
 each of the three texts; a traceback for the odd row), committed red, then the fix.
 Tests for the last pass were added after: a grader's name and a skill's name in the
 coverage table, on the page with score rows and on the page without. The suite is at
-355; transcripts-grade 212.
+356 (355 when this was built; a change merged since added one); transcripts-grade 212.
 
 Guards, each broken by hand in a clone of the repository: 7 breaks. Four were caught:
 the last pass taken off either page, the odd evidence used as it is, an object's
