@@ -402,6 +402,22 @@ chat, 2026-11-15.
   last 20,000 characters are held. Rejected: collecting it all and cutting it afterwards,
   as it was: a script that prints for ever would fill the tool's memory before its two
   minutes were up.
+- Decided from the second review of pull request 1 (the same reviewer, on the fix above).
+  The reviewer's settings say `allowUnsandboxedCommands` false. Claude Code's Bash tool
+  takes a parameter that asks for a command to run outside the sandbox, the reviewer is
+  started with an allow rule for Bash, and the documentation says a matching allow rule
+  approves such a command with no prompt. The version probed refused it all the same
+  (Outcome); with the setting the parameter is ignored, whatever a version does.
+  Rejected: an ask rule for the parameter, which leaves it honoured and relies on there
+  being nobody to ask.
+- Decided from the same review. A folder a script ran in is compared with the clean clone
+  entry by entry, stopping at the first that differs, and a file is read only if it has
+  the size it had in the clean clone, a piece at a time. It was read whole, every file: a
+  script that left a file of 64 GB, which costs it nothing to make, would have ended the
+  tool. Rejected: a limit on the size of what is read, a number to choose; the clean
+  clone's own size is a limit that needs none. Left as it is: in its two minutes a script
+  can still fill the disk, or leave a folder of very many entries, which are listed
+  before the first is looked at.
 - Decided while building task 2. The base clone is cut from the clean clone at the last
   commit, of which the base is an ancestor, and the reviewer works in a copy of that clean
   clone, so the tool runs the scripts where the reviewer never wrote. A review is kept for
@@ -694,7 +710,45 @@ held, all of it returned, no stop at the time limit. Two survived and were gaps 
 tests: a new, empty folder, and a file swapped for a link to a tracked twin, each left
 by no script of the stand-in. Both now have one, and both breaks are caught.
 
-Spent on this task: $0.63. Not done here: the report and the sheet do not show the measure
-yet (task 3); no defect has been ruled and Opus has not been run (task 4). Not verified:
-a Mac, where no box can start; and the Linux runner's box, which the first CI run on this
-pull request will show.
+After the second review, of the fix (2026-11-15): three more findings. They are a pull
+request of their own, the first being at 996 of the 1,000 lines one may add.
+
+- The reviewer could ask for a command outside the sandbox. Not reproduced. Claude Code
+  2.1.325, eight Haiku sessions started as the reviewer is, each told to call Bash with
+  `dangerouslyDisableSandbox` true and a command that writes beside its folder. With the
+  settings as they were and the allow rule `Bash`, `Bash(*)`, `Bash(echo *)` or none,
+  with a redirection in the command and without, every call was refused ("Run outside
+  of the sandbox") and wrote nothing. With `allowUnsandboxedCommands` false the
+  parameter was ignored and the command ran in the sandbox: its write beside its folder
+  failed (`Read-only file system`). The documentation (code.claude.com/docs/en/sandboxing,
+  read that day): "An allow rule that matches a command also approves an unsandboxed
+  retry of it". The setting is now false.
+- What a script left was read whole into memory. Real; fixed as Decisions say.
+- Opus had not been run by the tool. It has now, on the commits Sonnet was given:
+
+```
+$ transcripts judge --review <scratch> --repo-dir <the repository> --model opus --session 478c69ad-c140-52b9-b9af-9b4e789004d1
+transcripts: 1 session to review with Claude Opus, 2 calls (1 to check the sandbox), at most $1.55: 478c69ad
+478c69ad review: 2 defects shown (1 data lost or leaked, 1 stated guarantee broken)
+transcripts: opus reviewed 1 session into <scratch>/reviews, $1.12
+real    3m46.220s
+```
+
+  24 commands, 18 experiments, 2 suspicions it made no script of, none naming the
+  repository. `c8c9f8` (an address in an evidence key reaches the report) is one the
+  report's own fix closes. `e623ab` (with `--store`, a session known only from the
+  store's rows gets no measured error though its transcript is in the folder) exits 0 on
+  today's `main` as well, run in the box by this session, and goes on the list.
+
+Test first: 2 assertions failed before the fix. The suite is at 342. Guards, each broken
+by hand in a clone of the repository: 8 breaks (the setting taken out, the setting true,
+a file of another size read, a file read whole, a new entry read before it is found new,
+an entry that is gone, a changed file of the same size, the whole folder read before
+comparing).
+The first run caught 7. The last survived: the test called the comparison itself, so
+nothing showed that a script's run uses it. The test now goes through a script's run, and
+all 8 are caught.
+
+Spent on this task: $1.78 ($0.63, then $1.12 for Opus and $0.03 for the probes). Not done
+here: the report and the sheet do not show the measure yet (task 3); no defect has been
+ruled (task 4). Not verified: a box on a Mac, where none can start.

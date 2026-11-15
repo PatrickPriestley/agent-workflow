@@ -430,7 +430,8 @@ What the reviewer and its scripts can reach:
 
 - The reviewer works in a scratch clone that holds the history up to the session's last commit
   and nothing else: no remote, no ref, no later commit, so a later fix cannot be read from it.
-- It runs in Claude Code's sandbox with reading the repository and the archive denied. Before
+- It runs in Claude Code's sandbox, with no leave to ask for a command outside it and with
+  reading the repository and the archive denied. Before
   the first review of a run, one Haiku call checks that the sandbox holds: a write beside the
   reviewer's folder and a read of the repository must both fail, or nothing is reviewed. In the
   sandbox it has no network and can write only in its clone and in the sandbox's own temporary

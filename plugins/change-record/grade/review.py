@@ -4,8 +4,9 @@ docs/changes/2026-11-15-checkable-judges.md, R2, R3 and R7).
 A measure, not a verdict. For a session's own commits, base..last, a fresh Claude session with a
 shell, Read, Grep and Glob is given the brief in briefs/review.md, which demands a method, in a
 scratch clone that holds the history up to the last commit and nothing else: no remote, no ref,
-no later commit. It runs in Claude Code's sandbox, with reading the repository and the archive
-denied; before the first review of a run one Haiku call checks that the sandbox holds.
+no later commit. It runs in Claude Code's sandbox, with no leave to ask for a command outside
+it and with reading the repository and the archive denied; before the first review of a run one
+Haiku call checks that the sandbox holds.
 
 The reviewer leaves each defect as a script, .review/<name>.sh. Nothing it says is taken on
 trust. The tool copies the scripts out and runs each one itself, from the root of a clean clone,
@@ -21,8 +22,9 @@ started the caller has to say --local, and they run with the caller's own access
 The tool runs no git in a folder a script has been in. A script can write its clone's git
 configuration, and git runs commands that configuration names (core.fsmonitor on a status):
 that would be the script's command, run by the tool, outside the box. So each script gets a copy
-of the clean clone to run in, the copy is compared with the clean clone by reading its files,
-and it is thrown away. What a script prints is read as it comes and only its end is kept.
+of the clean clone to run in, the copy is compared with the clean clone by reading its files
+(no more of them than the clean clone held: a script can leave a file of any size), and it is
+thrown away. What a script prints is read as it comes and only its end is kept.
 
 A shown defect's id is the first six hex digits of the SHA-256 of its script, so that a person's
 ruling names the defect and not its place in a list.
