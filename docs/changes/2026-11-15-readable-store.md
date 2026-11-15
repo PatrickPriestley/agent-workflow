@@ -180,24 +180,35 @@ machine that holds the read key.
   With the read key it reads every chunk (of the named sessions, or all), leaves out and
   names one whose bytes do not match its id, reads its rows as R4 says, reads the keys of
   the rows the table has for that chunk and `SHAPE`, and inserts the rows that are
-  missing, in requests whose body is at most 1,000,000 bytes (a row that is more goes
-  alone). It prints the chunks read, the rows inserted, the chunks that needed none, and
+  missing. A chunk's rows are cut into requests by one rule that `push` shares: in order,
+  each request's body at most 1,000,000 bytes, a row that is more alone; so the requests
+  of a chunk are the same whoever sends them. A request none of whose rows is there is
+  sent whole; one some of whose rows are there has its missing rows sent one at a time,
+  so that the command never leaves a request half there by its own doing. It prints the
+  chunks read, the rows inserted, the chunks that needed none, and
   each chunk it could not fill with the store's answer, and exits 1 if there is one or a
   chunk was left out. After a change of `SHAPE` the same command writes the new shape's
   rows for every chunk. Check: the store suite against the stand-in: a store with chunks
   and no rows is filled; a second run inserts nothing; a chunk whose lines give no row is
   counted as needing none both times; a chunk with one row already there gets the
-  others; a tampered chunk is named and left out; without the read key it refuses.
+  others, one at a time; a tampered chunk is named and left out; without the read key it
+  refuses; and the requests it sends for a chunk are, body for body, the ones `push`
+  sends for it.
 - R6. `transcripts messages --check` changes nothing: for each chunk as in R5 it compares
   the rows the table holds with the rows the chunk gives and prints each row that is
   missing, each that is there and should not be, and each whose text or fields differ,
   and exits 1 if there is one. Check: the same suite: a filled store is clean; a row
   planted before the fill, a row planted under the same key with another text, and a row
   left out are each reported.
-- R7. `transcripts push` sends a chunk's rows after the chunk, batched as in R5, each
-  request whether or not the store already had the chunk; a 409 means that request's
-  rows are there (R3: a request is all or none). Rows never hold back a chunk, a part or
-  the index row. When a request of rows is refused, whatever the answer, or gets no
+- R7. `transcripts push` sends a chunk's rows after the chunk, in the requests of R5,
+  each request whether or not the store already had the chunk. A request is all or none
+  (R3), and both senders write whole requests, so a 409 means the request is there,
+  unless another hand wrote one of its rows (C9). The push cannot read, so it tells the
+  two apart by the chunk: for a chunk it has just stored, nothing of its own can be
+  there, and a 409 is followed by that request's rows one at a time, each 409 counted as
+  stored; for a chunk the store already had, a 409 is taken as there, and what another
+  hand left missing is for `transcripts messages`, which can read. Rows never hold back a
+  chunk, a part or the index row. When a request of rows is refused, whatever the answer, or gets no
   answer, the push goes on to the next chunk, and the part's number is kept in the
   session's sent state as owing rows. A session that owes rows counts as unsent, and
   each later push sends an owing part's rows again, chunk by chunk as it was first cut,
@@ -205,7 +216,11 @@ machine that holds the read key.
   says how many parts owe rows; its exit status is what it would have been. The push's
   own time limit ends it as today, wherever it falls; the part it was in is sent again,
   rows and all. Check: the store suite: after a push the rows are there and `--check` is
-  clean; a second push sends nothing; with the stand-in answering 404 to `messages` (the
+  clean; a second push sends nothing; with one row of a new chunk's request planted
+  before the push, the push sends that request's rows one at a time and the others are
+  there; with one row of an owing part's request planted, the push takes the 409 and
+  strikes the part off, `--check` names the rows that are missing, and `transcripts
+  messages` fills them; with the stand-in answering 404 to `messages` (the
   SQL not yet run) the chunks and the index row are stored, `materialize` rebuilds the
   session, the exit status is 0, the last line names one part owing, and a push after
   the stand-in takes rows fills it and `--check` is clean; the same with 503 on the
@@ -301,8 +316,10 @@ exists. It is the one place where C1's "whole" does not hold.
 
 ### C9: whoever holds the hooks' key can write what the owner reads
 The hooks' key can already insert a made-up session. With this table it can also insert a
-row that the chunk does not bear out, before the honest sender does, and the honest
-request is then answered 409 and its other rows wait for `transcripts messages`.
+row that the chunk does not bear out, before the honest sender does. The honest sender's
+request is then answered 409: for a chunk it has just stored it sends the rows one at a
+time, so only the planted row stands; for a chunk the store already had, the request's
+other rows wait for `transcripts messages` (R7).
 Recommended and ruled: accept it, as for sessions: the key is on the owner's machines only, the
 view reads one named shape, so rows under another are not shown, and `transcripts
 messages --check` (R6) reports every row the chunks do not bear out. What it costs:
@@ -336,11 +353,17 @@ view does not share the fault.
   missing from the store itself. Rejected: the command alone, which leaves a gap until
   someone with the read key acts (found by the review); and the sender's memory alone,
   which another machine's gap, or a planted row, would escape.
-- Every request of rows is sent whether or not the chunk was new, and a 409 is taken as
-  stored. Rejected: sending only the first request for a chunk the store had, which
-  loses the second request of a chunk whose push was stopped between the two (found by
-  the review); and sending a refused request's rows one by one, which is thousands of
-  requests.
+- Every request of rows is sent whether or not the chunk was new. The requests of a
+  chunk are cut by one rule for `push` and `transcripts messages`, and the command sends
+  either a whole request or single rows, so that nothing the tool does leaves a request
+  half there. A 409 on a chunk just stored is followed by the rows one at a time; on a
+  chunk the store had, it is taken as there. Rejected: sending only the first request
+  for a chunk the store had, which loses the second request of a stopped push (found by
+  the record's review); rows one at a time after every 409, which is thousands of
+  requests each time a stopped part is sent again; and a 409 always taken as there,
+  under which a push whose request shared one row with what was there would strike its
+  part off with the other rows missing (found by the review of the approval pull
+  request).
 - Limits are counted in the bytes of a request's body, as `request` writes it: 1,000,000
   for a request of several rows, 3,000,000 for one text. Rejected: characters, of which
   one can be 12 bytes (found by the review); one request a chunk, which a single long
@@ -442,6 +465,13 @@ index row (C10).
 
 Not fixed, and why: nothing can stop someone changing the rule that reads rows together
 with its fixture and leaving `shape` as it was (Decisions).
+
+The review of the approval pull request, by another model family (pr-agent, 2026-11-15):
+one finding, right. R7 took every 409 on a request of rows as the request being there,
+and the command filled missing rows in requests of its own cutting, so a push could
+strike a part off with rows missing. The two senders now cut a chunk's rows by one rule,
+the command sends whole requests or single rows, and a 409 on a chunk just stored is
+followed by the rows one at a time (R5, R7, Decisions).
 
 ## Appendix A: the table and the view, as run in the probe
 
