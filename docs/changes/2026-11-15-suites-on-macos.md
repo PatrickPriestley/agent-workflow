@@ -105,8 +105,45 @@ The test wrote `[A-Za-z]{2,}`; Python was given `[A-Za-z]2`. The program was a
 here-document inside `"$( )"`, and bash 3.2 on the runner expanded the braces. So the
 difference was in the test, on one shell, and the tool redacts addresses on macOS as on
 Linux. The cause was not found by reading: it took two runs on the runner, each made to
-say more. That the fix holds there is shown by the macOS job of the pull request that
-carries it.
+say more.
+
+The final code on the runner: the `change-record (macos-latest)` job of pull request 3,
+run 43735201071, at `f636d1d` merged into `main` (macOS 26.7.2, bash 3.2.57, Python
+3.15.2). It is green, and its log holds no `FAIL` line:
+
+```
+$ bash plugins/change-record/bin/record-check.test.sh
+passed=117 failed=0                 (19 seconds; it had taken 220 to 300)
+$ bash plugins/change-record/bin/transcripts-store.test.sh
+  ok   addresses are redacted exactly as the one pattern redacts them: 30,000 made-up strings and the hard cases
+passed=156 failed=0
+$ bash plugins/change-record/bin/transcripts-judge.test.sh
+  ok   the brief is Appendix A of the record, word for word
+transcripts judge and report: 283 passed, 0 failed
+$ bash plugins/change-record/outcome-evals/run.test.sh
+  ok   OLDPWD is dropped whatever it holds, since a link to this repository would not look like its path; PWD is the scratch repository
+passed=91 failed=0
+```
+
+The other suites of the job pass as before (red-check 107, dispatch 218, record-review 81,
+transcripts 350, transcripts-grade 212, the eval cases 40, the checks' selftest 175). The
+32 assertions that a suite "stops when it cannot make its temporary folder" are all `ok`
+there.
+
+The error path, which is what those assertions guard, against the final code in this
+container: a suite given a `mktemp` that fails stops before its first assertion and leaves
+the folder it was started in alone.
+
+```
+$ PATH=<a mktemp that fails>:$PATH bash plugins/change-record/bin/transcripts-store.test.sh
+mktemp: made to fail
+cannot make a temporary folder
+exit 1; lines of ok printed: 0; files changed in the folder it was started in: 0
+$ PATH=<a mktemp that fails>:$PATH bash plugins/change-record/bin/transcripts-judge.test.sh
+mktemp: made to fail
+cannot make a temporary folder
+exit 1; lines of ok printed: 0; files changed in the folder it was started in: 0
+```
 
 Not done: other here-documents inside `"$( )"` were not searched for a brace word of
 that kind; the suites that pass on the runner hold none that changes a result.
