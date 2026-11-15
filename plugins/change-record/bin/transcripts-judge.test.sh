@@ -1170,11 +1170,11 @@ it "R2: the brief is grade/briefs/review.md with the two commits, which is Appen
 assert_eq "$(sed "s/@BASE@/${VB:0:10}/g; s/@HEAD@/${VL:0:10}/g" "$here/../grade/briefs/review.md" 2>&1)" "$(rl 'c[1]["prompt"].rstrip("\n")')"
 assert_eq "$(sed -n '/^## Appendix B/,/^## Outcome/p' "$here/../../../docs/changes/2026-11-15-checkable-judges.md" | sed -n 's/^    //p; /^$/p' | sed -e '1,/./{/^$/d}' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')" "$(cat "$here/../grade/briefs/review.md" 2>&1)"
 lacks "$(rl 'c[1]["prompt"]')" "$RV"
-it "R2: its settings turn the sandbox on and deny reading the repository, the archive and the settings themselves"
-assert_eq "True True True True" "$(py -c '
+it "R2: its settings turn the sandbox on, with no leave to run a command outside it, and deny reading the repository, the archive and the settings themselves"
+assert_eq "True False True True True" "$(py -c '
 import json,sys
 c=[json.loads(l) for l in open(sys.argv[1])]; s=json.loads(c[1]["settings"]); deny=s["permissions"]["deny"]; a=c[1]["argv"]
-print(s["sandbox"]["enabled"], "Read(/%s/**)" % sys.argv[2] in deny, "Read(/%s/**)" % sys.argv[3] in deny, "Read(/%s)" % a[a.index("--settings")+1] in deny)' "$RLOG" "$RV" "$VAR")"
+print(s["sandbox"]["enabled"], s["sandbox"].get("allowUnsandboxedCommands"), "Read(/%s/**)" % sys.argv[2] in deny, "Read(/%s/**)" % sys.argv[3] in deny, "Read(/%s)" % a[a.index("--settings")+1] in deny)' "$RLOG" "$RV" "$VAR")"
 it "R2: it does not inherit the caller's archive, session or other variables"
 assert_eq "None None" "$(rl 'str(c[1]["env"]["AGENT_TRANSCRIPTS"]) + " " + str(c[1]["env"]["CLAUDE_CODE_SESSION_ID"])')"
 it "R3: a defect is shown only if its script exits 0 at the last commit and not at the base, and leaves the clone as it was"
@@ -1254,6 +1254,32 @@ import review
 tracemalloc.start()
 code, out = review.run_script(sys.argv[1], sys.argv[2], [], False, 2)
 print(code, len(out) <= review.OUTPUT_CAP, tracemalloc.get_traced_memory()[1] < 5_000_000)' "$TMPROOT/noisy.sh" "$TMPROOT/noisy-clone" 2>&1)"
+it "what a script left is compared without reading more than the clean clone held: a new file, or one of another size, is not read, in whichever order the folder is listed"
+want="False True True True True | read: the file as it was, no new file, no grown file, the file with another byte"
+assert_eq "$want / $want | small" "$(cd "$here/../grade" && python3 -B -c '
+import os, sys, tracemalloc
+sys.dont_write_bytecode = True
+import review
+work, clean, x_at = sys.argv[1], sys.argv[1] + "/clean", "printf x | dd bs=1 conv=notrunc 2>/dev/null seek=%d of=%s"
+os.makedirs(clean); os.system("cd %s && %s" % (clean, x_at % (1 << 25, "big"))); was = review.tree_state(clean)
+read, entry, entries = [], review.entry, review.entries
+def noting(path, like=None):
+    got = entry(path, like)
+    read.extend([os.path.basename(path)] if got[0] == "file" and got[2] else [])
+    return got
+review.entry = noting
+def after(command):   # (whether the tool finds the clone changed after a script that runs the command, the files it read)
+    open(work + "/left.sh", "w").write(command + "\n"); del read[:]
+    return review.try_script(work + "/left.sh", clean, was, work, [], False, 60)[2], list(read)
+def one(order):       # a file system lists a folder in an order of its own: the new file before the old one, or after it
+    review.entries = lambda root: sorted(entries(root), reverse=order)
+    same, new, grown, gone, byte = after("true"), after(x_at % (1 << 31, "new")), after(x_at % (1 << 31, "big")), after("rm big"), after(x_at % (8, "big"))
+    return "%s %s %s %s %s | read: %s, %s, %s, %s" % (
+        same[0], new[0], grown[0], gone[0], byte[0], "the file as it was" if same[1] == ["big"] else same[1],
+        "no new file" if "new" not in new[1] else "the new file", "no grown file" if not grown[1] else "the grown file",
+        "the file with another byte" if byte[1] == ["big"] else byte[1])
+tracemalloc.start()
+print(one(False), "/", one(True), "| small" if tracemalloc.get_traced_memory()[1] < 5_000_000 else "| too much held")' "$TMPROOT/left" 2>&1 | tail -1)"
 it "more than ten sessions are not reviewed in one run"
 out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out" "at most 10"
 
