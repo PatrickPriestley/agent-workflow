@@ -89,5 +89,52 @@ an error text's line break becomes a heading (not fixed here)
 The skill name in the headings has no script of the reviewer's own; the suite's
 assertion for it failed before the fix and passes now.
 
+The report itself, asked for by the review of the pull request (2026-11-15), with the
+code of `main` (`a2e05db`) and of this change's last commit, each in a clone. `<leaky>` is
+a copy of `grade/fixtures/report` in which `jane.doe@example.org` was put into one
+session's skill name, into an evidence key of its failed row, and into the name of the
+tool of the call that row cites; `<odd>` is a copy in which that row's evidence is a list.
+
+```
+== main
+$ transcripts report <leaky> --labels <leaky>/labels | grep -n 'jane.doe\|redacted:email'
+5:## change, by jane.doe@example.org, blob unknown
+54:### change, by jane.doe@example.org, blob unknown
+189:- vote 2, pass: One Decision rejects a config file, as <redacted:email> asked.
+226:### change, by jane.doe@example.org, blob unknown
+234:Its evidence: record none; note for jane.doe@example.org x.
+236:first_code_write (greet.py), **[1] Write_jane.doe@example.org** `c1` /work/made-up/greet.py:
+exit 0; lines with the address: 5
+$ transcripts report <odd> --labels <odd>/labels
+AttributeError: 'list' object has no attribute 'get'
+exit 1; lines printed: 0
+
+== this change
+$ transcripts report <leaky> --labels <leaky>/labels | grep -n 'jane.doe\|redacted:email'
+5:## change, by <redacted:email>, blob unknown
+54:### change, by <redacted:email>, blob unknown
+189:- vote 2, pass: One Decision rejects a config file, as <redacted:email> asked.
+226:### change, by <redacted:email>, blob unknown
+234:Its evidence: record none; note for <redacted:email> x.
+236:first_code_write (greet.py), **[1] <redacted:email>** `c1` /work/made-up/greet.py:
+exit 0; lines with the address: 0
+$ transcripts report <odd> --labels <odd>/labels
+exit 0; lines printed: 234; line 230: fields/1 says fail: it gives no reason
+```
+
+The error paths, the same with both:
+
+```
+$ transcripts report <an empty folder>
+transcripts: no score rows in <scratch>/empty/scores and no session in <scratch>/empty/sessions; run transcripts grade first
+exit 1
+$ transcripts report <leaky> --labels <no such folder>
+transcripts: no labels folder at <scratch>/no-such
+exit 2
+```
+
+In the tool name the address takes the `Write_` before it: `_` is a letter of an address
+to the redactor, as the suite's own assertion notes.
+
 Not done: the stray heading. Not checked: the sheet (`transcripts sheet`), which prints
 the same kinds of text by its own code.
