@@ -737,22 +737,36 @@ json.dump(dict(doc, points=0), open(f"{d}/repeats/e6000000-0000-0000-0000-000000
 os.makedirs(f"{d}/reviews/e6000000-0000-0000-0000-000000000006/sonnet"); os.makedirs(f"{d}/reviews/{r1}/opus")
 json.dump({"status": "reviewed", "defects": [], "changed_lines": 0}, open(f"{d}/reviews/e6000000-0000-0000-0000-000000000006/sonnet/review.json", "w"))
 json.dump({"status": "reviewed", "defects": "many"}, open(f"{d}/reviews/{r1}/opus/review.json", "w"))
+# a review that is no object, and an answer whose status is no text
+os.makedirs(f"{d}/reviews/e6000000-0000-0000-0000-000000000006/opus")
+json.dump(["no", "review"], open(f"{d}/reviews/e6000000-0000-0000-0000-000000000006/opus/review.json", "w"))
+json.dump({"status": 7}, open(f"{d}/repeats/e5000000-0000-0000-0000-000000000005.json", "w"))
 os.makedirs(f"{d}/reviews/{r4}/opus")
 json.dump({"status": "reviewed", "defects": ["x", {"status": "shown"}], "changed_lines": "lots"}, open(f"{d}/reviews/{r4}/opus/review.json", "w"))
 PY2
 r="$(report "$TMPROOT/leak3" 2>&1)"; rc=$?
 assert_eq 0 "$rc"; lacks "$r" "$EMAIL"; lacks "$r" "Traceback"
-has "$r" "Not counted: b4000000 (malformed: refused, see <redacted:email>); e7000000 (not what the measure writes); e8000000 (not what the measure writes); odd (not an answer)."
-has "$r" "Not counted: a1000000 sonnet (looked outside); a1000000 opus (not what the measure writes); b4000000 sonnet (error: no clone for <redacted:email>)."
+has "$r" "Not counted: b4000000 (malformed: refused, see <redacted:email>); e5000000 (no status); e7000000 (not what the measure writes); e8000000 (not what the measure writes); odd (not an answer)."
+has "$r" "Not counted: a1000000 sonnet (looked outside); a1000000 opus (not what the measure writes); b4000000 sonnet (error: no clone for <redacted:email>); e6000000 opus (not an answer)."
 has "$r" "b4000000 sonnet (error: no clone for <redacted:email>)"; has "$r" "| b4000000 | opus | unknown | 0 | - | none |"
 it "R4: lines that are unknown for one session are unknown for the sessions together; an answer for a session the folder does not know is shown apart"
 has "$r" "| Together (2) | opus | unknown | 2 | - | 1 data lost or leaked, 1 not named in the answer |"
-has "$r" "### Sessions with no index entry and no score row here"; has "$r" "| e9000000 | 5 | 0 | 0.00 |"; has "$r" "5 of 10 sessions here have a counted answer"
+has "$r" "### Sessions with no index entry and no score row here"; has "$r" "| e9000000 | 5 | 0 | 0.00 |"; has "$r" "5 of 11 sessions here have a counted answer"
 it "R4: an answer with no point has no share, and a review of no changed line has no rate"
 has "$r" "| e6000000 | 0 | 0 | - |"; has "$r" "| e6000000 | sonnet | 0 | 0 | - | none |"
 it "R5: the sheet lists a session's pairs and its shown defects with their ids, redacted, and says how to rule them"
 copy sheets; R2=a2000000-0000-0000-0000-000000000002
-python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pairs"][1]["first"]="x" * 500; json.dump(d, open(p, "w"))' "$TMPROOT/sheets/repeats/$R3.json"
+python3 - "$TMPROOT/sheets" "$R3" <<'PY2'
+import json, sys
+d, r3 = sys.argv[1:]
+p = f"{d}/repeats/{r3}.json"; doc = json.load(open(p))
+doc["pairs"][1]["first"] = "x" * 500    # a long quote
+doc["pairs"][2]["again"] = 7            # a quote that is no text
+json.dump(doc, open(p, "w"))
+p = f"{d}/reviews/{r3}/opus/review.json"; doc = json.load(open(p))
+doc["defects"][1]["file"] = None        # a defect the reviewer named no file for
+json.dump(doc, open(p, "w"))
+PY2
 (cd "$TMPROOT" && "$T" sheet "$TMPROOT/sheets" --labels "$TMPROOT/sheets/labels" > /dev/null 2>&1)
 s3="$(cat "$TMPROOT/sheets/sheets/$R3.md" 2>&1)"; s1="$(cat "$TMPROOT/sheets/sheets/$R1.md" 2>&1)"; s2="$(cat "$TMPROOT/sheets/sheets/$R2.md" 2>&1)"
 has "$s3" "## Claims to rule"; has "$s3" "- \`cb33eb\`: \"Point 1 is made.\" and again \"Point 1, again.\""
@@ -765,6 +779,8 @@ has "$s1" "### Said again"; lacks "$s1" "### Defects shown"; has "$s2" "### Defe
 it "R5: what a reviewer said of a defect is redacted in the sheet, and a long quote is cut to 400 characters"
 lacks "$s2" "bob@example.org"; has "$s2" "\`5609ac\` (sonnet, wrong result, in greet.py): greets <redacted:email> by the wrong name"
 has "$s3" "- \`336aee\`: \"$(printf 'x%.0s' $(seq 400)) [...]\" and again"; lacks "$s3" "$(printf 'x%.0s' $(seq 401))"
+it "R5: a quote that is no text is shown as none, and a defect with no file names none"
+has "$s3" "- \`e6e1ee\`: \"Point 3 is made.\" and again \"\""; has "$s3" "- \`093586\` (opus, other): made up"
 it "R5: a session with no claim has no such section in its sheet"
 s5="$(cat "$TMPROOT/sheets/sheets/$R5.md" 2>&1)"; has "$s5" "# Label sheet: $R5"; lacks "$s5" "Claims to rule"
 it "a folder with no score rows is an error"
