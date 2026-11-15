@@ -602,6 +602,45 @@ it "R5: a vote that was not counted is shown as not counted, with why"
 has "$r" "- vote 3, not counted (malformed): no JSON, but <redacted:email>"
 it "R5: only the shell commands before the cited call are listed"
 lacks "$r" "after-the-code"
+it "R5, the texts it missed (record 2026-11-15-report-redaction): a row's skill name, an evidence key and a call's tool name are redacted too"
+copy leak2; python3 - "$TMPROOT/leak2" "$EMAIL" "$TOKEN" <<'PY2'
+import glob, json, os, sys
+d, email, token = sys.argv[1:]
+for p in glob.glob(os.path.join(d, "scores", "c5000000*.json")):
+    rows = json.load(open(p))
+    for r in rows:
+        r["skill"] = "change, Bearer " + token
+        if isinstance(r.get("evidence"), dict):
+            r["evidence"]["note for " + email] = "x"
+    json.dump(rows, open(p, "w"))
+p = glob.glob(os.path.join(d, "projects", "made-up", "a1000000*.jsonl"))[0]
+out = []
+for raw in open(p).read().splitlines():
+    o = json.loads(raw); c = (o.get("message") or {}).get("content")
+    for b in c if isinstance(c, list) else []:
+        if b.get("type") == "tool_use" and b.get("id") == "c1":
+            b["name"] = "Write_" + email
+    out.append(json.dumps(o, separators=(",", ":")))
+open(p, "w").write("\n".join(out) + "\n")
+PY2
+r="$(report "$TMPROOT/leak2" 2>&1)"
+lacks "$r" "$EMAIL"; lacks "$r" "$TOKEN"
+has "$r" "## change, Bearer <redacted:token>, blob"
+has "$r" "note for <redacted:email> x"
+has "$r" "Write_<redacted:email>** \`c1\`"
+it "a row whose evidence is not an object is reported like one with none: no traceback, and the report is printed"
+copy odd; python3 - "$TMPROOT/odd" <<'PY2'
+import glob, json, os, sys
+for p in glob.glob(os.path.join(sys.argv[1], "scores", "c5000000*.json")):
+    rows = json.load(open(p))
+    for r in rows:
+        if r["verdict"] == "fail":
+            r["evidence"] = ["not", "an object"]
+    json.dump(rows, open(p, "w"))
+PY2
+r="$(report "$TMPROOT/odd" 2>&1)"; rc=$?
+lacks "$r" "Traceback"; has "$r" "# Change skill report"; has "$r" "says fail: it gives no reason"
+assert_eq "0" "$rc"
 it "with no session judged by both, the report says the agreement check has not run yet"
 copy noag; rm -f "$TMPROOT"/noag/judges/*.opencode.json
 has "$(report "$TMPROOT/noag" 2>&1)" "The agreement check has not run yet"
