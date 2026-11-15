@@ -17,7 +17,7 @@ REAL_PATH="$PATH"
 # a suite that cannot make its temporary folder must not go on: TMPROOT would be the folder it was started in
 TMPROOT="$(mktemp -d)" && TMPROOT="$(cd "$TMPROOT" && pwd -P)" || { echo "cannot make a temporary folder" >&2; exit 1; }
 PIDS=""
-trap 'for p in $PIDS; do kill $p 2>/dev/null; done; rm -rf "$TMPROOT"' EXIT
+trap 'for p in $PIDS; do kill $p 2>/dev/null; done; rm -rf "$TMPROOT" ${VROOT:+"$VROOT"}' EXIT
 # await_port FILE: wait for a stand-in to write its port; say so when it is slow or never does.
 await_port() {
   local t=$SECONDS
@@ -67,6 +67,7 @@ if kind == "claude" and ("stream-json" in argv or "probe.sh" in prompt):
     #                 goes through; reads: the repository is read; norun: probe.sh is not run
     #   FAKE_REVIEW   ok (default): copies $FAKE_REVIEW_DIR/.review here and answers with its answer.json;
     #                 noanswer, error, slow (sleeps 30 s first). FAKE_REVIEW_CMD: a command it "ran".
+    #   FAKE_SERVED   the model that answered, when it is not the one asked for
     import shutil, subprocess, time
     def git(*a):
         return subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
@@ -96,13 +97,13 @@ if kind == "claude" and ("stream-json" in argv or "probe.sh" in prompt):
         time.sleep(30)
     src = os.environ.get("FAKE_REVIEW_DIR", "")
     if how == "ok" and os.path.isdir(os.path.join(src, ".review")):
-        shutil.copytree(os.path.join(src, ".review"), ".review")
+        shutil.copytree(os.path.join(src, ".review"), ".review", symlinks=True)
     print(json.dumps({"type": "system", "subtype": "init", "model": "claude-%s-5-5" % asked}))
     print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash",
                       "input": {"command": os.environ.get("FAKE_REVIEW_CMD", "git diff")}}]}}))
     answer = open(os.path.join(src, "answer.json")).read() if how in ("ok", "slow") else "I could not finish."
     print(json.dumps({"type": "result", "subtype": "success", "is_error": how == "error", "result": answer, "num_turns": 9,
-                      "total_cost_usd": 0.3, "modelUsage": {"claude-%s-5-5" % asked: {"outputTokens": 900}}}), flush=True)
+                      "total_cost_usd": 0.3, "modelUsage": {"claude-%s-5-5" % os.environ.get("FAKE_SERVED", asked): {"outputTokens": 900}}}), flush=True)
     sys.exit(1 if how == "error" else 0)
 def section(tag):
     m = re.search(r"<%s>(.*?)</%s>" % (tag, tag), prompt, re.S)
@@ -1058,7 +1059,9 @@ RAR2="$TMPROOT/rar2"; fresh "$RAR2" $J1; out="$(judge "$RAR2" --repo-dir "$REPO"
 echo "judge --review: the defects a reviewer that runs the code can show (record 2026-11-15-checkable-judges, R2, R3, R6, R7)"
 # A repository: a base commit, the session's commit (a crash when no name is given), a later fix the
 # reviewer must not see, and a line of its own that began after the session did.
-RV="$TMPROOT/rv"; mkdir -p "$RV"; (
+VROOT="$(mktemp -d /var/tmp/transcripts-review-test.XXXXXX)" && VROOT="$(cd "$VROOT" && pwd -P)" || { echo "cannot make a folder under /var/tmp" >&2; exit 1; }
+mkdir -p "$VROOT/home"; printf 'x\n' > "$VROOT/home/marker"
+RV="$VROOT/rv"; mkdir -p "$RV"; (
   cd "$RV" && git init -q -b main && git config user.email t@example.com && git config user.name t && git config core.hooksPath /dev/null
   printf 'import sys\nprint("Hello, " + (sys.argv[1] if len(sys.argv) > 1 else "world") + "!")\n' > greet.py
   git add -A && at 09 commit -qm init
@@ -1069,7 +1072,7 @@ RV="$TMPROOT/rv"; mkdir -p "$RV"; (
 )
 VB="$(git -C "$RV" rev-parse main~2)"; VL="$(git -C "$RV" rev-parse main~1)"; VLATER="$(git -C "$RV" rev-parse main)"; VO="$(git -C "$RV" rev-parse side)"
 V1=f1000000-0000-0000-0000-000000000001; V2=f2000000-0000-0000-0000-000000000002; V3=f3000000-0000-0000-0000-000000000003
-VAR="$TMPROOT/var"
+VAR="$VROOT/var"
 # vsession ID COMMIT|none: a session begun at 10:00 whose last stop was at COMMIT
 vsession() {
   rsession "$1" 10 "$RW/closing.md"
@@ -1086,18 +1089,20 @@ vsession $V1 "$VL"; vsession $V2 none; vsession $V3 "$VO"
 FRD="$TMPROOT/reviewer"; mkdir -p "$FRD/.review"
 crash='python3 greet.py %s 2>&1 | tail -1; python3 greet.py %s 2>&1 | grep -q IndexError'
 printf "# no name with --shout: a traceback\n$crash\n" --shout --shout > "$FRD/.review/defect-1.sh"
-printf 'echo always; exit 0\n' > "$FRD/.review/defect-2.sh"
+printf 'echo "always, says %s"; exit 0\n' "$EMAIL" > "$FRD/.review/defect-2.sh"
+ln -s /etc/hostname "$FRD/.review/link.sh"   # a link is not a script
 printf 'echo never; exit 1\n' > "$FRD/.review/defect-3.sh"
 printf 'sleep 60; exit 0\n' > "$FRD/.review/defect-4.sh"
 printf "echo x > left-behind.txt\n$crash\n" --shout --shout > "$FRD/.review/defect-5.sh"
 printf "# no name at all: the same crash, and the answer does not name this script\n$crash\n" "" "" > "$FRD/.review/extra.sh"
 cat > "$FRD/.review/box.sh" <<EOF
 # what a script can reach, and the crash, so that it counts
-(echo x > "$TMPROOT/outside-box") 2>/dev/null
+(echo x > "$VROOT/outside-box") 2>/dev/null
 [ -e "$RV/greet.py" ] && echo "repository: seen" || echo "repository: hidden"
 [ -e "$VAR/sessions" ] && echo "archive: seen" || echo "archive: hidden"
+[ -e "$VROOT/home/marker" ] && echo "home: seen" || echo "home: hidden"
 echo "variable: [\${SECRET_FROM_CALLER:-}]"
-python3 -c 'import urllib.request,sys; urllib.request.urlopen(sys.argv[1] + "/rest/v1/chunks", timeout=3)' "$URL" 2>/dev/null; [ \$? = 0 ] && echo "network: reached" || echo "network: none"
+python3 -c 'import socket,sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 3)' "${URL##*:}" 2>/dev/null; [ \$? = 0 ] && echo "network: reached" || echo "network: none"
 d=\$(mktemp -d) && echo "temporary folder: ok"
 python3 greet.py 2>&1 | grep -q IndexError
 EOF
@@ -1113,7 +1118,7 @@ Done.
  "unverified": ["a guess"], "experiments": ["tried no name", "tried two names"]}
 EOF
 RLOG="$FAKELOG.review"
-review() { (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$VAR" CLAUDE_CODE_SESSION_ID=caller SECRET_FROM_CALLER=hunter2 FAKE_LATER="$VLATER" FAKE_REVIEW_DIR="$FRD" \
+review() { (cd "$TMPROOT" && HOME="$VROOT/home" AGENT_TRANSCRIPTS="$VAR" CLAUDE_CODE_SESSION_ID=caller SECRET_FROM_CALLER=hunter2 FAKE_LATER="$VLATER" FAKE_REVIEW_DIR="$FRD" \
             AGENT_TRANSCRIPTS_SCRIPT_LIMIT=3 "$T" judge --review "$@" 2>&1); }
 rcalls() { [ -f "$RLOG" ] && wc -l < "$RLOG" | tr -d ' ' || echo 0; }
 rl() { py -c 'import json,sys; c=[json.loads(l) for l in open(sys.argv[1])]; print(eval(sys.argv[2], {"c": c, "json": json}))' "$RLOG" "$1"; }
@@ -1135,7 +1140,8 @@ has "$out" "${V2:0:8} not reviewed: no commit recorded for the session"; has "$o
 
 if [ $boxed = yes ]; then
 it "R6: before any call it prints the sessions, the calls (the sandbox check among them) and the most they can cost"
-rm -f "$TMPROOT/outside-box"; out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; rc=$?
+left() { ls -d "${TMPDIR:-/tmp}"/transcripts-review-* 2>/dev/null | wc -l | tr -d ' '; }; left_before="$(left)"
+rm -f "$VROOT/outside-box"; out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; rc=$?
 assert_eq "0 2" "$rc $(rcalls)"
 has "$out" "1 session to review with Claude Sonnet, 2 calls (1 to check the sandbox), at most \$1.55: ${V1:0:8}"
 it "R7: the first call checks the sandbox: Haiku, in the sandbox, told to run the tool's own probe"
@@ -1168,12 +1174,15 @@ lacks "$(cat "$VJ" 2>/dev/null)" "$EMAIL"; has "$(cat "$VJ" 2>/dev/null)" "<reda
 it "R3: the scripts and what they printed at each commit are kept under DIR/reviews/<session>/"
 assert_eq "$(cat "$FRD/.review/defect-1.sh")" "$(cat "$VAR/reviews/$V1/sonnet/scripts/defect-1.sh" 2>&1)"
 has "$(cat "$VAR/reviews/$V1/sonnet/runs/defect-1.sh.last.out" 2>&1)" "IndexError"; has "$(cat "$VAR/reviews/$V1/sonnet/runs/defect-1.sh.base.out" 2>&1)" "Hello, --shout!"
-it "R7: a script runs in a box: it cannot write outside its clone, see the repository or the archive, read the caller's variables or reach the network"
+it "R7: a script runs in a box: it cannot write outside its clone, see the repository, the archive or the home folder, read the caller's variables or reach the network"
 b="$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)"
-for x in "repository: hidden" "archive: hidden" "variable: []" "network: none" "temporary folder: ok"; do has "$b" "$x"; done
-[ -e "$TMPROOT/outside-box" ] && bad "the script wrote outside its clone" || ok
+for x in "repository: hidden" "archive: hidden" "home: hidden" "variable: []" "network: none" "temporary folder: ok"; do has "$b" "$x"; done
+[ -e "$VROOT/outside-box" ] && bad "the script wrote outside its clone" || ok
+it "R3: what a script printed is kept redacted, and a link among the scripts is not taken for one"
+o="$(cat "$VAR/reviews/$V1/sonnet/runs/defect-2.sh.last.out" 2>&1)"; lacks "$o" "$EMAIL"; has "$o" "always, says <redacted:email>"
+lacks "$(st)" "link.sh"; [ -e "$VAR/reviews/$V1/sonnet/scripts/link.sh" ] && bad "the link was copied" || ok
 it "nothing of the run is left in the temporary folder: the clones are gone"
-assert_eq "0" "$(ls -d "${TMPDIR:-/tmp}"/transcripts-review-* 2>/dev/null | wc -l | tr -d ' ')"
+assert_eq "$left_before" "$(left)"
 it "a session that has a review for this model, brief and commit is not reviewed again; --again reviews; another model's is kept apart"
 before="$(rcalls)"; out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $before" "$? $(rcalls)"; has "$out" "1 already reviewed"
 out="$(review "$VAR" --repo-dir "$RV" --session $V1 --model opus)"; assert_eq "0 $((before + 2))" "$? $(rcalls)"
@@ -1195,15 +1204,29 @@ for how in noanswer error slow; do
   assert_eq "1 $want 0" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"
 done
 before="$(rcalls)"; out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $((before + 2)) reviewed" "$? $(rcalls) $(rj "$VJ" 'd["status"]')"
-it "the reviewer must be the model asked for"
-out="$(FAKE_SCRIPT= review "$VAR" --repo-dir "$RV" --session $V1 --again --model haiku)"; assert_eq 2 "$?"; has "$out" "--model sonnet|opus"
+it "the reviewer must be the model asked for: an answer another model served is an error, and only sonnet or opus can be asked for"
+out="$(FAKE_SERVED=haiku review "$VAR" --repo-dir "$RV" --session $V1 --again)"; rc=$?
+assert_eq "1 error 0" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"; has "$out" "served by claude-haiku-5-5, not sonnet"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1 --again --model haiku)"; assert_eq 2 "$?"; has "$out" "--model sonnet|opus"
+it "a kept review is for the commit it was made at: when the session's last commit is another, it is reviewed again"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1 --again)"; before="$(rcalls)"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $before" "$? $(rcalls)"
+python3 - "$VAR/sessions/$V1.json" "$VLATER" <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1])); e["last_stop"]["commit"] = sys.argv[2]; json.dump(e, open(sys.argv[1], "w"))
+PY
+out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $((before + 2)) $VLATER" "$? $(rcalls) $(rj "$VJ" 'd["last"]')"
+python3 - "$VAR/sessions/$V1.json" "$VL" <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1])); e["last_stop"]["commit"] = sys.argv[2]; json.dump(e, open(sys.argv[1], "w"))
+PY
 else
   echo "  (no bwrap can start here: the boxed runs are not tested on this machine)"
 fi
 it "R7: with --local on a machine with no box the scripts run as the caller, and it says so"
-rm -f "$TMPROOT/outside-box"; out="$(PATH="$NOBOX:$PATH" review "$VAR" --repo-dir "$RV" --session $V1 --again --local)"; rc=$?
+rm -f "$VROOT/outside-box"; out="$(PATH="$NOBOX:$PATH" review "$VAR" --repo-dir "$RV" --session $V1 --again --local)"; rc=$?
 assert_eq "0 reviewed 3" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"; has "$out" "with your own access"
-[ -e "$TMPROOT/outside-box" ] && ok || bad "expected the unboxed script to have written outside its clone"
+[ -e "$VROOT/outside-box" ] && ok || bad "expected the unboxed script to have written outside its clone"
 has "$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)" "variable: []"
 it "more than ten sessions are not reviewed in one run"
 out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out" "at most 10"
