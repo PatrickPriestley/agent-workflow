@@ -387,6 +387,21 @@ chat, 2026-11-15.
 - An answer is kept until `--again`, and a review's answers are kept per model, so that
   rulings made on one run are not lost to the next and two models can be compared on the
   same sessions.
+- Decided from the review of pull request 1 (pr-agent on another model family, the first
+  review in CI of this repository, 2026-11-15). The tool runs no git in a folder a script
+  has been in. It had: after each script it ran `git status` in the script's clone, outside
+  the box, to see what the script changed, and a script can write that clone's git
+  configuration, where `core.fsmonitor` names a command git runs on a status. So a
+  script's command could run with the caller's access, which is the failure case C4 names,
+  by a way R7 did not think of. Each script now runs in a copy of the clean clone; the
+  copy is compared with the clean clone by reading its files, and thrown away; in the box
+  the clone's `.git` is read-only as well. Rejected: running git with the dangerous
+  settings turned off, which is a list to keep up with git; and running the comparison
+  inside the box, which still runs git on what a script wrote.
+- Decided from the same review. What a script prints is read as it comes and only its
+  last 20,000 characters are held. Rejected: collecting it all and cutting it afterwards,
+  as it was: a script that prints for ever would fill the tool's memory before its two
+  minutes were up.
 - Decided while building task 2. The base clone is cut from the clean clone at the last
   commit, of which the base is an ancestor, and the reviewer works in a copy of that clean
   clone, so the tool runs the scripts where the reviewer never wrote. A review is kept for
@@ -602,7 +617,7 @@ has been ruled (task 4).
 Built test first: 54 assertions of `bin/transcripts-judge.test.sh` failed before the code
 (`--review` a usage error), committed red, then `grade/review.py`, `grade/briefs/review.md`
 and `cmd_review` in `bin/transcripts`. The stand-in for `claude` gained a reviewer and a
-sandbox check that leave real files. Suites after: transcripts-judge 337, transcripts 350,
+sandbox check that leave real files. Suites after: transcripts-judge 337 (341 after the review, below), transcripts 350,
 transcripts-grade 212, transcripts-store 156, `bin/ci-workflow.test.sh` 17, none failing.
 
 Guards shown by breaking them by hand, one at a time: 55 breaks. The first run caught 43
@@ -657,6 +672,27 @@ transcripts: nothing was reviewed: the reviewer's sandbox does not hold: a write
 ```
 
 The check was right, and stopped before any review (Decisions).
+
+After the review of the pull request. The review job ran for the first time on
+2026-11-15, once the repository had its key, on a model of another family (pr-agent), and
+reported three things. Two were faults in this task's code, and neither the two
+fresh-session reviews of the record nor the 55 breaks by hand had found them:
+
+- A script could have its own command run outside the box. Shown before it was fixed, by
+  this session: `git status` in a clone whose configuration names a `core.fsmonitor`
+  command runs it (git 2.43); and with a test script that plants one, three assertions
+  failed: the planted command ran after a boxed run, after an unboxed run, and a
+  printing script's whole output was held. Fixed as Decisions say. The suite is at 341.
+- A script that prints without end was held in memory whole until its time ran out.
+  Fixed; the test measures the memory the tool takes, not only what it keeps.
+- The pull request showed no review by another model family. That review is this one.
+
+Guards for the fix, each broken by hand in a clone of the repository and not in the
+working tree: 8 breaks. Six were caught at once: the clone's `.git` writable in the box,
+the copy compared by asking git, a changed copy not noticed, all of a script's output
+held, all of it returned, no stop at the time limit. Two survived and were gaps in the
+tests: a new, empty folder, and a file swapped for a link to a tracked twin, each left
+by no script of the stand-in. Both now have one, and both breaks are caught.
 
 Spent on this task: $0.63. Not done here: the report and the sheet do not show the measure
 yet (task 3); no defect has been ruled and Opus has not been run (task 4). Not verified:
