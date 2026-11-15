@@ -749,6 +749,13 @@ The first run caught 7. The last survived: the test called the comparison itself
 nothing showed that a script's run uses it. The test now goes through a script's run, and
 all 8 are caught.
 
+The first CI run of that pull request failed this test on Linux and passed it on a Mac:
+the runner listed the clean clone's file before the new one, so the tool read it, rightly,
+before it found the new one, and the test had taken the order of this container's file
+system for the tool's. Shown here by listing the folder in the other order. The test now
+runs both orders and asks only that the new file and the grown file are not read; the 8
+breaks are still caught.
+
 Spent on this task: $1.78 ($0.63, then $1.12 for Opus and $0.03 for the probes). Not done
 here: the report and the sheet do not show the measure yet (task 3); no defect has been
 ruled (task 4). Not verified: a box on a Mac, where none can start.
