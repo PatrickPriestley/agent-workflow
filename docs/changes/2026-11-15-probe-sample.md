@@ -79,6 +79,42 @@ a text transcript's last line not counted
   fix/probe-sample   exit 1 | 4 {'assistant:': 1, 'user:': 1}
 ```
 
+The command itself, with the code of `main` (`a2e05db`) and of this change, each in a
+clone, the hook's input on standard input:
+
+```
+== main
+$ printf '{"hook_event_name":"stop","model":"db.internal.corp.example.com","source":"gpt-5.2-codex","transcript_path":null}' | transcripts probe --agent cursor --out <out>
+transcripts probe: no transcript file given (transcript_path is null)
+transcripts probe: wrote <out>/cursor-stop.json
+exit 0
+$ grep -n 'internal\|gpt-5.2' <out>/cursor-stop.json
+22:        "db.internal.corp.example.com": 1
+25:        "gpt-5.2-codex": 1
+$ the same with a text transcript of four lines, the last with no newline after it: 'user:', 'hello', '42', 'assistant: bye'
+lines: 3 | line_starts: {"user:": 1}
+
+== this change
+$ grep -n 'internal\|gpt-5.2' <out>/cursor-stop.json
+22:        "gpt-5.2-codex": 1
+$ the same with the text transcript
+lines: 4 | line_starts: {"assistant:": 1, "user:": 1}
+```
+
+The error path: the sample cannot take its place, because `<out>/cursor-stop.json` is a
+folder. The message and the exit status are the same with both (a hook must not fail
+its agent, so the status is 0); what is left behind is not:
+
+```
+$ printf '{"hook_event_name":"stop","model":"gpt-5.2-codex","transcript_path":null}' | transcripts probe --agent cursor --out <out>
+transcripts probe: no transcript file given (transcript_path is null)
+transcripts probe: cannot write the sample to <out>: Is a directory
+exit 0
+$ ls <out>
+main:         cursor-stop.json cursor-stop.json.tmp<pid>
+this change:  cursor-stop.json
+```
+
 Not done: one script of the sandboxed run exits 0 at the base as well (a line of JSON
 nested too deep to read ends the probe with no sample), so it was not counted as shown;
 it is true of `main` and is left on the list.
