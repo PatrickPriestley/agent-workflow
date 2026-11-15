@@ -1,9 +1,9 @@
 ---
 id: 2026-11-15-readable-store
 tier: 2
-status: open
-requester: Patrick Priestley, in chat on 2026-11-15 ("Is there a way for me to view these in supabase"; "I just want to see every session"; "Can I see transcriptions in supabase yet"; "Go ahead as recommended")
-approvers: []
+status: approved
+requester: Patrick Priestley, in chat on 2026-11-15 ("Is there a way for me to view these in supabase"; "I just want to see every session"; "Can I see transcriptions in supabase yet"; "Go ahead as recommended"; and on the six concerns the plan and its review raised, "As recommended")
+approvers: [Patrick Priestley, 2026-11-15]
 ---
 # A session's text can be read and searched in the store's dashboard
 
@@ -265,24 +265,25 @@ people. If the two ever disagree, the chunks are right, and R6 is how that is se
 Ruled: machines can only insert; reading is the dashboard or the read key. A reader of
 the table sees the same redacted text a reader of the chunks could already rebuild.
 
-Not yet put to the owner:
+Raised by the plan and its review, and ruled by the owner on 2026-11-15 after the second
+round ("As recommended"), each as recommended:
 
 ### C5: thinking and images are left out
-A transcript line can hold the model's thinking and images. Recommended: no row for
+A transcript line can hold the model's thinking and images. Recommended and ruled: no row for
 either, as the label sheet shows neither. What it costs: the dashboard does not show why
 the agent did something where only its thinking said so.
 
 ### C6: a push sends more, and the store grows faster
 For the chunks stored today the rows' request bodies are 16.1 MB beside 19.5 MB of
 chunks, so a push sends about 1.8 times the bytes inside the same 60 seconds; a part
-that does not finish is sent again at the next push, as today. Recommended: accept it,
+that does not finish is sent again at the next push, as today. Recommended and ruled: accept it,
 and time a push of the longest session in task 3's real use, with rows and without. If
 that push does not finish in its 60 seconds with rows and does without, rows come out of
 `push` (option F) in that same task. The free plan's database is said to hold 500 MB
 (not probed); removing old sessions is the owner's to do in the dashboard.
 
 ### C7: `push` writes rows as well as the command (raised by the review)
-Recommended: both, with R7's rule that rows never hold anything back and that a part
+Recommended and ruled: both, with R7's rule that rows never hold anything back and that a part
 whose rows were not stored is tried again at every later push. What it costs: more code
 in the path a hook starts; and between a failed request and the owing machine's next
 push, or a run of `transcripts messages` by someone with the read key, the dashboard
@@ -293,7 +294,7 @@ read in the dashboard until someone with the read key runs the command.
 
 ### C8: one text over 3,000,000 bytes is cut
 The largest request the store has been seen to take is 4 MB, and a single transcript line
-can be longer than that. Recommended: a text whose form in a request would be over
+can be longer than that. Recommended and ruled: a text whose form in a request would be over
 3,000,000 bytes is stored cut, with a last line saying so; the chunk still holds all of
 it. The largest row in the store today is 114,388 bytes, so this cuts nothing that
 exists. It is the one place where C1's "whole" does not hold.
@@ -302,14 +303,14 @@ exists. It is the one place where C1's "whole" does not hold.
 The hooks' key can already insert a made-up session. With this table it can also insert a
 row that the chunk does not bear out, before the honest sender does, and the honest
 request is then answered 409 and its other rows wait for `transcripts messages`.
-Recommended: accept it, as for sessions: the key is on the owner's machines only, the
+Recommended and ruled: accept it, as for sessions: the key is on the owner's machines only, the
 view reads one named shape, so rows under another are not shown, and `transcripts
 messages --check` (R6) reports every row the chunks do not bear out. What it costs:
 until someone runs the check, a planted row is read as the session's.
 
 ### C10: `materialize` stops for every session on one malformed index row
 Found by the review, true today and not caused by this change (Probed facts): the hooks'
-key, or a fault, can write an index row that ends every `materialize` run. Recommended:
+key, or a fault, can write an index row that ends every `materialize` run. Recommended and ruled:
 its own tier 1 change, next after this record's tasks; this record only makes sure the
 view does not share the fault.
 
@@ -425,7 +426,7 @@ three checks could not be carried out as written: there is a suite that runs the
 breaks ties the same way, hides what `materialize` refuses and survives a malformed row
 (R2); and R2's terms were left to guess: R4 names each field and form.
 
-Round two: 1 critical, 9 important, 7 minor; all fixed but one, which is put to the owner.
+Round two: 1 critical, 9 important, 7 minor; all fixed but one, which was put to the owner.
 Critical: a stream with no chunk yet hid its whole session from the view; such a stream
 is whole (R2), shown in the probe. Important: the rule for a chunk the store already had
 lost the second request of a stopped push: every request is sent (R7); limits were in
