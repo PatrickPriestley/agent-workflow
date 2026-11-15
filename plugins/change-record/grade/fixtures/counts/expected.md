@@ -33,3 +33,15 @@ Of 3 sessions here, 2 used a skill and 1 used none. A session used a skill when 
 |---|---|
 | change-record:change | 2 |
 | none | 1 |
+
+## Said again
+
+How much of a session's closing message says a point a second time, as Claude Sonnet took the message apart (`transcripts judge --repeats`). A pair is counted only when both of its quotes are in the message and differ. It is a count, with no label and no pass rate. No session here has a counted answer.
+
+Its error: not yet checked (0 of 10 ruled pairs needed). A person rules a pair by the id the session's sheet shows, in the session's label file: `said-again: wrong <id>... | right <id>...`; under 10 ruled, the measure is not yet checked.
+
+## Defects shown
+
+The defects a reviewer that runs the code could show in a session's own commits (`transcripts judge --review`): each is a script that exits 0 at the session's last commit and not at its base. The count is a floor: a reviewer shows different defects on different runs, so none shown is weak evidence of none. Changed lines are the lines added plus the lines removed between the base and the last commit, binary files left out. No label and no pass rate. No session here has a counted review.
+
+Its error: not yet checked (0 of 10 ruled defects needed). A person rules a defect by the id the session's sheet shows, in the session's label file: `defects: wrong <id>... | right <id>...`; under 10 ruled, the measure is not yet checked.

@@ -456,6 +456,22 @@ last commit, and is not made again without `--again`; one that did not finish (n
 error, past twenty minutes, looked outside) is kept as what it is and made again at the next
 run.
 
+**Checking the two measures.** Neither gives a verdict, so neither has a pass rate to be wrong
+about: what can be wrong is a claim. Each pair and each shown defect has an id made from its
+content, and a session's sheet (below) lists them under "Claims to rule". A person rules them
+in the session's label file:
+
+    said-again: wrong 4c9a82 | right 10fc48
+    defects: right e623ab
+
+The report gives each measure's error as the claims ruled wrong over the claims ruled, once
+ten are ruled; under ten it is "not yet checked". A ruling applies to whichever counted answer
+of the session holds the id, a review's from either model. One on an id no counted answer
+holds (the session was asked again and answered differently, the review looked outside its
+clone, the id is mistyped) is listed as stale and counted for nothing. An id that is not six
+hex digits, a word that is neither `wrong` nor `right`, an id ruled both ways, or a ruling
+with no name after `labelled-by:` rejects the label file, with the reason.
+
 **The agreement check.** `transcripts judge --judge opencode` asks `opencode-go/kimi-k3.1-pro`
 the same prompts through `opencode run`, with an agent that may use no tool and project config
 disabled (as `agent-review` runs it), for up to 10 sessions the Haiku judge judged on the same
@@ -477,6 +493,15 @@ in `<DIR>` and the labels in `grade/labels/` (or `--labels DIR`); `--store` adds
 `scores`, `judge_votes` and `sessions` rows, with the read key, and those sessions have no
 excerpt and no measured error unless their transcripts are in `<DIR>`. A rejected label file is
 listed, not counted, and makes the exit status 1.
+
+The report also has a section for each of the two measures, from `<DIR>/repeats/` and
+`<DIR>/reviews/`, per session and per skill version. **Said again**: points, pairs, and the
+share of points said again. **Defects shown**: per reviewer, the lines the session changed
+(added plus removed between its base and its last commit, binary files left out; "unknown"
+for a review kept from before they were counted), the defects shown, how many per 1,000
+changed lines, and their kinds. Neither has a label or a pass rate. An answer that was not
+counted is named with its reason. Under each stands the measure's error from the rulings,
+the claims ruled wrong, and the stale rulings.
 
 **What a session took, and which skills were used** (record
 `docs/changes/2026-11-12-session-quality.md`). The report also counts, from the transcripts in
@@ -568,7 +593,10 @@ To label, as the owner:
    session did, not what a grader could know. Where the sheet does not show enough to decide
    (the record at the last commit, for a fixture, which has no commit), answer `na` and say so.
 3. Write the verdicts in the session's label file, your name and the date after
-   `labelled-by:`, and commit the label files.
+   `labelled-by:`, and commit the label files. Where the sheet ends with "Claims to rule" (the
+   folder holds answers of `judge --repeats` or `judge --review` for the session), rule the
+   claims you checked on a `said-again:` and a `defects:` line. That section is the one part
+   of a sheet that shows what a model concluded, so it comes last: read the session first.
 4. Measure:
 
        transcripts accuracy --transcript plugins/change-record/grade/fixtures/*.jsonl.gz \

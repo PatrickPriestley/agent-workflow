@@ -7,3 +7,10 @@ pass), red-first by four (one a false fail, on a step that failed), the others b
 transcripts under `projects/` hold the calls the failed rows cite, with a made-up address and
 token for the redaction. `expected.md` is the report they must give, written by hand before the
 code and read line by line since.
+
+For record docs/changes/2026-11-15-checkable-judges.md, R4 and R5: `repeats/` and `reviews/`
+hold made-up answers of the two measures (three counted answers and one malformed; reviews by
+Sonnet and by Opus, one that looked outside its clone, one kept with no changed lines, one
+script that also passes at the base), and four label files rule their claims: ten pairs ruled,
+two of them wrong, and a ruling on an id nobody holds; three defects ruled, one wrong, one
+stale.

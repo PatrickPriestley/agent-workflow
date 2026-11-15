@@ -15,10 +15,15 @@ For each step whose latest row for a session, whatever the grader, is a fail, th
 what the session did: the grader's reason, the rest of the row's evidence, and the calls the
 evidence cites, each with a short excerpt from the transcript. It proposes no edit. Every text
 taken from a row, a label or a transcript passes through the caller's redaction.
+
+Two measures that give no verdict, how much a closing message says twice and the defects a
+reviewer could show, have a section each, with the measure's error from a person's rulings on
+its claims (claims.py; record docs/changes/2026-11-15-checkable-judges.md, R4 and R5).
 """
 import json
 from datetime import datetime, timezone
 
+import claims
 import fields
 import judge
 import labels
@@ -361,8 +366,10 @@ def coverage_section(used):
     return out
 
 
-def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of=None):
+def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of=None, answers=None):
     """The report as Markdown, or None when there is neither a score row nor a session.
+
+    answers: the kept answers of the two measures, as claims.py takes them.
 
     skills_of(lines): the skills a transcript shows used, for the coverage; without it only the
     index entries' lists count.
@@ -438,7 +445,8 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
             if key not in seen:
                 seen.append(key)
                 groups.append((key, by_start(s for s in everyone if of[s] == key)))
-        return counts_section(groups, taken, len(everyone), label, len(unreadable)) + coverage_section(used)
+        return (counts_section(groups, taken, len(everyone), label, len(unreadable)) + coverage_section(used)
+                + claims.sections(answers or {}, checked["labels"], groups, label, red))
 
     if not rows:
         return red("\n".join(["# Change skill report", "",

@@ -435,6 +435,21 @@ chat, 2026-11-15.
   outside the clone and a temporary folder" is true with that reading of "temporary
   folder", which is wider than the probe's words suggested. Not changed here: no setting
   to narrow it was probed.
+- Decided while building task 3. The lines a session changed are counted when its review
+  is made and kept in the review, since the report reads a folder and no repository; a
+  review kept from before says "unknown" and has no rate. A ruling counts by its id alone,
+  whatever transcript the label file was made from: the id is made from the claim. Only a
+  shown defect is a claim: a ruling on a script that was not counted is stale, as is one on
+  a review that looked outside its clone. A ruling needs the name after `labelled-by:`, as
+  a verdict does. The two sections are in every report, and say so when no session has an
+  answer, as the agreement check does. An answer for a session the folder has no index
+  entry and no score row for (`--repeats --transcript` leaves such) is shown under a
+  heading of its own. In the sheet the claims come last and are announced at the top: they
+  are the one part of a sheet that holds what a model concluded. A sheet made from a
+  transcript file alone has none, having no folder of answers. A new label file gets no
+  ruling line: the person adds one, as the sheet says. Rejected: a ruling by a claim's
+  place in the list, which the review of this record already ruled out; and an error per
+  session, which ten claims would seldom reach.
 - Decided while building task 2. The work moved to the public repository,
   `PatrickPriestley/agent-workflow`, on 2026-11-15 (the owner's ruling, in chat); its
   history is the private one's, cleaned, so commit ids in this record from before that day
@@ -759,3 +774,64 @@ breaks are still caught.
 Spent on this task: $1.78 ($0.63, then $1.12 for Opus and $0.03 for the probes). Not done
 here: the report and the sheet do not show the measure yet (task 3); no defect has been
 ruled (task 4). Not verified: a box on a Mac, where none can start.
+
+### Task 3: the report and the labels
+
+Built test first: the fixtures of the report gained made-up answers of both measures and
+ruling lines in four label files, and the two stored reports gained the two sections,
+written by hand; 62 assertions of `bin/transcripts-judge.test.sh` failed (the ruling lines
+were unknown lines, so the labelled sessions fell out of the old sections too), committed
+red, then `grade/claims.py`, the two lines in `grade/labels.py`, the sections in
+`grade/report.py`, the changed lines in `grade/review.py`, and `read_answers` in
+`bin/transcripts`. Suites after: transcripts-judge 408, transcripts 364, transcripts-grade
+212, transcripts-store 156, none failing.
+
+Guards, each broken by hand in a clone of the repository: 30 breaks, all caught at the
+first run. Four of them were written into tests before that run, when listing the breaks
+showed nothing would catch them: unknown lines counted as none in a sum, a session the
+folder does not know dropped, the sheet's note at its top, and a ruling with no name on a
+label that has a verdict anyway (the test used such a label, so it could not fail).
+
+Real use, in this container, on a copy of the archive of fifteen eval sessions labelled
+on 2026-11-12, with the three real answers of task 1 and the two real reviews of task 2:
+
+```
+$ transcripts report <copy>
+## Said again
+### change-record:change, blob unknown
+| Session | Points | Said again | Share |
+| 9d1fcbcc | 14 | 1 | 0.07 |
+| 831141da | 11 | 2 | 0.18 |
+| d7098b89 | 18 | 10 | 0.56 |
+| Together (3) | 43 | 13 | 0.30 |
+Its error: not yet checked (0 of 10 ruled pairs needed). [...]
+## Defects shown
+| Session | Reviewer | Changed lines | Defects shown | Per 1,000 lines | Kinds |
+| 478c69ad | sonnet | unknown | 1 | - | 1 stated guarantee broken |
+| 478c69ad | opus | unknown | 2 | - | 1 data lost or leaked, 1 stated guarantee broken |
+Its error: not yet checked (0 of 10 ruled defects needed). [...]
+$ transcripts sheet <copy> --session 831141da-14ca-4bb8-aa9f-19cf8e4df465 --labels <scratch>
+## Claims to rule
+- `4c9a82`: "I fixed the typo, but I couldn't commit it." and again "It's unstaged in the working tree."
+- `10fc48`: "in `README.md`, "greating" is now "greeting"" and again "Corrects a spelling mistake in the README's usage line: `prints a greating` is now `prints a greeting`."
+```
+
+Both reviews were made before the changed lines were kept, so they say "unknown";
+`review.changed_lines` on those commits in this repository gives 767, which is the 696
+added and 71 removed that `git diff --shortstat` prints. The error path, and a ruling, in
+a scratch label file that is not a person's and is not kept:
+
+```
+$ (said-again: wrong 4c9a8)
+transcripts: <scratch>/831141da-14ca-4bb8-aa9f-19cf8e4df465.txt: said-again: '4c9a8' is not a claim's id (six hex digits, as the sheet shows them); the file is rejected
+exit 1
+$ (said-again: wrong 4c9a82 | right 10fc48 abcdef)
+Its error: not yet checked (2 of 10 ruled pairs needed). [...]
+Ruled wrong: 831141da `4c9a82`.
+Stale rulings, not counted: 831141da `abcdef`. [...]
+```
+
+Not done here: no claim has been ruled by a person, so neither measure has an error yet
+(task 4). The sheet names a defect's script and its output by path and does not show
+them. Not checked: the report with `--store`, which brings no answers; they are read from
+the folder only.

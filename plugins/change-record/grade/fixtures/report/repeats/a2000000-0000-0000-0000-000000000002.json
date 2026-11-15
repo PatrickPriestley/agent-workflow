@@ -1,0 +1,23 @@
+{
+  "measure": "repeats/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "served_model": "claude-sonnet-made-up",
+  "cost_usd": 0.01,
+  "detail": null,
+  "answer": "(made up)",
+  "status": "counted",
+  "points": 4,
+  "pairs": [],
+  "said_again": 0,
+  "quotes_not_found": 0,
+  "same_quote_twice": 0,
+  "share": 0.0,
+  "session_id": "a2000000-0000-0000-0000-000000000002",
+  "message": {
+    "characters": 100,
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "entry": 3
+  },
+  "asked_at": "2026-11-12T09:00:00+00:00"
+}

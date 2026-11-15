@@ -1,0 +1,34 @@
+{
+  "measure": "repeats/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "served_model": "claude-sonnet-made-up",
+  "cost_usd": 0.01,
+  "detail": null,
+  "answer": "(made up)",
+  "status": "counted",
+  "points": 6,
+  "pairs": [
+    {
+      "id": "118957",
+      "first": "The tests pass.",
+      "again": "All tests are green."
+    },
+    {
+      "id": "36dac3",
+      "first": "Write to alice@example.org for the key.",
+      "again": "The key comes from alice@example.org."
+    }
+  ],
+  "said_again": 2,
+  "quotes_not_found": 1,
+  "same_quote_twice": 0,
+  "share": 0.33,
+  "session_id": "a1000000-0000-0000-0000-000000000001",
+  "message": {
+    "characters": 100,
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "entry": 3
+  },
+  "asked_at": "2026-11-12T09:00:00+00:00"
+}
