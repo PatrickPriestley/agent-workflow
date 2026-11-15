@@ -442,6 +442,9 @@ What the reviewer and its scripts can reach:
   the archive and your home folder hidden, the environment cleared. Where no box can be
   started (a Mac has no `bwrap`) it refuses, unless you pass `--local`: the scripts then run
   with your own access.
+- The tool runs no git in a folder a script has been in (a script could plant a command in the
+  clone's git configuration): each script gets a copy of the clean clone, compared by reading
+  its files and thrown away. Only the end of what a script prints is kept.
 - The reviewer reads the clone's files as they are, and what it reads goes to the model
   unredacted. Run it on sessions in repositories you already work in with Claude Code.
 
