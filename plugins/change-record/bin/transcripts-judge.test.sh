@@ -627,7 +627,7 @@ r="$(report "$TMPROOT/leak2" 2>&1)"
 lacks "$r" "$EMAIL"; lacks "$r" "$TOKEN"
 has "$r" "## change, Bearer <redacted:token>, blob"
 has "$r" "note for <redacted:email> x"
-has "$r" "Write_<redacted:email>** \`c1\`"
+has "$r" "] <redacted:email>** \`c1\`"   # the address takes the Write_ before it: _ is a letter of an address
 it "a row whose evidence is not an object is reported like one with none: no traceback, and the report is printed"
 copy odd; python3 - "$TMPROOT/odd" <<'PY2'
 import glob, json, os, sys

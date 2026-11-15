@@ -176,7 +176,8 @@ def compare(labels, here):
             for s in fields.STEPS:
                 verdict, reason = label["steps"][s]
                 row = rows.get(s)
-                ev = (row or {}).get("evidence") or {}
+                ev = (row or {}).get("evidence")
+                ev = ev if isinstance(ev, dict) else {}  # a row is whatever a file or the store holds
                 if verdict is None:
                     not_counted.append((sid, s, "not labelled yet"))
                 elif row is None:
