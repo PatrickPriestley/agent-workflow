@@ -835,3 +835,100 @@ Not done here: no claim has been ruled by a person, so neither measure has an er
 (task 4). The sheet names a defect's script and its output by path and does not show
 them. Not checked: the report with `--store`, which brings no answers; they are read from
 the folder only.
+
+After the review of pull request 6 (pr-agent, on `4ba7e58`, 2026-11-15; the pull request
+was merged before this answer was pushed, so it is a pull request of its own). No finding
+in the code. One on the evidence, and right: the 30 breaks above were a count with four
+names, and one guard had never been broken, the one that keeps no number when git cannot
+say what changed.
+
+Every `if`, early return and check the task added was then listed, 71 of them, and each
+broken by hand in a clone of the repository, with `transcripts-judge.test.sh` and, where
+that passed, `transcripts-grade.test.sh`. Before the run, 12 assertions were added for
+what the list showed nothing would catch: points that are no number, pairs that are no
+list, a pair with no id, an answer with no point, a review of no changed line, defects
+that are no list, a long quote, a defect's text in the sheet, the sheet's two parts each
+without the other, and git's failure. The run caught 67. Four survived, each a check on
+the shape of an answer that no test fed: a review that is no object, a status that is no
+text, a quote that is no text, a defect with no file. Each got an assertion, and the four
+were broken again: all 71 are caught. The suite is at 422.
+
+The guards by the assertion that failed first when each was broken:
+
+- Caught first by "exits 0 and matches the stored expected report": ruled: a stale right
+  ruling is not listed; ruled: a session with nothing ruled wrong is listed as such;
+  sections: one session gets a Together row; held: a ruling counts for Sonnet's review
+  only; ruled: every ruling is listed as stale; ruled: a session with nothing stale is
+  listed as such; why_not: the detail is left out; sections: a skill version with no
+  answer gets a table; sections: one review gets a Together row; sections: the rate is per
+  100 lines; parse: a ruling line is an unknown line; said: an answer that was not counted
+  counts; shown: a script that passes at the base too is a claim; ruled: a wrong ruling on
+  an id nobody holds counts; ruled: claims ruled wrong are not among the ruled; error:
+  nine ruled claims are enough; kinds: a kind no defect has is listed; sections: a skill
+  version with no review gets a table; sections: an uncounted answer is not named;
+  sections: unknown lines are shown as None; report: it is given no answers; read_answers:
+  Opus reviews are not read; shown: a review that looked outside counts; ruled: a right
+  ruling on an id nobody holds counts; ruled: claims ruled right are not among the ruled;
+  error: ten ruled claims are not enough; kinds: defects not named in the answer are not
+  said to be; sections: an uncounted review is not named; report: it is given no rulings.
+- Caught first by "R5: every text the two sections take from an answer is redacted, and an
+  answer that is not what the measure writes is not counted, with no traceback": whole:
+  anything is a whole number; said: pairs that are no list count; shown: defects that are
+  no list count; why_not: an answer of the right status and the wrong shape is called by
+  its status; sections: a review of no changed line is divided by; said: a pair that is no
+  object or has no id is taken; shown: a defect that is no object is taken; shown: a
+  review that is no object is read (survived the first run); why_not: an answer that is no
+  object is asked its status; said: points that are no number count; shown: a shown defect
+  with no id is taken; why_not: a status that is no text is printed (survived the first
+  run); sections: an answer with no point is divided by.
+- Caught first by "R5: a ruling line that is malformed is rejected with a reason that says
+  what is wrong with it, not as an unknown line": rulings: a word that is neither is let
+  through; rulings: wrong may be there twice; rulings: any word is taken for an id;
+  rulings: an id may be ruled both ways.
+- Caught first by "R5: the sheet lists a session's pairs and its shown defects with their
+  ids, redacted, and says how to rule them": sheet: it does not say the claims are at its
+  end; sheet command: it reads no answers; sheet: a quote that is no text is printed
+  (survived the first run); sheet: the claims are left out.
+- Caught first by "R2: a folder with no scores still gives the counts and the coverage,
+  and exits 0": error: the line of claims ruled wrong is always there; sections: no
+  session with an answer is said as 0 of N; error: the line of stale rulings is always
+  there.
+- Caught first by "the report states the agreement rate": reviews: a model the session has
+  no review by is listed; rulings: a line with nothing after it is a problem; said: an
+  answer that is no object is read.
+- Caught first by "R4: lines that are unknown for one session are unknown for the sessions
+  together; an answer for a session the folder does not know is shown apart": sections: a
+  session the folder does not know is dropped; sections: unknown lines are counted as none
+  in a sum.
+- Caught first by "R4: the review keeps the lines the session changed, added plus removed,
+  as git counts them, a binary file left out": changed_lines: removed lines are not
+  counted; review: it keeps no changed lines.
+- Caught first by "R5: a session with no claim has no such section in its sheet": sheet: a
+  session with no claim gets the section; sheet: it says so though the session has no
+  claim.
+- Caught first by "R5: the sheet has a part for pairs only where the session has a pair,
+  and one for defects only where it has a shown defect": sheet: a session with no pair
+  gets the part for pairs; sheet: a session with no shown defect gets the part for
+  defects.
+- Caught first by "tier-declared is na only when the session also does not say Tier: 0"
+  (transcripts-grade.test.sh): sheet command: it reads answers for a transcript file,
+  which has no folder.
+- Caught first by "R4: when git cannot say what changed between two commits the review
+  keeps no number, where it would otherwise keep 0": changed_lines: git's failure is 0
+  lines.
+- Caught first by "R5: a quote that is no text is shown as none, and a defect with no file
+  names none": sheet: a defect with no file is said to be in None (survived the first
+  run).
+- Caught first by "R5: a ruling needs a person's name and date like a verdict does, and a
+  line with no ruling is no ruling": parse: a ruling needs no name.
+- Caught first by "R5: a script that also passes at the base is no claim, nor is a defect
+  of a review that looked outside; and an address in a pair is redacted": sheet: the
+  quotes are not redacted.
+- Caught first by "R5: what a reviewer said of a defect is redacted in the sheet, and a
+  long quote is cut to 400 characters": sheet: a long quote is not cut.
+- Caught first by "R6: before any call it prints the sessions, the calls (the sandbox
+  check among them) and the most they can cost": changed_lines: a binary file's dashes are
+  counted.
+
+No fault was found in the code by this: every assertion added passed as soon as it was
+written, and fails only with its guard broken.
