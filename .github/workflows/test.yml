@@ -73,6 +73,16 @@ jobs:
       - uses: actions/checkout@v7
       - name: Versions
         run: bash --version | head -n1; python3 --version; git --version; node --version
+      # judge --review runs a model's scripts in a bwrap box, and its tests do the same. A Linux
+      # runner may have no bwrap, or forbid the user namespaces it needs. Where the box still
+      # cannot start the step warns, and the suite tests the unboxed path only and says so.
+      - name: A box for the review's scripts (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          command -v bwrap >/dev/null || sudo apt-get install -y -q bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          if bwrap --unshare-all --ro-bind / / true; then echo "a box can start here"
+          else echo "::warning::no bwrap box can start on this runner: the boxed review tests are skipped"; fi
       - name: red-check
         if: ${{ !cancelled() }}
         run: bash plugins/change-record/bin/red-check.test.sh

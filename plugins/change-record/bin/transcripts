@@ -17,6 +17,7 @@
   transcripts probe --agent codex|cursor [--out DIR]
   transcripts judge --repeats [DIR] (--session ID... | --limit N) [--again]
   transcripts judge --repeats --transcript FILE... --out DIR [--again]
+  transcripts judge --review [DIR] (--session ID... | --limit N) [--repo-dir REPO] [--model sonnet|opus] [--again] [--local]
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
 transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
@@ -114,6 +115,12 @@ lists what the message says twice; the quotes are checked against the message an
 points said again is kept in DIR/repeats (grade/repeats.py). No call is made until the sessions
 are chosen with --session or --limit.
 
+judge --review runs, for each chosen session's own commits, a reviewer with a shell in a scratch
+clone and in Claude Code's sandbox, and counts as shown only the defects whose scripts the tool
+itself sees exit 0 at the session's last commit and not at its base, each run in a bwrap box
+(grade/review.py). The answers are kept in DIR/reviews. No call is made until the sessions are
+chosen with --session or --limit.
+
 probe is a Codex or Cursor hook command that writes a sample of what the hook passed, holding
 structure and no content, to DIR (default grade/fixtures/agents): see probe/agent_sample.py.
 """
@@ -126,10 +133,12 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -1853,9 +1862,122 @@ def cmd_repeats(args):
     return 1 if uncounted else 0
 
 
+REVIEW_USAGE = ("usage: transcripts judge --review [DIR] (--session ID... | --limit N) [--repo-dir REPO] [--model sonnet|opus] "
+                "[--again] [--local]\n"
+                "A reviewer that runs the code reviews each chosen session's own commits in REPO (default: here) and leaves "
+                "each defect as a script, which the tool runs again at the session's last commit and at its base; the answers "
+                "are kept in DIR/reviews. --limit: the newest N sessions not yet reviewed, at most 10 a run. --model sonnet|opus "
+                "(default sonnet). --again: review though a review is kept. --local: run the scripts with no box.")
+
+
+def cmd_review(args):
+    """judge --review: the defects a boxed reviewer can show in each chosen session's commits (grade/review.py)."""
+    d, only, limit, again, local, model, repo, i = None, [], None, False, False, "sonnet", os.getcwd(), 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--session", "--limit", "--model", "--repo-dir") and i + 1 < len(args):
+            v = args[i + 1]
+            if a == "--session":
+                only.append(v)
+            elif a == "--limit":
+                limit = int(v) if v.isdigit() else -1
+            elif a == "--model":
+                model = v
+            else:
+                repo = v
+            i += 2
+        elif a in ("--again", "--local"):
+            again, local = again or a == "--again", local or a == "--local"
+            i += 1
+        elif d is None and not a.startswith("--"):
+            d, i = a, i + 1
+        else:
+            say(REVIEW_USAGE)
+            return 2
+    load_grade_modules()
+    import review
+    if model not in review.MODELS or (limit is not None and limit < 1):
+        say(REVIEW_USAGE)
+        return 2
+    if not only and limit is None:
+        say("nothing was reviewed: choose the sessions whose commits a reviewer is run on with --session ID or --limit N "
+            "(the newest N)")
+        return 2
+    if (limit or 0) > review.MAX_SESSIONS or len(only) > review.MAX_SESSIONS:
+        say(f"at most {review.MAX_SESSIONS} sessions are reviewed in one run")
+        return 2
+    try:
+        d = folder_arg(d)
+    except PermissionError as e:
+        say(str(e))
+        return 2
+    repo = os.path.realpath(repo)
+    boxed = review.box_available()
+    if not boxed and not local:
+        say("no box can be started here for the reviewer's scripts (bwrap). They are shell commands a model wrote; with --local "
+            "they run with your own access")
+        return 2
+    entries = {os.path.basename(p)[:-5]: read_json(p, {}) or {} for p in glob.glob(os.path.join(d, "sessions", "*.json"))}
+    todo, already, skipped = [], 0, 0
+    for sid in [s for s in only if s not in entries]:
+        print(f"{sid[:8]} not reviewed: no session {sid} in {d}/sessions")
+        skipped += 1
+    for sid in sorted((s for s in entries if not only or s in only), key=lambda s: (entries[s].get("last_timestamp") or "", s), reverse=True):
+        try:
+            base, last = session_commits(repo, entries[sid])
+            why = None if base else "its commits have no base (its line began with the session)"
+        except LookupError as e:
+            why = str(e)
+        if why:
+            print(f"{sid[:8]} not reviewed: {why}")
+            skipped += 1
+        elif not again and review.reviewed(read_json(os.path.join(d, "reviews", sid, model, "review.json")), model, last):
+            already += 1
+        else:
+            todo.append((sid, base, last))
+    left = max(0, len(todo) - limit) if limit else 0
+    todo = todo[:limit] if limit else todo
+    done = uncounted = 0
+    cost = 0.0
+    if todo:
+        n = len(todo)
+        print(f"transcripts: {n} session{'s' if n != 1 else ''} to review with Claude {model.capitalize()}, {n + 1} calls "
+              f"(1 to check the sandbox), at most ${n * review.BUDGET + review.CHECK_BUDGET:.2f}: {', '.join(s[:8] for s, _, _ in todo)}",
+              flush=True)
+        if not boxed:
+            print("transcripts: no box could be started here: the reviewer's scripts run with your own access (--local)", flush=True)
+        root = tempfile.mkdtemp(prefix="transcripts-review-")
+        try:
+            settings = os.path.join(root, "settings.json")
+            review.write_settings(settings, [repo, d])
+            wrong = review.check_sandbox(root, repo, settings)
+            if wrong:
+                say(f"nothing was reviewed: the reviewer's sandbox does not hold: {wrong}")
+                return 1
+            hidden = [repo, d, os.path.realpath(HOME)]
+            for sid, base, last in todo:
+                out = os.path.join(d, "reviews", sid, model)
+                doc = dict(review.review_session(root, repo, base, last, model, settings, hidden, boxed, out, redact_text),
+                           session_id=sid, reviewed_at=datetime.now().astimezone().isoformat(timespec="seconds"))
+                write_atomic(os.path.join(out, "review.json"), (json.dumps(doc, indent=2) + "\n").encode())
+                done += 1
+                cost += doc.get("cost_usd") or 0
+                uncounted += doc["status"] != "reviewed"
+                print(f"{sid[:8]} review: {review.summary(doc)}", flush=True)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+    print(f"transcripts: {model} reviewed {done} session{'s' if done != 1 else ''} into {d}/reviews, ${cost:.2f}"
+          + (f"; {already} already reviewed" if already else "") + (f"; {skipped} not reviewed" if skipped else "")
+          + (f"; {uncounted} not counted, reviewed again at the next run" if uncounted else "")
+          + (f"; {left} left for the next run (--limit {limit})" if left else ""))
+    return 1 if uncounted else 0
+
+
 def cmd_judge(args):
     if "--repeats" in args:
         return cmd_repeats([a for a in args if a != "--repeats"])
+    if "--review" in args:
+        return cmd_review([a for a in args if a != "--review"])
     d, only, repo, kind, limit, store, verbose, transcript, record_file, i = None, [], os.getcwd(), "claude", None, False, False, None, None, 0
     while i < len(args):
         a = args[i]

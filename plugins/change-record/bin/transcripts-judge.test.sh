@@ -17,7 +17,7 @@ REAL_PATH="$PATH"
 # a suite that cannot make its temporary folder must not go on: TMPROOT would be the folder it was started in
 TMPROOT="$(mktemp -d)" && TMPROOT="$(cd "$TMPROOT" && pwd -P)" || { echo "cannot make a temporary folder" >&2; exit 1; }
 PIDS=""
-trap 'for p in $PIDS; do kill $p 2>/dev/null; done; rm -rf "$TMPROOT"' EXIT
+trap 'for p in $PIDS; do kill $p 2>/dev/null; done; rm -rf "$TMPROOT" ${VROOT:+"$VROOT"}' EXIT
 # await_port FILE: wait for a stand-in to write its port; say so when it is slow or never does.
 await_port() {
   local t=$SECONDS
@@ -60,6 +60,51 @@ with open(os.environ["FAKELOG"], "a") as f:
                         "AGENT_TRANSCRIPTS": os.environ.get("AGENT_TRANSCRIPTS"),
                         "OPENCODE_CONFIG_CONTENT": os.environ.get("OPENCODE_CONFIG_CONTENT"),
                         "OPENCODE_DISABLE_PROJECT_CONFIG": os.environ.get("OPENCODE_DISABLE_PROJECT_CONFIG")}) + "\n")
+if kind == "claude" and ("stream-json" in argv or "probe.sh" in prompt):
+    # judge --review. A reviewer (stream-json) or its sandbox check (the prompt names probe.sh). It logs
+    # what it was started with and the git state of its folder to $FAKELOG.review, then does as told:
+    #   FAKE_SANDBOX  holds (default): only the files a sandbox allows appear; writes: the write outside
+    #                 goes through; reads: the repository is read; norun: probe.sh is not run
+    #   FAKE_REVIEW   ok (default): copies $FAKE_REVIEW_DIR/.review here and answers with its answer.json;
+    #                 noanswer, error, slow (sleeps 30 s first). FAKE_REVIEW_CMD: a command it "ran".
+    #   FAKE_SERVED   the model that answered, when it is not the one asked for
+    import shutil, subprocess, time
+    def git(*a):
+        return subprocess.run(["git", *a], capture_output=True, text=True).stdout.strip()
+    asked = argv[argv.index("--model") + 1] if "--model" in argv else "none"
+    with open(os.environ["FAKELOG"] + ".review", "a") as f:
+        f.write(json.dumps({"argv": argv, "prompt": prompt, "cwd": os.getcwd(), "check": "probe.sh" in prompt,
+                            "settings": open(argv[argv.index("--settings") + 1]).read() if "--settings" in argv else None,
+                            "remotes": git("remote"), "refs": git("for-each-ref"), "commits": git("rev-list", "--all", "--count"),
+                            "head": git("rev-parse", "HEAD"),
+                            "later": subprocess.run(["git", "cat-file", "-e", os.environ.get("FAKE_LATER", "x")], capture_output=True).returncode == 0,
+                            "env": {k: os.environ.get(k) for k in ("AGENT_TRANSCRIPTS", "CLAUDE_CODE_SESSION_ID", "SECRET_FROM_CALLER")}}) + "\n")
+    if "probe.sh" in prompt:
+        how = os.environ.get("FAKE_SANDBOX", "holds")
+        src = open("probe.sh").read()
+        if how == "holds":
+            for name in re.findall(r"(?:inside|done)-[0-9a-f]+", src):
+                open(name, "w").write("ok\n")
+        elif how in ("writes", "reads"):
+            subprocess.run(["bash", "probe.sh"], capture_output=True)
+            for name in re.findall(r"read-[0-9a-f]+" if how == "writes" else r"\.\./outside-[0-9a-f]+", src):
+                if os.path.exists(name):
+                    os.remove(name)
+        print(json.dumps({"type": "result", "is_error": False, "result": "ran it", "modelUsage": {"claude-%s-5-5" % asked: {}}}))
+        sys.exit(0)
+    how = os.environ.get("FAKE_REVIEW", "ok")
+    if how == "slow":
+        time.sleep(30)
+    src = os.environ.get("FAKE_REVIEW_DIR", "")
+    if how == "ok" and os.path.isdir(os.path.join(src, ".review")):
+        shutil.copytree(os.path.join(src, ".review"), ".review", symlinks=True)
+    print(json.dumps({"type": "system", "subtype": "init", "model": "claude-%s-5-5" % asked}))
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash",
+                      "input": {"command": os.environ.get("FAKE_REVIEW_CMD", "git diff")}}]}}))
+    answer = open(os.path.join(src, "answer.json")).read() if how in ("ok", "slow") else "I could not finish."
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": how == "error", "result": answer, "num_turns": 9,
+                      "total_cost_usd": 0.3, "modelUsage": {"claude-%s-5-5" % os.environ.get("FAKE_SERVED", asked): {"outputTokens": 900}}}), flush=True)
+    sys.exit(1 if how == "error" else 0)
 def section(tag):
     m = re.search(r"<%s>(.*?)</%s>" % (tag, tag), prompt, re.S)
     return m.group(1) if m else ""
@@ -1010,6 +1055,207 @@ out="$(repeats --transcript "$RW/$R1.jsonl" --out "$REPO/out")"; assert_eq 2 "$?
 out="$(repeats --transcript "$RW/$R1.jsonl")"; assert_eq 2 "$?"; has "$out" "--out DIR"
 it "the record judge is as it was: it still runs with neither --session nor --limit"
 RAR2="$TMPROOT/rar2"; fresh "$RAR2" $J1; out="$(judge "$RAR2" --repo-dir "$REPO")"; assert_eq 0 "$?"; has "$out" "judged 1 sessions"
+
+echo "judge --review: the defects a reviewer that runs the code can show (record 2026-11-15-checkable-judges, R2, R3, R6, R7)"
+# A repository: a base commit, the session's commit (a crash when no name is given), a later fix the
+# reviewer must not see, and a line of its own that began after the session did.
+VROOT="$(mktemp -d /var/tmp/transcripts-review-test.XXXXXX)" && VROOT="$(cd "$VROOT" && pwd -P)" || { echo "cannot make a folder under /var/tmp" >&2; exit 1; }
+mkdir -p "$VROOT/home"; printf 'x\n' > "$VROOT/home/marker"
+RV="$VROOT/rv"; mkdir -p "$RV"; (
+  cd "$RV" && git init -q -b main && git config user.email t@example.com && git config user.name t && git config core.hooksPath /dev/null
+  printf 'import sys\nprint("Hello, " + (sys.argv[1] if len(sys.argv) > 1 else "world") + "!")\n' > greet.py
+  printf 'the same\n' > twin-a; printf 'the same\n' > twin-b
+  git add -A && at 09 commit -qm init
+  printf 'import sys\nargs = sys.argv[1:]\nnames = [a for a in args if a != "--shout"]\ntext = "Hello, " + names[0] + "!"\nprint(text.upper() if "--shout" in args else text)\n' > greet.py
+  git add -A && at 10 commit -qm "feat: shout"
+  printf 'the fix\n' > answer.txt; git add -A && at 12 commit -qm "fix: no name"
+  git checkout -q --orphan side && git rm -rqf . && printf 'x\n' > side.txt && git add -A && at 10:40 commit -qm "a line of its own" && git checkout -q main
+)
+VB="$(git -C "$RV" rev-parse main~2)"; VL="$(git -C "$RV" rev-parse main~1)"; VLATER="$(git -C "$RV" rev-parse main)"; VO="$(git -C "$RV" rev-parse side)"
+V1=f1000000-0000-0000-0000-000000000001; V2=f2000000-0000-0000-0000-000000000002; V3=f3000000-0000-0000-0000-000000000003
+VAR="$VROOT/var"
+# vsession ID COMMIT|none: a session begun at 10:00 whose last stop was at COMMIT
+vsession() {
+  rsession "$1" 10 "$RW/closing.md"
+  (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$VAR" "$T" archive --transcript "$RW/$1.jsonl" < /dev/null > /dev/null 2>&1)
+  python3 - "$VAR/sessions/$1.json" "$2" <<'PY'
+import json, sys
+p, c = sys.argv[1:]
+e = json.load(open(p)); e["first_stop"] = e["last_stop"] = {"branch": "main", "commit": None if c == "none" else c}
+json.dump(e, open(p, "w"), indent=2)
+PY
+}
+vsession $V1 "$VL"; vsession $V2 none; vsession $V3 "$VO"
+# What the stand-in reviewer leaves: one script of each sort, and an answer that names six of them.
+FRD="$TMPROOT/reviewer"; mkdir -p "$FRD/.review"
+crash='python3 greet.py %s 2>&1 | tail -1; python3 greet.py %s 2>&1 | grep -q IndexError'
+printf "# no name with --shout: a traceback\n$crash\n" --shout --shout > "$FRD/.review/defect-1.sh"
+printf 'echo "always, says %s"; exit 0\n' "$EMAIL" > "$FRD/.review/defect-2.sh"
+ln -s /etc/hostname "$FRD/.review/link.sh"   # a link is not a script
+printf 'echo never; exit 1\n' > "$FRD/.review/defect-3.sh"
+printf 'sleep 60; exit 0\n' > "$FRD/.review/defect-4.sh"
+printf "echo x > left-behind.txt\n$crash\n" --shout --shout > "$FRD/.review/defect-5.sh"
+printf "# no name at all: the same crash, and the answer does not name this script\n$crash\n" "" "" > "$FRD/.review/extra.sh"
+cat > "$FRD/.review/box.sh" <<EOF
+# what a script can reach, and the crash, so that it counts
+(echo x > "$VROOT/outside-box") 2>/dev/null
+[ -e "$RV/greet.py" ] && echo "repository: seen" || echo "repository: hidden"
+[ -e "$VAR/sessions" ] && echo "archive: seen" || echo "archive: hidden"
+[ -e "$VROOT/home/marker" ] && echo "home: seen" || echo "home: hidden"
+echo "variable: [\${SECRET_FROM_CALLER:-}]"
+(echo x > .git/probe) 2>/dev/null && echo "git folder: written" || echo "git folder: read-only"
+python3 -c 'import socket,sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 3)' "${URL##*:}" 2>/dev/null; [ \$? = 0 ] && echo "network: reached" || echo "network: none"
+d=\$(mktemp -d) && echo "temporary folder: ok"
+python3 greet.py 2>&1 | grep -q IndexError
+EOF
+# Two more ways to change the clone that leave what every tracked file reads as: a new, empty folder, and a file
+# swapped for a link to its twin (twin-a and twin-b hold the same in every commit). Each is a change.
+printf "mkdir left-folder\n$crash\n" "" "" > "$FRD/.review/defect-7.sh"
+printf 'rm twin-a && ln -s twin-b twin-a\n' > "$FRD/.review/defect-8.sh"
+printf "$crash\n" "" "" >> "$FRD/.review/defect-8.sh"
+# A script that plants a command in the clone's own git configuration, for git to run when the tool next
+# looks at the clone (found by the review of pull request 1): nothing may come of it, boxed or not.
+cat > "$FRD/.review/escape.sh" <<EOF
+printf '#!/bin/sh\ntouch "$VROOT/escaped"\n' > .git/planted.sh 2>/dev/null; chmod +x .git/planted.sh 2>/dev/null
+git config core.fsmonitor .git/planted.sh 2>/dev/null   # a path from the clone's root: the same in the box and out of it
+python3 greet.py 2>&1 | grep -q IndexError
+EOF
+cat > "$FRD/answer.json" <<EOF
+Done.
+{"defects": [
+ {"script": ".review/defect-1.sh", "file": "greet.py", "kind": "crash", "what": "No name gives a traceback. Ask $EMAIL.", "guarantee": null},
+ {"script": ".review/defect-2.sh", "file": "greet.py", "kind": "other", "what": "always", "guarantee": null},
+ {"script": ".review/defect-3.sh", "file": "greet.py", "kind": "other", "what": "never", "guarantee": null},
+ {"script": ".review/defect-4.sh", "file": "greet.py", "kind": "other", "what": "slow", "guarantee": null},
+ {"script": ".review/defect-5.sh", "file": "greet.py", "kind": "wrong result", "what": "leaves a file", "guarantee": null},
+ {"script": ".review/defect-6.sh", "file": "greet.py", "kind": "stated guarantee broken", "what": "no script", "guarantee": "the README"}],
+ "unverified": ["a guess"], "experiments": ["tried no name", "tried two names"]}
+EOF
+RLOG="$FAKELOG.review"
+review() { (cd "$TMPROOT" && HOME="$VROOT/home" AGENT_TRANSCRIPTS="$VAR" CLAUDE_CODE_SESSION_ID=caller SECRET_FROM_CALLER=hunter2 FAKE_LATER="$VLATER" FAKE_REVIEW_DIR="$FRD" \
+            AGENT_TRANSCRIPTS_SCRIPT_LIMIT=3 "$T" judge --review "$@" 2>&1); }
+rcalls() { [ -f "$RLOG" ] && wc -l < "$RLOG" | tr -d ' ' || echo 0; }
+rl() { py -c 'import json,sys; c=[json.loads(l) for l in open(sys.argv[1])]; print(eval(sys.argv[2], {"c": c, "json": json}))' "$RLOG" "$1"; }
+VJ="$VAR/reviews/$V1/sonnet/review.json"
+boxed=yes; bwrap --unshare-all --ro-bind / / true 2>/dev/null || boxed=no
+# a bwrap that cannot start, first on PATH: a machine with no box
+NOBOX="$TMPROOT/nobox"; mkdir -p "$NOBOX"; printf '#!/bin/sh\nexit 1\n' > "$NOBOX/bwrap"; chmod +x "$NOBOX/bwrap"
+
+it "R6: with neither --session nor --limit no call is made, and it says which two options choose the sessions"
+out="$(review "$VAR" --repo-dir "$RV")"; rc=$?
+assert_eq "2 0" "$rc $(rcalls)"; has "$out" "--session ID or --limit N"
+it "R7: where no box can be started for the scripts it refuses before any call, unless --local is given"
+out="$(PATH="$NOBOX:$PATH" review "$VAR" --repo-dir "$RV" --session $V1)"; rc=$?
+assert_eq "2 0" "$rc $(rcalls)"; has "$out" "--local"; has "$out" "with your own access"
+it "R2: a session with no commit of its own, and one whose line began with it, are not reviewed and say which"
+out="$(review "$VAR" --repo-dir "$RV" --session $V2 --session $V3 $([ $boxed = no ] && echo --local))"; rc=$?
+assert_eq "0 0" "$rc $(rcalls)"
+has "$out" "${V2:0:8} not reviewed: no commit recorded for the session"; has "$out" "${V3:0:8} not reviewed: its commits have no base"
+
+if [ $boxed = yes ]; then
+it "R6: before any call it prints the sessions, the calls (the sandbox check among them) and the most they can cost"
+left() { ls -d "${TMPDIR:-/tmp}"/transcripts-review-* 2>/dev/null | wc -l | tr -d ' '; }; left_before="$(left)"
+rm -f "$VROOT/outside-box"; out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; rc=$?
+assert_eq "0 2" "$rc $(rcalls)"
+has "$out" "1 session to review with Claude Sonnet, 2 calls (1 to check the sandbox), at most \$1.55: ${V1:0:8}"
+it "R7: the first call checks the sandbox: Haiku, in the sandbox, told to run the tool's own probe"
+assert_eq "True haiku True" "$(rl 'str(c[0]["check"]) + " " + c[0]["argv"][c[0]["argv"].index("--model") + 1] + " " + str(json.loads(c[0]["settings"])["sandbox"]["enabled"])')"
+it "R2: the reviewer: Sonnet with a shell and the three read tools, no setting source, a spending limit, the event stream"
+has "$(rl '"|".join(c[1]["argv"])')" "-p|--model|sonnet|--permission-mode|acceptEdits|--allowedTools|Bash|Read|Grep|Glob|--setting-sources||--settings|"
+has "$(rl '"|".join(c[1]["argv"])')" "|--max-budget-usd|1.5|--output-format|stream-json|--verbose"
+it "R2: its folder is a clone with no remote, no ref and no commit after the session's last, outside the repository and the archive"
+assert_eq "[] [] 2 $VL False" "$(rl '"[%s] [%s] %s %s %s" % (c[1]["remotes"], c[1]["refs"], c[1]["commits"], c[1]["head"], c[1]["later"])')"
+assert_eq "False False False" "$(py -c 'import json,os,sys; c=[json.loads(l) for l in open(sys.argv[1])]; w=c[1]["cwd"]; print(w.startswith(sys.argv[2]), w.startswith(sys.argv[3]), os.path.exists(w))' "$RLOG" "$RV" "$VAR")"
+it "R2: the brief is grade/briefs/review.md with the two commits, which is Appendix B of the record, and names no path of the repository"
+assert_eq "$(sed "s/@BASE@/${VB:0:10}/g; s/@HEAD@/${VL:0:10}/g" "$here/../grade/briefs/review.md" 2>&1)" "$(rl 'c[1]["prompt"].rstrip("\n")')"
+assert_eq "$(sed -n '/^## Appendix B/,/^## Outcome/p' "$here/../../../docs/changes/2026-11-15-checkable-judges.md" | sed -n 's/^    //p; /^$/p' | sed -e '1,/./{/^$/d}' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')" "$(cat "$here/../grade/briefs/review.md" 2>&1)"
+lacks "$(rl 'c[1]["prompt"]')" "$RV"
+it "R2: its settings turn the sandbox on and deny reading the repository, the archive and the settings themselves"
+assert_eq "True True True True" "$(py -c '
+import json,sys
+c=[json.loads(l) for l in open(sys.argv[1])]; s=json.loads(c[1]["settings"]); deny=s["permissions"]["deny"]; a=c[1]["argv"]
+print(s["sandbox"]["enabled"], "Read(/%s/**)" % sys.argv[2] in deny, "Read(/%s/**)" % sys.argv[3] in deny, "Read(/%s)" % a[a.index("--settings")+1] in deny)' "$RLOG" "$RV" "$VAR")"
+it "R2: it does not inherit the caller's archive, session or other variables"
+assert_eq "None None" "$(rl 'str(c[1]["env"]["AGENT_TRANSCRIPTS"]) + " " + str(c[1]["env"]["CLAUDE_CODE_SESSION_ID"])')"
+it "R3: a defect is shown only if its script exits 0 at the last commit and not at the base, and leaves the clone as it was"
+st() { py -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" | ".join("%s %s %s" % (x["script"], x["status"], "named" if x["named"] else "not named") for x in d["defects"]))' "$VJ"; }
+assert_eq "defect-1.sh shown named | defect-2.sh shown at the base too named | defect-3.sh not shown at the last commit named | defect-4.sh timed out named | defect-5.sh changed the clone named | defect-6.sh named and missing named | box.sh shown not named | defect-7.sh changed the clone not named | defect-8.sh changed the clone not named | escape.sh shown not named | extra.sh shown not named" "$(st)"
+assert_eq "reviewed 4 False 2 1 0.3 $VB $VL" "$(rj "$VJ" '" ".join(str(d[k]) for k in ("status", "shown", "looked_outside", "experiments", "unverified", "cost_usd", "base", "last"))')"
+has "$out" "${V1:0:8} review: 4 defects shown (1 crash, 3 not named in the answer); not counted: 1 shown at the base too, 1 not shown at the last commit, 1 timed out, 3 changed the clone, 1 named and missing"
+it "R3: a shown defect's id is made from its script, and what the reviewer said of it is kept, redacted"
+assert_eq "$(sha256sum "$FRD/.review/defect-1.sh" | cut -c1-6) crash greet.py" "$(rj "$VJ" '" ".join(d["defects"][0][k] for k in ("id", "kind", "file"))')"
+lacks "$(cat "$VJ" 2>/dev/null)" "$EMAIL"; has "$(cat "$VJ" 2>/dev/null)" "<redacted:email>"
+it "R3: the scripts and what they printed at each commit are kept under DIR/reviews/<session>/"
+assert_eq "$(cat "$FRD/.review/defect-1.sh")" "$(cat "$VAR/reviews/$V1/sonnet/scripts/defect-1.sh" 2>&1)"
+has "$(cat "$VAR/reviews/$V1/sonnet/runs/defect-1.sh.last.out" 2>&1)" "IndexError"; has "$(cat "$VAR/reviews/$V1/sonnet/runs/defect-1.sh.base.out" 2>&1)" "Hello, --shout!"
+it "R7: a script runs in a box: it cannot write outside its clone, see the repository, the archive or the home folder, read the caller's variables or reach the network"
+b="$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)"
+for x in "repository: hidden" "archive: hidden" "home: hidden" "variable: []" "network: none" "temporary folder: ok" "git folder: read-only"; do has "$b" "$x"; done
+[ -e "$VROOT/outside-box" ] && bad "the script wrote outside its clone" || ok
+it "R7: a command a script plants in its clone's git configuration is never run: the tool runs no git where a script has been"
+[ -e "$VROOT/escaped" ] && bad "the planted command ran, outside the box" || ok
+it "R3: what a script printed is kept redacted, and a link among the scripts is not taken for one"
+o="$(cat "$VAR/reviews/$V1/sonnet/runs/defect-2.sh.last.out" 2>&1)"; lacks "$o" "$EMAIL"; has "$o" "always, says <redacted:email>"
+lacks "$(st)" "link.sh"; [ -e "$VAR/reviews/$V1/sonnet/scripts/link.sh" ] && bad "the link was copied" || ok
+it "nothing of the run is left in the temporary folder: the clones are gone"
+assert_eq "$left_before" "$(left)"
+it "a session that has a review for this model, brief and commit is not reviewed again; --again reviews; another model's is kept apart"
+before="$(rcalls)"; out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $before" "$? $(rcalls)"; has "$out" "1 already reviewed"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1 --model opus)"; assert_eq "0 $((before + 2))" "$? $(rcalls)"
+assert_eq "opus sonnet" "$(rj "$VAR/reviews/$V1/opus/review.json" 'd["model"]') $(rj "$VJ" 'd["model"]')"; has "$(rl '"|".join(c[-1]["argv"])')" "|--model|opus|"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1 --again)"; assert_eq "0 $((before + 4))" "$? $(rcalls)"
+it "R3: a run whose commands name the repository is kept, marked as having looked outside, and its defects are not counted"
+out="$(FAKE_REVIEW_CMD="cat $RV/answer.txt" review "$VAR" --repo-dir "$RV" --session $V1 --again)"; rc=$?
+assert_eq "1 looked outside True 0" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["looked_outside"]) + " " + str(d["shown"])')"; has "$out" "looked outside its clone"
+it "R7: a sandbox that lets a write out, lets the repository be read, or a check that did not run: nothing is reviewed and it says which"
+for how in writes reads norun; do
+  before="$(rcalls)"; out="$(FAKE_SANDBOX=$how review "$VAR" --repo-dir "$RV" --session $V1 --again)"; rc=$?
+  assert_eq "1 $((before + 1))" "$rc $(rcalls)"
+  case $how in writes) has "$out" "a write outside the reviewer's folder went through" ;; reads) has "$out" "the repository could be read" ;; norun) has "$out" "the check did not run" ;; esac
+done
+it "an answer that is no JSON, a failed run and a reviewer past its time are each kept as what they are and reviewed again next time"
+for how in noanswer error slow; do
+  out="$(FAKE_REVIEW=$how AGENT_TRANSCRIPTS_REVIEW_LIMIT=2 review "$VAR" --repo-dir "$RV" --session $V1 --again)"; rc=$?
+  want="no answer"; [ $how = error ] && want=error; [ $how = slow ] && want="timed out"
+  assert_eq "1 $want 0" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"
+done
+before="$(rcalls)"; out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $((before + 2)) reviewed" "$? $(rcalls) $(rj "$VJ" 'd["status"]')"
+it "the reviewer must be the model asked for: an answer another model served is an error, and only sonnet or opus can be asked for"
+out="$(FAKE_SERVED=haiku review "$VAR" --repo-dir "$RV" --session $V1 --again)"; rc=$?
+assert_eq "1 error 0" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"; has "$out" "served by claude-haiku-5-5, not sonnet"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1 --again --model haiku)"; assert_eq 2 "$?"; has "$out" "--model sonnet|opus"
+it "a kept review is for the commit it was made at: when the session's last commit is another, it is reviewed again"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1 --again)"; before="$(rcalls)"
+out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $before" "$? $(rcalls)"
+python3 - "$VAR/sessions/$V1.json" "$VLATER" <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1])); e["last_stop"]["commit"] = sys.argv[2]; json.dump(e, open(sys.argv[1], "w"))
+PY
+out="$(review "$VAR" --repo-dir "$RV" --session $V1)"; assert_eq "0 $((before + 2)) $VLATER" "$? $(rcalls) $(rj "$VJ" 'd["last"]')"
+python3 - "$VAR/sessions/$V1.json" "$VL" <<'PY'
+import json, sys
+e = json.load(open(sys.argv[1])); e["last_stop"]["commit"] = sys.argv[2]; json.dump(e, open(sys.argv[1], "w"))
+PY
+else
+  echo "  (no bwrap can start here: the boxed runs are not tested on this machine)"
+fi
+it "R7: with --local on a machine with no box the scripts run as the caller, and it says so"
+rm -f "$VROOT/outside-box"; out="$(PATH="$NOBOX:$PATH" review "$VAR" --repo-dir "$RV" --session $V1 --again --local)"; rc=$?
+assert_eq "0 reviewed 4" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"; has "$out" "with your own access"
+[ -e "$VROOT/escaped" ] && bad "the planted command ran, with no box: the tool ran git in the script's clone" || ok
+[ -e "$VROOT/outside-box" ] && ok || bad "expected the unboxed script to have written outside its clone"
+has "$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)" "variable: []"
+it "a script that prints without end is stopped at its time with only the end of its output kept, not all of it held in memory"
+printf 'while :; do printf "%%01000d\\n" 7; done\n' > "$TMPROOT/noisy.sh"; mkdir -p "$TMPROOT/noisy-clone"
+assert_eq "None True True" "$(cd "$here/../grade" && python3 -B -c '
+import sys, tracemalloc
+sys.dont_write_bytecode = True
+import review
+tracemalloc.start()
+code, out = review.run_script(sys.argv[1], sys.argv[2], [], False, 2)
+print(code, len(out) <= review.OUTPUT_CAP, tracemalloc.get_traced_memory()[1] < 5_000_000)' "$TMPROOT/noisy.sh" "$TMPROOT/noisy-clone" 2>&1)"
+it "more than ten sessions are not reviewed in one run"
+out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out" "at most 10"
 
 echo
 echo "transcripts judge and report: $pass passed, $fail failed"
