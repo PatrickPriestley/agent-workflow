@@ -366,6 +366,19 @@ it "a folder it cannot write to: exit 0 and it says so"
 printf 'x' > "$TMPROOT/a-file"
 out="$(codex_hook "\"$CXT\"" | probe "$TMPROOT/a-file/sub" --agent codex)"; rc=$?
 assert_eq 0 "$rc"; has "$(cat "$TMPROOT/probe.err")" "cannot write"
+it "a sample that cannot take its place leaves no half-written file beside it (record 2026-11-15-probe-sample)"
+mkdir -p "$PO/taken/codex-stop.json"   # the sample's own name is a folder: the last step of the write fails
+out="$(codex_hook "\"$CXT\"" | probe "$PO/taken" --agent codex)"; rc=$?
+assert_eq "0 codex-stop.json" "$rc $(ls "$PO/taken" | tr '\n' ' ' | sed 's/ $//')"; has "$(cat "$TMPROOT/probe.err")" "cannot write"
+it "a value with a dot is kept only where every dot stands between digits: a model's version is, a host name or a dotted name is not"
+out="$(printf '{"hook_event_name":"stop","model":"db.internal.corp.example.com","reason":"jane.doe.example.org","source":"gpt-5.2-codex","kind":"v2.1.321","status":"ok.","subtype":"node1.example","event":"example.2x","transcript_path":null}' | probe "$PO/dots" --agent cursor)"; rc=$?
+s="$(cat "$PO/dots/cursor-stop.json" 2>/dev/null)"
+assert_eq 0 "$rc"; for x in internal corp example jane doe '"ok."' node1 2x; do lacks "$s" "$x"; done
+has "$s" '"gpt-5.2-codex": 1'; has "$s" '"v2.1.321": 1'
+it "a text transcript whose last line has no newline after it has that line counted, though another line reads as JSON"
+printf 'user:\nhello\n42\nassistant: bye' > "$PH/.cursor/projects/SECRET-PROJECT/agent-transcripts/tail.txt"
+out="$(cursor_hook "\"$PH/.cursor/projects/SECRET-PROJECT/agent-transcripts/tail.txt\"" | probe "$PO/tail" --agent cursor)"; rc=$?
+assert_eq "0 4 1 1" "$rc $(json "$PO/tail/cursor-stop.json" 'str(d["transcript"]["lines"]) + " " + str(d["transcript"]["line_starts"].get("user:")) + " " + str(d["transcript"]["line_starts"].get("assistant:"))')"
 it "an event name that is not a plain word does not choose the file's name"
 out="$(printf '{"hook_event_name":"../../SECRET evil","transcript_path":null}' | probe "$PO/ev" --agent cursor)"; rc=$?
 assert_eq 0 "$rc"; assert_eq "cursor-unknown.json" "$(ls "$PO/ev" 2>&1)"; no_content "$PO/ev/cursor-unknown.json"

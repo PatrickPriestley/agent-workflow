@@ -80,9 +80,14 @@ def safe_key(k):
     return "<key>"
 
 
+DOT_NOT_IN_A_NUMBER = re.compile(r"(?<!\d)\.|\.(?!\d)")
+
+
 def identifier(v):
+    """Whether a value may be copied as the name of a kind of thing. A dot is let through only between two
+    digits, as in a model's version (gpt-5.2-codex): dotted words are how a host or a person is named."""
     return bool(isinstance(v, str) and IDENT.match(v) and not re.search(r"\d{6,}", v)
-                and not UUID.search(v) and not HEX_ID.match(v))
+                and not UUID.search(v) and not HEX_ID.match(v) and not DOT_NOT_IN_A_NUMBER.search(v))
 
 
 def tool_call(obj):
@@ -301,6 +306,11 @@ def transcript_shape(path):
             for m in TEXT_MARKERS:
                 if ln.strip().lower().startswith(m.lower()):
                     bump(starts, m)
+        if incomplete and items:  # the last line had no newline after it: in a text file it is a line like the others
+            lines.append(last)
+            for m in TEXT_MARKERS:
+                if last.strip().lower().startswith(m.lower()):
+                    bump(starts, m)
         return dict(t, format="text", lines=len(lines), blank_lines=len([ln for ln in lines if not ln.strip()]),
                     json_lines=len(items), markers=marks, line_starts=starts)
     kinds, order, more = {}, [], False
@@ -403,13 +413,17 @@ def run(args):
     doc = sample(agent, hook)
     out = out or default_out()
     dest = os.path.join(out, "%s-%s.json" % (agent, doc["event"]))
+    tmp = dest + ".tmp%d" % os.getpid()
     try:
         os.makedirs(out, exist_ok=True)
-        tmp = dest + ".tmp%d" % os.getpid()
         with open(tmp, "w") as f:
             f.write(json.dumps(doc, indent=2, sort_keys=True) + "\n")
         os.replace(tmp, dest)
     except OSError as e:
+        try:  # what was written of it is not left beside the samples, where it would be committed with them
+            os.remove(tmp)
+        except OSError:
+            pass
         say("cannot write the sample to " + out + ": " + (e.strerror or "error"))
         return
     say("wrote " + dest)
