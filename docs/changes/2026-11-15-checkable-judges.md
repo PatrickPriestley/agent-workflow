@@ -387,6 +387,28 @@ chat, 2026-11-15.
 - An answer is kept until `--again`, and a review's answers are kept per model, so that
   rulings made on one run are not lost to the next and two models can be compared on the
   same sessions.
+- Decided while building task 2. The base clone is cut from the clean clone at the last
+  commit, of which the base is an ancestor, and the reviewer works in a copy of that clean
+  clone, so the tool runs the scripts where the reviewer never wrote. A review is kept for
+  its model, its brief and the session's last commit; one that did not finish (no answer,
+  an error, past its time, looked outside) is kept as what it is and made again at the
+  next run. A link among the scripts is not taken for a script. What a script printed is
+  kept redacted, as what the reviewer said of a defect is. The sandbox check does not ask
+  the session what happened: the tool writes the probe and reads what it left. The settings
+  also deny reading the archive and the settings file itself, which names the repository.
+  At most ten sessions a run (C3) is refused, not cut short.
+- Decided while building task 2, from its real use. The sandbox leaves its own temporary
+  area writable (`/tmp/claude-<uid>`). A scratch folder inside that area fails the check,
+  rightly, and the message now says so; and the reviewer can write anywhere in that area,
+  where other Claude Code sessions on the machine keep scratch files. C4's "no write
+  outside the clone and a temporary folder" is true with that reading of "temporary
+  folder", which is wider than the probe's words suggested. Not changed here: no setting
+  to narrow it was probed.
+- Decided while building task 2. The work moved to the public repository,
+  `PatrickPriestley/agent-workflow`, on 2026-11-15 (the owner's ruling, in chat); its
+  history is the private one's, cleaned, so commit ids in this record from before that day
+  are the private repository's. Its CI runs, so the Linux job is given a `bwrap` box before
+  the suites, and where none can start the suite tests the unboxed path only and says so.
 - Decided while building task 1. `--repeats --transcript FILE...` takes `--out DIR` for the
   answers, as `sheet --transcript` does; R1 named no place for them. A kept answer is for
   the message it was given: when the session has since written a later one it is asked
@@ -574,3 +596,69 @@ task 3 are for. Spent on this task: $0.04.
 
 Not done here: the report and the sheet do not show the measure yet (task 3), and no claim
 has been ruled (task 4).
+
+### Task 2: review
+
+Built test first: 54 assertions of `bin/transcripts-judge.test.sh` failed before the code
+(`--review` a usage error), committed red, then `grade/review.py`, `grade/briefs/review.md`
+and `cmd_review` in `bin/transcripts`. The stand-in for `claude` gained a reviewer and a
+sandbox check that leave real files. Suites after: transcripts-judge 337, transcripts 350,
+transcripts-grade 212, transcripts-store 156, `bin/ci-workflow.test.sh` 17, none failing.
+
+Guards shown by breaking them by hand, one at a time: 55 breaks. The first run caught 43
+of 53. Ten survived, and seven of those were gaps in the tests: the test's repository,
+archive and "outside" file lived under `/tmp`, which the box replaces whatever it is told,
+so hiding them or allowing a write could not show; its network probe took a refused
+request for no network; and nothing fed it another model's answer, a link among the
+scripts, an address in a script's output, or a kept review for another commit. Those
+tests were rewritten (the test's folders now live under `/var/tmp`) and the breaks run
+again with two more: 52 of 55 are caught. The three left change nothing a test can see:
+the box is started with an emptied environment twice over; a session's scratch folder is
+removed again with the run's; and a review's model is already in its file's path.
+
+Real use, in this container, Claude Sonnet, on the commits of the session labelled
+`approve` on 2026-11-12 (`478c69ad`, 6 commits, 696 lines added), with a hand-made index
+entry in a scratch folder:
+
+```
+$ transcripts judge --review <scratch> --repo-dir <the repository>
+transcripts: nothing was reviewed: choose the sessions whose commits a reviewer is run on with --session ID or --limit N (the newest N)
+exit 2
+$ transcripts judge --review <scratch> --repo-dir <the repository> --session 478c69ad-c140-52b9-b9af-9b4e789004d1
+transcripts: 1 session to review with Claude Sonnet, 2 calls (1 to check the sandbox), at most $1.55: 478c69ad
+478c69ad review: 1 defect shown (1 stated guarantee broken)
+transcripts: sonnet reviewed 1 session into <scratch>/reviews, $0.62
+real    3m20.712s
+$ the same again
+transcripts: sonnet reviewed 0 sessions into <scratch>/reviews, $0.00; 1 already reviewed
+```
+
+The sandbox check passed; the reviewer ran 21 commands and listed 15 experiments and 6
+suspicions it could not turn into a script; none of its commands named the repository. The
+one script it left, `852ef6`, as the tool ran it in the box:
+
+```
+# a tool name taken from the transcript is printed unredacted in a failed step's call heading
+--- at the last commit: exit 0
+email leaked into report
+--- at the base: exit 1
+no leak
+```
+
+It also exits 0 on the public `main` of today, so it is a seventh defect for the two
+changes of C5 (the report's leaks). The probe's run on the same commits left three other
+scripts: a reviewer shows different defects on different runs, as C2 says.
+
+The error path, met for real and not planned: the first real run was given a scratch
+folder under this session's own, which lies inside the sandbox's temporary area.
+
+```
+transcripts: nothing was reviewed: the reviewer's sandbox does not hold: a write outside the reviewer's folder went through
+```
+
+The check was right, and stopped before any review (Decisions).
+
+Spent on this task: $0.63. Not done here: the report and the sheet do not show the measure
+yet (task 3); no defect has been ruled and Opus has not been run (task 4). Not verified:
+a Mac, where no box can start; and the Linux runner's box, which the first CI run on this
+pull request will show.
