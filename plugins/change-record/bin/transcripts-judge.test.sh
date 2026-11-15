@@ -622,12 +622,23 @@ for raw in open(p).read().splitlines():
             b["name"] = "Write_" + email
     out.append(json.dumps(o, separators=(",", ":")))
 open(p, "w").write("\n".join(out) + "\n")
+# two texts no line of the report redacts by itself: a grader's name, and a skill's name in an index entry
+p = glob.glob(os.path.join(d, "scores", "b4000000*.json"))[0]; rows = json.load(open(p))
+for r in rows:
+    r["grader"] += " run by " + email
+json.dump(rows, open(p, "w"))
+p = glob.glob(os.path.join(d, "sessions", "a2000000*.json"))[0]; e = json.load(open(p))
+e["skills"] = [{"name": "notes-of-" + email + ":skill", "how": "skill", "blob": None}]; json.dump(e, open(p, "w"))
 PY2
 r="$(report "$TMPROOT/leak2" 2>&1)"
 lacks "$r" "$EMAIL"; lacks "$r" "$TOKEN"
+has "$r" "run by <redacted:email> |"; has "$r" "<redacted:email>:skill | 1 |"
 has "$r" "## change, Bearer <redacted:token>, blob"
 has "$r" "note for <redacted:email> x"
 has "$r" "] <redacted:email>** \`c1\`"   # the address takes the Write_ before it: _ is a letter of an address
+it "and so is the page a folder with no score rows gets"
+copy norows; rm -rf "$TMPROOT/norows/scores"; cp "$TMPROOT/leak2"/sessions/a2000000*.json "$TMPROOT/norows/sessions/"
+r="$(report "$TMPROOT/norows" 2>&1)"; has "$r" "No score rows here"; lacks "$r" "$EMAIL"; has "$r" "<redacted:email>:skill | 1 |"
 it "a row whose evidence is not an object is reported like one with none: no traceback, and the report is printed"
 copy odd; python3 - "$TMPROOT/odd" <<'PY2'
 import glob, json, os, sys
