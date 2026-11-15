@@ -152,10 +152,12 @@ def clone_at(repo, commit, dest):
 
 
 def write_settings(path, hidden):
-    """The reviewer's settings: Claude Code's sandbox, and no reading of the hidden folders or of this file."""
+    """The reviewer's settings: Claude Code's sandbox, with no leave to ask for a command to run outside it,
+    and no reading of the hidden folders or of this file."""
     deny = [f"Read(/{h}/**)" for h in hidden] + [f"Read(/{path})"]
+    box = {"enabled": True, "autoAllowBashIfSandboxed": True, "allowUnsandboxedCommands": False}
     with open(path, "w") as f:
-        json.dump({"sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True}, "permissions": {"deny": deny}}, f)
+        json.dump({"sandbox": box, "permissions": {"deny": deny}}, f)
 
 
 def session_env():
@@ -218,28 +220,50 @@ def run_script(script, clone, hidden, boxed, limit):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def tree_state(root):
-    """What a folder holds outside .git: each file with the hash of its content, each link with where it points,
-    each folder by name. Read with no git, and following no link: the folder may be one a script has written."""
-    state = {}
+def entry(p, like=None):
+    """What one entry of a folder is: a link with where it points, a folder, a file with its size and the hash
+    of its content. Given like, what it was in the clean clone, a file is read only if it was a file of this
+    size there, and then a piece at a time: a script can leave a file of any size."""
+    try:
+        if os.path.islink(p):
+            return ("link", os.readlink(p))
+        if os.path.isdir(p):
+            return ("folder",)
+        if not os.path.isfile(p):
+            return ("neither a file nor a folder",)
+        size, h = os.path.getsize(p), hashlib.sha256()
+        if like is not None and like[:2] != ("file", size):
+            return ("file", size, None)
+        with open(p, "rb") as f:
+            for piece in iter(lambda: f.read(1 << 20), b""):
+                h.update(piece)
+        return ("file", size, h.hexdigest())
+    except OSError:
+        return ("unreadable",)
+
+
+def entries(root):
+    """Each entry of a folder outside .git, as (its path from root, its path). No git, and no link followed."""
     for where, dirs, files in os.walk(root):
         if where == root and ".git" in dirs:
             dirs.remove(".git")
         for name in dirs + files:
-            p = os.path.join(where, name)
-            rel = os.path.relpath(p, root)
-            try:
-                if os.path.islink(p):
-                    state[rel] = "link to " + os.readlink(p)
-                elif os.path.isdir(p):
-                    state[rel] = "folder"
-                elif os.path.isfile(p):
-                    state[rel] = sha(open(p, "rb").read())
-                else:
-                    state[rel] = "neither a file nor a folder"
-            except OSError:
-                state[rel] = "unreadable"
-    return state
+            yield os.path.relpath(os.path.join(where, name), root), os.path.join(where, name)
+
+
+def tree_state(root):
+    return {rel: entry(p) for rel, p in entries(root)}
+
+
+def tree_changed(root, was):
+    """Whether a folder a script has run in is no longer as was, the clean clone's tree_state. It stops at the
+    first entry that differs, so it reads no more than the clean clone held."""
+    seen = 0
+    for rel, p in entries(root):
+        if rel not in was or entry(p, was[rel]) != was[rel]:
+            return True
+        seen += 1
+    return seen != len(was)
 
 
 def try_script(script, clean, was, work, hidden, boxed, limit):
@@ -249,7 +273,7 @@ def try_script(script, clean, was, work, hidden, boxed, limit):
     shutil.copytree(clean, trial, symlinks=True)
     try:
         code, printed = run_script(script, trial, hidden, boxed, limit)
-        return code, printed, tree_state(trial) != was
+        return code, printed, tree_changed(trial, was)
     finally:
         shutil.rmtree(trial, ignore_errors=True)
 
