@@ -153,6 +153,14 @@ def clone_at(repo, commit, dest):
         raise RuntimeError("the scratch clone is not at the commit alone")
 
 
+def changed_lines(clone, base, last):
+    """Lines added plus lines removed between two commits, as git diff --numstat counts them, binary files
+    left out (they have no count); None when git does not say."""
+    rc, out = git(clone, "diff", "--numstat", base, last)
+    counts = [ln.split("\t")[:2] for ln in out.splitlines()]
+    return sum(int(a) + int(b) for a, b in counts if a.isdigit() and b.isdigit()) if rc == 0 else None
+
+
 def write_settings(path, hidden):
     """The reviewer's settings: Claude Code's sandbox, with no leave to ask for a command to run outside it,
     and no reading of the hidden folders or of this file."""
@@ -358,6 +366,7 @@ def review_session(root, repo, base, last, model, settings, hidden, boxed, out, 
            "defects": [], "unverified": 0, "experiments": 0, "looked_outside": False}
     try:
         clone_at(repo, last, clean)
+        doc["changed_lines"] = changed_lines(clean, base, last)  # here, where no script has been: the tool's one use of git on it
         shutil.copytree(clean, mine, symlinks=True)
         started = time.time()
         cmd = ["claude", "-p", "--model", model, "--permission-mode", "acceptEdits", "--allowedTools"] + TOOLS + [

@@ -1515,6 +1515,18 @@ def leave_label(labels, folder, sid, lines):
     return "new"
 
 
+def read_answers(d):
+    """The kept answers of the two measures in DIR, as grade/claims.py takes them: each file is named for its
+    session (repeats/<sessionId>.json) or for its session and model (reviews/<sessionId>/<model>/review.json)."""
+    answers = {"repeats": {}, "reviews": {}}
+    for p in sorted(glob.glob(os.path.join(d, "repeats", "*.json"))):
+        answers["repeats"][os.path.basename(p)[:-5]] = read_json(p)
+    for p in sorted(glob.glob(os.path.join(d, "reviews", "*", "*", "review.json"))):
+        sid, model = p.split(os.sep)[-3:-1]
+        answers["reviews"].setdefault(sid, {})[model] = read_json(p)
+    return answers
+
+
 SHEET_USAGE = ("usage: transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR] | "
                "sheet --transcript FILE... --out DIR [--labels DIR]")
 
@@ -1539,6 +1551,8 @@ def cmd_sheet(args):
     except PermissionError as e:
         say(str(e))
         return 2
+    import claims
+    answers = read_answers(d) if not o["files"] else {}  # a transcript file alone has no folder of answers
     done, failed, made = 0, 0, {"new": 0, "kept": 0, "stale": 0}
     for sid, path in todo:
         try:
@@ -1559,7 +1573,8 @@ def cmd_sheet(args):
                         records.append((rec, text, None if text is not None else "it is not in the session's last commit"))
                     except LookupError as e:
                         records.append((rec, None, f"it cannot be read ({e})"))
-            text = labels.sheet(lines, sid, os.path.join(o["labels"], sid + ".txt"), records, redact_text, commits)
+            text = labels.sheet(lines, sid, os.path.join(o["labels"], sid + ".txt"), records, redact_text, commits,
+                                claims.sheet_lines(sid, answers, redact_text))
         except (OSError, ValueError, LookupError, fields.Unparsable) as e:
             say(f"{path or sid}: {e}; no sheet")
             failed += 1
@@ -2191,7 +2206,7 @@ def cmd_report(args):
     for fname, why in bad:
         say(f"{os.path.join(lab, fname)}: {why}; the file is rejected")
     checked = {"labels": found, "problems": bad, "files": len(found) + len({n for n, _ in bad}), "here": here}
-    text = report.build(rows, entries, judges, checked, read, redact_text, skills_in)
+    text = report.build(rows, entries, judges, checked, read, redact_text, skills_in, read_answers(d))
     if text is None:
         say(f"no score rows in {d}/scores" + (" or the store" if store else "") + " and no session in "
             f"{d}/sessions; run transcripts grade first")

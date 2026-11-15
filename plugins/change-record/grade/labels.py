@@ -7,6 +7,8 @@ A label file, grade/labels/<sessionId>.txt, is plain lines:
     transcript: sha256:<64 hex> lines:<n>
     labelled-by: <name>, <date>
     <step>: <pass|fail|na> | <one-line reason>      one line for each of fields.STEPS
+    said-again: wrong <id>... | right <id>...       may be there: rulings on a measure's claims
+    defects: wrong <id>... | right <id>...          (claims.py), by the ids the sheet shows
 
 `transcript` is the hash of the transcript the label was made from: a label whose transcript
 has since changed is stale and is not counted. A step with nothing before the `|` is not
@@ -32,6 +34,8 @@ VERDICTS = {"pass": PASS, "fail": FAIL, "na": NA, "n/a": NA, "not_applicable": N
 SHOWN = {PASS: "pass", FAIL: "fail", NA: "not applicable"}
 TRANSCRIPT = re.compile(r"^sha256:([0-9a-f]{64}) lines:(\d+)$")
 KINDS = ("false_fail", "false_pass", "false_na")
+CLAIM_LINES = ("said-again", "defects")  # a person's rulings on the claims of the two measures (claims.py)
+CLAIM_ID = re.compile(r"^[0-9a-f]{6}$")
 
 
 # ---- the label file ----------------------------------------------------------------------
@@ -50,8 +54,27 @@ def stub(sid, sha, n):
             + "".join(f"{s}:\n" for s in fields.STEPS))
 
 
+def rulings(line, value, problems):
+    """{"wrong": [id], "right": [id]} from the text after a ruling line's colon; what is wrong with it goes to problems."""
+    got = {"wrong": [], "right": []}
+    for part in [x.strip() for x in value.split("|") if x.strip()]:
+        word, ids = part.split()[0].lower(), part.split()[1:]
+        if word not in got:
+            problems.append(f"{line}: {part[:40]!r} is neither `wrong <id>...` nor `right <id>...`")
+        elif got[word]:
+            problems.append(f"{line}: {word} is there twice")
+        for i in ids if word in got and not got[word] else []:
+            if not CLAIM_ID.match(i):
+                problems.append(f"{line}: {i[:40]!r} is not a claim's id (six hex digits, as the sheet shows them)")
+            elif i not in got[word]:
+                got[word].append(i)
+    problems += [f"{line}: {i} is ruled both wrong and right" for i in got["wrong"] if i in got["right"]]
+    return got
+
+
 def parse(text):
-    """(label, problems). label: session, sha256, lines, by, steps {step: (verdict or None, reason)}."""
+    """(label, problems). label: session, sha256, lines, by, steps {step: (verdict or None, reason)},
+    claims {ruling line: {"wrong": [id], "right": [id]}}."""
     seen, problems, steps = {}, [], {}
     for raw in text.splitlines():
         ln = raw.strip()
@@ -59,7 +82,7 @@ def parse(text):
             continue
         key, sep, value = ln.partition(":")
         key, value = key.strip(), value.strip()
-        if not sep or key not in ("session", "transcript", "labelled-by") + tuple(fields.STEPS) + tuple(rubric.RETIRED):
+        if not sep or key not in ("session", "transcript", "labelled-by") + tuple(fields.STEPS) + tuple(rubric.RETIRED) + CLAIM_LINES:
             problems.append(f"unknown line {ln[:40]!r}")
         elif key in seen:
             problems.append(f"{key} is there twice")
@@ -93,10 +116,12 @@ def parse(text):
             problems.append(f"{q}: unknown label {word!r} ({', '.join(rubric.LABELS[q])} or na)")
         elif word and not reason:
             problems.append(f"{q}: a label needs a one-line reason after |")
-    if any(v for v, _ in steps.values()) and not seen.get("labelled-by"):
+    claims = {line: rulings(line, seen.get(line) or "", problems) for line in CLAIM_LINES}
+    ruled = any(ids for got in claims.values() for ids in got.values())
+    if (ruled or any(v for v, _ in steps.values())) and not seen.get("labelled-by"):
         problems.append("verdicts with no labelled-by: a person's name and the date")
     label = {"session": seen.get("session"), "sha256": m.group(1) if m else None, "lines": int(m.group(2)) if m else None,
-             "by": seen.get("labelled-by") or None, "steps": steps}
+             "by": seen.get("labelled-by") or None, "steps": steps, "claims": claims}
     return label, problems
 
 
@@ -359,8 +384,12 @@ def own_commits(commits):
     return f"The session's own commits, in the repository: `{log} {last[:10]}` (the history begins with this session)."
 
 
-def sheet(lines, sid, label_path, records=None, redact=None, commits=None):
+def sheet(lines, sid, label_path, records=None, redact=None, commits=None, claims=None):
     """The sheet for one session, as Markdown.
+
+    claims: the lines of the section that lists what the two measures claim about the session
+    (claims.sheet_lines), put last and announced at the top: it is the one part of a sheet that
+    holds what a model concluded.
 
     records: [(path, text or None, note)] for each record the session's calls or Change: lines
     name, as it stood at the session's last commit, or why it cannot be shown; None when the
@@ -396,6 +425,8 @@ def sheet(lines, sid, label_path, records=None, redact=None, commits=None):
            "concluded from it. Judge each step from the calls below. A call did something only if its own result shows it "
            "ran: one that was denied, refused, interrupted or never answered did nothing.", "",
            f"Transcript: {n_lines} lines, sha256 {sha[:10]}. Lines of subagents kept inline are left out, as the graders leave them out.", "",
+           ] + (["Two measures made claims about this session. They are at the end, under Claims to rule, apart from "
+                 "the steps: read the session first.", ""] if claims else []) + [
            own_commits(commits), "",
            "## The steps", ""]
     for step, question, na, ptrs in QUESTIONS:
@@ -420,7 +451,7 @@ def sheet(lines, sid, label_path, records=None, redact=None, commits=None):
             keep = 60 if (kind == "user" and first_user) or n == last else 4 if kind == "injected" else 12
             first_user = first_user and kind != "user"
             out += [f"**[{n}] {who}:**", ""] + block(clip(red(x), keep, 0, 600)) + [""]
-    return "\n".join(out).rstrip("\n") + "\n"
+    return "\n".join(out + list(claims or [])).rstrip("\n") + "\n"
 
 
 def named_records(lines):
