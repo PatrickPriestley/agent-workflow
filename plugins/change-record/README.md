@@ -193,6 +193,7 @@ turns of reading the repository and 3.62 dollars.
     transcripts judge --transcript FILE --record FILE [--judge claude|opencode]
     transcripts judge --repeats [DIR] (--session ID... | --limit N) [--again]
     transcripts judge --repeats --transcript FILE... --out DIR [--again]
+    transcripts judge --review [DIR] (--session ID... | --limit N) [--repo-dir REPO] [--model sonnet|opus] [--again] [--local]
     transcripts report [DIR] [--store] [--labels DIR]
     transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR]
     transcripts sheet --transcript FILE... --out DIR [--labels DIR]
@@ -404,6 +405,52 @@ has cost about 1.5 cents) before the first. A kept answer is for the message it 
 not asked for again without `--again`; an answer that did not count (not JSON, a refusal, an
 error, another model) is kept as what it is and asked for again at the next run.
 `--transcript FILE... --out DIR` does the same for transcript files.
+
+**Defects shown.** `transcripts judge --review` measures the code a session left (the same
+record; it replaces the `code-quality` rubric, whose judge could not run anything and approved
+what a reviewer who ran the code blocked). For each chosen session's own commits in
+`--repo-dir`, a fresh Claude session (Sonnet, or `--model opus`) with a shell, `Read`, `Grep`
+and `Glob` is given the brief in `grade/briefs/review.md`. The brief demands a method: read
+every changed file, write down each guarantee the change states, try to break each with inputs
+the tests do not use, at least fifteen experiments. The reviewer leaves each defect it
+reproduced as a script, `.review/<name>.sh`, that exits 0 only when it shows the defect.
+
+Nothing the reviewer says is taken on trust. The tool copies the scripts out and runs each
+one itself, from the root of a clean clone, at the session's last commit and at its base. A
+defect is **shown** only if its script exits 0 at the last commit and not at the base, within
+two minutes, and leaves the clone as it was. A script that passes everywhere, or shows
+something the session inherited, is counted under its reason and not as a defect. The answer
+is kept in `<DIR>/reviews/<sessionId>/<model>/`: `review.json` (each defect with an id made
+from its script, its kind, what the reviewer said of it, and its status), the scripts, what
+each printed at each commit, and the reviewer's event stream. The count is a floor, not a
+verdict: a reviewer finds different defects on different runs, so none shown is weak evidence
+of none.
+
+What the reviewer and its scripts can reach:
+
+- The reviewer works in a scratch clone that holds the history up to the session's last commit
+  and nothing else: no remote, no ref, no later commit, so a later fix cannot be read from it.
+- It runs in Claude Code's sandbox with reading the repository and the archive denied. Before
+  the first review of a run, one Haiku call checks that the sandbox holds: a write beside the
+  reviewer's folder and a read of the repository must both fail, or nothing is reviewed. In the
+  sandbox it has no network and can write only in its clone and in the sandbox's own temporary
+  area (`/tmp/claude-<uid>`), which other Claude Code sessions on the machine also use.
+- A review whose commands name the repository's path is kept, marked as having looked outside
+  its clone, and its defects are not counted.
+- The scripts are shell commands a model wrote, so the tool runs them in a box (`bwrap`): no
+  network, the file system read-only but for the clone and an empty `/tmp`, the repository,
+  the archive and your home folder hidden, the environment cleared. Where no box can be
+  started (a Mac has no `bwrap`) it refuses, unless you pass `--local`: the scripts then run
+  with your own access.
+- The reviewer reads the clone's files as they are, and what it reads goes to the model
+  unredacted. Run it on sessions in repositories you already work in with Claude Code.
+
+It makes no call until you choose the sessions, with `--session ID` or `--limit N` (at most ten
+a run), and prints the sessions, the calls and the most they can cost first ($1.50 a review;
+the probes cost $0.21 to $0.56). A kept review is for its model, its brief and the session's
+last commit, and is not made again without `--again`; one that did not finish (no answer, an
+error, past twenty minutes, looked outside) is kept as what it is and made again at the next
+run.
 
 **The agreement check.** `transcripts judge --judge opencode` asks `opencode-go/kimi-k3.1-pro`
 the same prompts through `opencode run`, with an agent that may use no tool and project config

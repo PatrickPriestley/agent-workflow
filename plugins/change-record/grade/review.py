@@ -138,7 +138,8 @@ def check_sandbox(root, repo, settings):
     if not (os.path.exists(os.path.join(d, f"inside-{r}")) and os.path.exists(os.path.join(d, f"done-{r}"))):
         return f"the check did not run (exit {rc}): {(out or '').strip()[-200:]}"
     if leaked:
-        return "a write outside the reviewer's folder went through"
+        return ("a write outside the reviewer's folder went through, to " + root + ". The sandbox leaves its own temporary "
+                "area writable: if that folder lies inside it, set TMPDIR to a folder that does not")
     read = os.path.join(d, f"read-{r}")
     if os.path.exists(read) and os.path.getsize(read) > 0:
         return "the repository could be read"

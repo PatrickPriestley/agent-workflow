@@ -17,6 +17,7 @@
   transcripts probe --agent codex|cursor [--out DIR]
   transcripts judge --repeats [DIR] (--session ID... | --limit N) [--again]
   transcripts judge --repeats --transcript FILE... --out DIR [--again]
+  transcripts judge --review [DIR] (--session ID... | --limit N) [--repo-dir REPO] [--model sonnet|opus] [--again] [--local]
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
 transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
@@ -113,6 +114,12 @@ judge --repeats sends each chosen session's closing message, redacted, to Claude
 lists what the message says twice; the quotes are checked against the message and the share of
 points said again is kept in DIR/repeats (grade/repeats.py). No call is made until the sessions
 are chosen with --session or --limit.
+
+judge --review runs, for each chosen session's own commits, a reviewer with a shell in a scratch
+clone and in Claude Code's sandbox, and counts as shown only the defects whose scripts the tool
+itself sees exit 0 at the session's last commit and not at its base, each run in a bwrap box
+(grade/review.py). The answers are kept in DIR/reviews. No call is made until the sessions are
+chosen with --session or --limit.
 
 probe is a Codex or Cursor hook command that writes a sample of what the hook passed, holding
 structure and no content, to DIR (default grade/fixtures/agents): see probe/agent_sample.py.
