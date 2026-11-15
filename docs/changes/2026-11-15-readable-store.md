@@ -201,30 +201,36 @@ machine that holds the read key.
   planted before the fill, a row planted under the same key with another text, and a row
   left out are each reported.
 - R7. `transcripts push` sends a chunk's rows after the chunk, in the requests of R5,
-  each request whether or not the store already had the chunk. A request is all or none
-  (R3), and both senders write whole requests, so a 409 means the request is there,
-  unless another hand wrote one of its rows (C9). The push cannot read, so it tells the
-  two apart by the chunk: for a chunk it has just stored, nothing of its own can be
-  there, and a 409 is followed by that request's rows one at a time, each 409 counted as
-  stored; for a chunk the store already had, a 409 is taken as there, and what another
-  hand left missing is for `transcripts messages`, which can read. Rows never hold back a
-  chunk, a part or the index row. When a request of rows is refused, whatever the answer, or gets no
-  answer, the push goes on to the next chunk, and the part's number is kept in the
-  session's sent state as owing rows. A session that owes rows counts as unsent, and
-  each later push sends an owing part's rows again, chunk by chunk as it was first cut,
-  and strikes the part off when every request was stored or 409. The push's last line
-  says how many parts owe rows; its exit status is what it would have been. The push's
-  own time limit ends it as today, wherever it falls; the part it was in is sent again,
-  rows and all. Check: the store suite: after a push the rows are there and `--check` is
+  each request whether or not the store already had the chunk. Rows never hold back a
+  chunk, a part or the index row. When a request of rows is refused, whatever the
+  answer, or gets no answer, the push goes on to the next chunk, and the request is kept
+  in the session's sent state as owed: its part, its chunk's place in the part, and its
+  own place among the chunk's requests. A session that owes a request counts as unsent,
+  and each later push sends its owed requests again, cut from the part as they first
+  were, and strikes each off when it is stored. A request is all or none (R3) and both
+  senders write whole requests, so a 409 means the request is there, unless another hand
+  wrote some of its rows (C9, or the command filling single rows). The push cannot read,
+  so it goes by what it knows it has not stored: a 409 on a request of a chunk it has
+  just stored, or on an owed request, is followed by that request's rows one at a time,
+  each 409 counted as stored, and an owed request is struck off only when every row was
+  stored or 409. A 409 on a request of a part that is being sent again after a stopped
+  push is taken as there: the push may have stored it itself, and what another hand left
+  missing in it is for `transcripts messages`, which can read. The push's last line says
+  how many requests are owed; its exit status is what it would have been. The push's own
+  time limit ends it as today, wherever it falls; the part it was in is sent again, rows
+  and all. Check: the store suite: after a push the rows are there and `--check` is
   clean; a second push sends nothing; with one row of a new chunk's request planted
   before the push, the push sends that request's rows one at a time and the others are
-  there; with one row of an owing part's request planted, the push takes the 409 and
-  strikes the part off, `--check` names the rows that are missing, and `transcripts
-  messages` fills them; with the stand-in answering 404 to `messages` (the
-  SQL not yet run) the chunks and the index row are stored, `materialize` rebuilds the
-  session, the exit status is 0, the last line names one part owing, and a push after
-  the stand-in takes rows fills it and `--check` is clean; the same with 503 on the
-  second of a chunk's two requests.
+  there; with the stand-in answering 404 to `messages` (the SQL not yet run) the chunks
+  and the index row are stored, `materialize` rebuilds the session, the exit status is
+  0, the last line names the requests owed, and a push after the stand-in takes rows
+  stores them and `--check` is clean; the same with 503 on the second of a chunk's two
+  requests, where only that one is owed and sent again; with one row of an owed request
+  stored by another hand before the retry, the retry sends the request's rows one at a
+  time, strikes it off, and `--check` is clean; and with a part sent again after a
+  stopped push, one row of one request planted and the rest of that request missing,
+  the push takes the 409, `--check` names the missing rows and `transcripts messages`
+  fills them.
 - R8. `plugins/change-record/README.md` says how to read one session and how to search
   every session in the dashboard, with the SQL for each, what the table leaves out, that
   rows can be missing until `transcripts messages` or the owing machine's next push, and
@@ -317,9 +323,10 @@ exists. It is the one place where C1's "whole" does not hold.
 ### C9: whoever holds the hooks' key can write what the owner reads
 The hooks' key can already insert a made-up session. With this table it can also insert a
 row that the chunk does not bear out, before the honest sender does. The honest sender's
-request is then answered 409: for a chunk it has just stored it sends the rows one at a
-time, so only the planted row stands; for a chunk the store already had, the request's
-other rows wait for `transcripts messages` (R7).
+request is then answered 409: for a chunk it has just stored, or a request it owes, it
+sends the rows one at a time, so only the planted row stands; for a part being sent
+again after a stopped push, the request's other rows wait for `transcripts messages`
+(R7).
 Recommended and ruled: accept it, as for sessions: the key is on the owner's machines only, the
 view reads one named shape, so rows under another are not shown, and `transcripts
 messages --check` (R6) reports every row the chunks do not bear out. What it costs:
@@ -349,15 +356,16 @@ view does not share the fault.
   first draft's "a failure to store the rows is reported as the chunk's failure is", by
   which a table meant for people could have stopped `materialize` from seeing a session,
   for every session until the owner had run the SQL (found by the review).
-- A sender remembers which parts owe rows and tries them again; the command finds what is
-  missing from the store itself. Rejected: the command alone, which leaves a gap until
+- A sender remembers which requests of rows it owes and tries them again; the command
+  finds what is missing from the store itself. Rejected: the command alone, which leaves a gap until
   someone with the read key acts (found by the review); and the sender's memory alone,
   which another machine's gap, or a planted row, would escape.
 - Every request of rows is sent whether or not the chunk was new. The requests of a
   chunk are cut by one rule for `push` and `transcripts messages`, and the command sends
   either a whole request or single rows, so that nothing the tool does leaves a request
-  half there. A 409 on a chunk just stored is followed by the rows one at a time; on a
-  chunk the store had, it is taken as there. Rejected: sending only the first request
+  half there. A sender keeps what it owes request by request, and a 409 on a request it
+  knows it has not stored (a chunk just stored, or an owed request) is followed by the
+  rows one at a time; on a part sent again after a stop it is taken as there. Rejected: sending only the first request
   for a chunk the store had, which loses the second request of a stopped push (found by
   the record's review); rows one at a time after every 409, which is thousands of
   requests each time a stopped part is sent again; and a 409 always taken as there,
@@ -413,7 +421,7 @@ view does not share the fault.
    rebuilds, in order; and the owner reads a session in the dashboard.
 3. **The push.** `transcripts push` sends rows and remembers parts that owe them. Test:
    `bin/transcripts-store.test.sh`. Red today: a push stores no row, says nothing of
-   rows, and keeps no part as owing. Real use: a push of a real session from a machine
+   rows, and keeps no request as owed. Real use: a push of a real session from a machine
    with the hooks' key, timed with rows and without (C6), then `--check` clean on it; and
    the error path of Checks.
 
@@ -424,8 +432,8 @@ view does not share the fault.
 suites. The review of each pull request by another model family is the pr-agent job.
 Real use: each task's, above. Error path: a push while the store answers 404 for the new
 table, as it does before the owner has run the SQL: the session's chunks and index row
-are stored, `materialize` rebuilds it, the push says a part owes rows, and the next push
-after the SQL is run fills it. The independent reviewer should attack: a row that holds
+are stored, `materialize` rebuilds it, the push says what it owes, and the next push
+after the SQL is run stores it. The independent reviewer should attack: a row that holds
 text the chunk does not, or text not redacted; a way for the hooks' key to read; a push
 that holds anything back for its rows; and the view showing a copy `materialize` would
 not rebuild.
@@ -470,8 +478,13 @@ The review of the approval pull request, by another model family (pr-agent, 2026
 one finding, right. R7 took every 409 on a request of rows as the request being there,
 and the command filled missing rows in requests of its own cutting, so a push could
 strike a part off with rows missing. The two senders now cut a chunk's rows by one rule,
-the command sends whole requests or single rows, and a 409 on a chunk just stored is
-followed by the rows one at a time (R5, R7, Decisions).
+the command sends whole requests or single rows, what is owed is kept request by
+request, and a 409 on a request the sender knows it has not stored (a chunk just stored,
+or an owed request) is followed by the rows one at a time (R5, R7, Decisions). The first
+answer left the owed case trusting the 409; the reviewer's second pass held the finding,
+rightly. What is left is a part sent again after a stopped push whose request another
+hand has half written, which the sender cannot tell from its own earlier request; that
+is C9's case and the command's to mend.
 
 ## Appendix A: the table and the view, as run in the probe
 
