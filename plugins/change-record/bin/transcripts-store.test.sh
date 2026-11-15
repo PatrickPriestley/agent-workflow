@@ -420,6 +420,13 @@ wrong = [t for t in cases if tr.redact_emails(t) != plain.sub("<redacted:email>"
 print("same" if not wrong else "differ", len(cases) - len(wrong))
 for t in wrong[:4]:  # which, when they differ: a difference seen on one machine only cannot be found without them
     print("input %r | redactor %r | pattern %r" % (t, tr.redact_emails(t), plain.sub("<redacted:email>", t)), "| python", sys.version.split()[0])
+if wrong:  # and what this program was when it reached Python: its pattern, and whether that pattern knows an address at all
+    simple = "jane.doe@example.org"
+    print("the pattern as compiled: %r | it finds %r: %s | a plainer one does: %s | the tool's domain pattern does: %s"
+          % (plain.pattern, simple, bool(plain.search(simple)), bool(re.search("[a-z.]+@[a-z.]+", simple)),
+             bool(tr.EMAIL_DOMAIN.match("example.org"))))
+    for piece in ("[A-Za-z0-9._%+-]+", "[A-Za-z0-9._%+-]+@", "[a-z.]+(?:@|%40)", "[A-Za-z0-9._%+-]+(?:@|%40)", "[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+"):
+        print("  %r finds: %r" % (piece, (re.search(piece, simple) or [None])[0]))
 PY
 )"
 it "redaction of a long run of letters, digits and dots takes well under a second, not a time that grows with its square"
