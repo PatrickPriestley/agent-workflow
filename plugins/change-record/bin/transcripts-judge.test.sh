@@ -1241,12 +1241,13 @@ assert_eq "0 reviewed 4" "$rc $(rj "$VJ" 'd["status"] + " " + str(d["shown"])')"
 has "$(cat "$VAR/reviews/$V1/sonnet/runs/box.sh.last.out" 2>&1)" "variable: []"
 it "a script that prints without end is stopped at its time with only the end of its output kept, not all of it held in memory"
 printf 'while :; do printf "%%01000d\\n" 7; done\n' > "$TMPROOT/noisy.sh"; mkdir -p "$TMPROOT/noisy-clone"
-assert_eq "None True" "$(cd "$here/../grade" && python3 -B -c '
-import sys
+assert_eq "None True True" "$(cd "$here/../grade" && python3 -B -c '
+import sys, tracemalloc
 sys.dont_write_bytecode = True
 import review
+tracemalloc.start()
 code, out = review.run_script(sys.argv[1], sys.argv[2], [], False, 2)
-print(code, len(out) <= review.OUTPUT_CAP)' "$TMPROOT/noisy.sh" "$TMPROOT/noisy-clone" 2>&1)"
+print(code, len(out) <= review.OUTPUT_CAP, tracemalloc.get_traced_memory()[1] < 5_000_000)' "$TMPROOT/noisy.sh" "$TMPROOT/noisy-clone" 2>&1)"
 it "more than ten sessions are not reviewed in one run"
 out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out" "at most 10"
 
