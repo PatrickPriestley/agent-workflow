@@ -8,3 +8,4 @@ red-first: pass | made up: a run failed before the code
 change-line: fail | made up: the description opens with Summary
 record-check: na | made up: nothing to judge
 outcome-filled: na | made up: nothing to judge
+defects: right 5609ac

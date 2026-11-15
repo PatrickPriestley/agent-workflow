@@ -1,0 +1,69 @@
+{
+  "measure": "repeats/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "served_model": "claude-sonnet-made-up",
+  "cost_usd": 0.01,
+  "detail": null,
+  "answer": "(made up)",
+  "status": "counted",
+  "points": 10,
+  "pairs": [
+    {
+      "id": "cb33eb",
+      "first": "Point 1 is made.",
+      "again": "Point 1, again."
+    },
+    {
+      "id": "336aee",
+      "first": "Point 2 is made.",
+      "again": "Point 2, again."
+    },
+    {
+      "id": "e6e1ee",
+      "first": "Point 3 is made.",
+      "again": "Point 3, again."
+    },
+    {
+      "id": "57cca9",
+      "first": "Point 4 is made.",
+      "again": "Point 4, again."
+    },
+    {
+      "id": "651a0b",
+      "first": "Point 5 is made.",
+      "again": "Point 5, again."
+    },
+    {
+      "id": "f40a5a",
+      "first": "Point 6 is made.",
+      "again": "Point 6, again."
+    },
+    {
+      "id": "6f9038",
+      "first": "Point 7 is made.",
+      "again": "Point 7, again."
+    },
+    {
+      "id": "223edf",
+      "first": "Point 8 is made.",
+      "again": "Point 8, again."
+    },
+    {
+      "id": "54c323",
+      "first": "Point 9 is made.",
+      "again": "Point 9, again."
+    }
+  ],
+  "said_again": 9,
+  "quotes_not_found": 0,
+  "same_quote_twice": 0,
+  "share": 0.9,
+  "session_id": "b3000000-0000-0000-0000-000000000003",
+  "message": {
+    "characters": 100,
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "entry": 3
+  },
+  "asked_at": "2026-11-12T09:00:00+00:00"
+}

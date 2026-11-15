@@ -1,0 +1,22 @@
+{
+  "measure": "review/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "last": "cccccccccccccccccccccccccccccccccccccccc",
+  "boxed": true,
+  "shown": 0,
+  "defects": [],
+  "unverified": 1,
+  "experiments": 15,
+  "looked_outside": false,
+  "commands": 20,
+  "cost_usd": 0.5,
+  "served_model": "claude-sonnet-made-up",
+  "turns": 20,
+  "seconds": 200,
+  "status": "reviewed",
+  "session_id": "b4000000-0000-0000-0000-000000000004",
+  "reviewed_at": "2026-11-12T10:00:00+00:00",
+  "changed_lines": 120
+}

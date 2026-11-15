@@ -1,0 +1,77 @@
+{
+  "measure": "review/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "last": "cccccccccccccccccccccccccccccccccccccccc",
+  "boxed": true,
+  "shown": 2,
+  "defects": [
+    {
+      "id": "f454a3",
+      "script": "defect-1.sh",
+      "named": true,
+      "kind": "crash",
+      "file": "greet.py",
+      "what": "made up",
+      "guarantee": "made up: greet.py greets",
+      "last": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "base": {
+        "exit": 1,
+        "changed_the_clone": false
+      },
+      "status": "shown"
+    },
+    {
+      "id": "b4af27",
+      "script": "defect-2.sh",
+      "named": true,
+      "kind": "stated guarantee broken",
+      "file": "greet.py",
+      "what": "made up",
+      "guarantee": "made up: greet.py greets",
+      "last": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "base": {
+        "exit": 1,
+        "changed_the_clone": false
+      },
+      "status": "shown"
+    },
+    {
+      "id": "662740",
+      "script": "defect-3.sh",
+      "named": true,
+      "kind": "wrong result",
+      "file": "greet.py",
+      "what": "made up",
+      "guarantee": "made up: greet.py greets",
+      "last": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "base": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "status": "shown at the base too"
+    }
+  ],
+  "unverified": 1,
+  "experiments": 15,
+  "looked_outside": false,
+  "commands": 20,
+  "cost_usd": 0.5,
+  "served_model": "claude-sonnet-made-up",
+  "turns": 20,
+  "seconds": 200,
+  "status": "reviewed",
+  "session_id": "b3000000-0000-0000-0000-000000000003",
+  "reviewed_at": "2026-11-12T10:00:00+00:00",
+  "changed_lines": 400
+}

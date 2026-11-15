@@ -1,0 +1,59 @@
+{
+  "measure": "review/1",
+  "model": "opus",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "last": "cccccccccccccccccccccccccccccccccccccccc",
+  "boxed": true,
+  "shown": 2,
+  "defects": [
+    {
+      "id": "f7c8a1",
+      "script": "defect-4.sh",
+      "named": true,
+      "kind": "data lost or leaked",
+      "file": "greet.py",
+      "what": "made up",
+      "guarantee": "made up: greet.py greets",
+      "last": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "base": {
+        "exit": 1,
+        "changed_the_clone": false
+      },
+      "status": "shown"
+    },
+    {
+      "id": "093586",
+      "script": "defect-5.sh",
+      "named": false,
+      "kind": "other",
+      "file": "greet.py",
+      "what": "made up",
+      "guarantee": "made up: greet.py greets",
+      "last": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "base": {
+        "exit": 1,
+        "changed_the_clone": false
+      },
+      "status": "shown"
+    }
+  ],
+  "unverified": 1,
+  "experiments": 15,
+  "looked_outside": false,
+  "commands": 20,
+  "cost_usd": 0.5,
+  "served_model": "claude-opus-made-up",
+  "turns": 20,
+  "seconds": 200,
+  "status": "reviewed",
+  "session_id": "b3000000-0000-0000-0000-000000000003",
+  "reviewed_at": "2026-11-12T10:00:00+00:00",
+  "changed_lines": 400
+}

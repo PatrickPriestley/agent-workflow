@@ -113,6 +113,59 @@ Of 5 sessions here, 4 used a skill and 1 used none. A session used a skill when 
 | change-record:change | 4 |
 | none | 1 |
 
+## Said again
+
+How much of a session's closing message says a point a second time, as Claude Sonnet took the message apart (`transcripts judge --repeats`). A pair is counted only when both of its quotes are in the message and differ. It is a count, with no label and no pass rate. 3 of 5 sessions here have a counted answer.
+
+### change-record:change, blob 11111111
+
+| Session | Points | Said again | Share |
+|---|---|---|---|
+| a1000000 | 6 | 2 | 0.33 |
+| a2000000 | 4 | 0 | 0.00 |
+| Together (2) | 10 | 2 | 0.20 |
+
+### change-record:change, blob 22222222
+
+| Session | Points | Said again | Share |
+|---|---|---|---|
+| b3000000 | 10 | 9 | 0.90 |
+
+Not counted: b4000000 (malformed: the answer holds no JSON object with a list of points).
+
+Its error: 20% (2 of 10 ruled pairs wrong). A person rules a pair by the id the session's sheet shows, in the session's label file: `said-again: wrong <id>... | right <id>...`; under 10 ruled, the measure is not yet checked.
+
+Ruled wrong: b3000000 `cb33eb` `336aee`.
+
+Stale rulings, not counted: b3000000 `0a0b0c`. No counted answer here for the session holds the id: it was asked again and answered differently, or the id is not the sheet's.
+
+## Defects shown
+
+The defects a reviewer that runs the code could show in a session's own commits (`transcripts judge --review`): each is a script that exits 0 at the session's last commit and not at its base. The count is a floor: a reviewer shows different defects on different runs, so none shown is weak evidence of none. Changed lines are the lines added plus the lines removed between the base and the last commit, binary files left out. No label and no pass rate. 3 of 5 sessions here have a counted review.
+
+### change-record:change, blob 11111111
+
+| Session | Reviewer | Changed lines | Defects shown | Per 1,000 lines | Kinds |
+|---|---|---|---|---|---|
+| a2000000 | sonnet | unknown | 1 | - | 1 wrong result |
+
+### change-record:change, blob 22222222
+
+| Session | Reviewer | Changed lines | Defects shown | Per 1,000 lines | Kinds |
+|---|---|---|---|---|---|
+| b3000000 | sonnet | 400 | 2 | 5.0 | 1 crash, 1 stated guarantee broken |
+| b3000000 | opus | 400 | 2 | 5.0 | 1 data lost or leaked, 1 not named in the answer |
+| b4000000 | sonnet | 120 | 0 | 0.0 | none |
+| Together (2) | sonnet | 520 | 2 | 3.8 | 1 crash, 1 stated guarantee broken |
+
+Not counted: a1000000 sonnet (looked outside).
+
+Its error: not yet checked (3 of 10 ruled defects needed). A person rules a defect by the id the session's sheet shows, in the session's label file: `defects: wrong <id>... | right <id>...`; under 10 ruled, the measure is not yet checked.
+
+Ruled wrong: b3000000 `f7c8a1`.
+
+Stale rulings, not counted: b4000000 `ffffff`. No counted answer here for the session holds the id: it was asked again and answered differently, or the id is not the sheet's.
+
 ## Judge agreement
 
 The Haiku judge and opencode-go/kimi-k3.1-pro agree on 2 of 3 judgments (67%), over 2 sessions judged by both. Below 80%: per C3, the default judge should move to the other model family.

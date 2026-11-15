@@ -1,0 +1,41 @@
+{
+  "measure": "review/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "last": "cccccccccccccccccccccccccccccccccccccccc",
+  "boxed": true,
+  "shown": 0,
+  "defects": [
+    {
+      "id": "f454a3",
+      "script": "defect-1.sh",
+      "named": true,
+      "kind": "crash",
+      "file": "greet.py",
+      "what": "made up",
+      "guarantee": "made up: greet.py greets",
+      "last": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "base": {
+        "exit": 1,
+        "changed_the_clone": false
+      },
+      "status": "shown"
+    }
+  ],
+  "unverified": 1,
+  "experiments": 15,
+  "looked_outside": true,
+  "commands": 20,
+  "cost_usd": 0.5,
+  "served_model": "claude-sonnet-made-up",
+  "turns": 20,
+  "seconds": 200,
+  "status": "looked outside",
+  "session_id": "a1000000-0000-0000-0000-000000000001",
+  "reviewed_at": "2026-11-12T10:00:00+00:00",
+  "changed_lines": 50
+}

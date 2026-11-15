@@ -1,0 +1,40 @@
+{
+  "measure": "review/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "last": "cccccccccccccccccccccccccccccccccccccccc",
+  "boxed": true,
+  "shown": 1,
+  "defects": [
+    {
+      "id": "5609ac",
+      "script": "defect-1.sh",
+      "named": true,
+      "kind": "wrong result",
+      "file": "greet.py",
+      "what": "greets bob@example.org by the wrong name",
+      "guarantee": "made up: greet.py greets",
+      "last": {
+        "exit": 0,
+        "changed_the_clone": false
+      },
+      "base": {
+        "exit": 1,
+        "changed_the_clone": false
+      },
+      "status": "shown"
+    }
+  ],
+  "unverified": 1,
+  "experiments": 15,
+  "looked_outside": false,
+  "commands": 20,
+  "cost_usd": 0.5,
+  "served_model": "claude-sonnet-made-up",
+  "turns": 20,
+  "seconds": 200,
+  "status": "reviewed",
+  "session_id": "a2000000-0000-0000-0000-000000000002",
+  "reviewed_at": "2026-11-12T10:00:00+00:00"
+}

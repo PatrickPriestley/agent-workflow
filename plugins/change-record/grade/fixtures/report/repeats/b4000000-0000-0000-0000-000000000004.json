@@ -1,0 +1,23 @@
+{
+  "measure": "repeats/1",
+  "model": "sonnet",
+  "brief_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "served_model": "claude-sonnet-made-up",
+  "cost_usd": 0.01,
+  "detail": "the answer holds no JSON object with a list of points",
+  "answer": "I would rather not.",
+  "status": "malformed",
+  "points": 0,
+  "pairs": [],
+  "said_again": 0,
+  "quotes_not_found": 0,
+  "same_quote_twice": 0,
+  "share": null,
+  "session_id": "b4000000-0000-0000-0000-000000000004",
+  "message": {
+    "characters": 5,
+    "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "entry": 2
+  },
+  "asked_at": "2026-11-12T09:00:00+00:00"
+}

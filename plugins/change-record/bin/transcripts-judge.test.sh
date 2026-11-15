@@ -671,6 +671,76 @@ lacks "$r" "#### red-first, a1000000"
 it "R4: each grader's error is measured on its own rows"
 has "$r" "| red-first | fields/2 | 1 | 1 | not yet checked | 0 | 1 | 0 | 0 |"
 has "$r" "| red-first | fields/1 | 4 | 1 | not yet checked | 1 | 0 | 0 | 1 |"
+
+echo "checkable-judges R4 and R5: the two measures in the report and the sheet, each checked claim by claim"
+rep="$(report "$RFIX" 2>&1)"
+it "R4: said again per session and per skill version, a count with no label and no pass rate"
+has "$rep" "| a1000000 | 6 | 2 | 0.33 |"; has "$rep" "| Together (2) | 10 | 2 | 0.20 |"; has "$rep" "3 of 5 sessions here have a counted answer"
+it "R4: defects shown by reviewer and kind, the changed lines, the count per 1,000 of them, and that it is a floor"
+has "$rep" "| b3000000 | sonnet | 400 | 2 | 5.0 | 1 crash, 1 stated guarantee broken |"
+has "$rep" "| b3000000 | opus | 400 | 2 | 5.0 | 1 data lost or leaked, 1 not named in the answer |"
+has "$rep" "| Together (2) | sonnet | 520 | 2 | 3.8 | 1 crash, 1 stated guarantee broken |"; has "$rep" "The count is a floor"
+it "R4: a review kept from before the changed lines were counted says so and gives no rate"
+has "$rep" "| a2000000 | sonnet | unknown | 1 | - | 1 wrong result |"
+it "R4: an answer that was not counted, and a review that looked outside its clone, are named and not counted"
+has "$rep" "Not counted: b4000000 (malformed: the answer holds no JSON object with a list of points)."
+has "$rep" "Not counted: a1000000 sonnet (looked outside)."
+it "R5: a measure's error is the claims ruled wrong over the claims ruled, from ten ruled on; a ruling counts for a review of either model"
+has "$rep" "Its error: 20% (2 of 10 ruled pairs wrong)."; has "$rep" "Ruled wrong: b3000000 \`cb33eb\` \`336aee\`."
+has "$rep" "Its error: not yet checked (3 of 10 ruled defects needed)."; has "$rep" "Ruled wrong: b3000000 \`f7c8a1\`."
+it "R5: a ruling on an id no counted answer of the session holds is stale: listed, and not counted"
+has "$rep" "Stale rulings, not counted: b3000000 \`0a0b0c\`."; has "$rep" "Stale rulings, not counted: b4000000 \`ffffff\`."
+it "R5: with one ruling fewer the measure is not yet checked"
+copy nine; sed -i.bak 's/ 223edf / /' "$TMPROOT/nine/labels/$R3.txt"
+has "$(report "$TMPROOT/nine" 2>&1)" "Its error: not yet checked (9 of 10 ruled pairs needed)."
+it "R5: a session asked again and answered differently leaves its old rulings stale, and a ruling on a review that looked outside is stale too"
+copy asked; python3 - "$TMPROOT/asked" "$R3" "$R1" <<'PY2'
+import json, sys
+d, r3, r1 = sys.argv[1:]
+p = f"{d}/repeats/{r3}.json"; doc = json.load(open(p))
+doc["pairs"] = [dict(x, id="%06x" % n) for n, x in enumerate(doc["pairs"])]; json.dump(doc, open(p, "w"))
+open(f"{d}/labels/{r1}.txt", "a").write("defects: right f454a3\n")
+PY2
+r="$(report "$TMPROOT/asked" 2>&1)"
+has "$r" "Its error: not yet checked (2 of 10 ruled pairs needed)."
+has "$r" "Stale rulings, not counted: b3000000 \`cb33eb\` \`336aee\` \`e6e1ee\` \`57cca9\` \`651a0b\` \`f40a5a\` \`6f9038\` \`0a0b0c\`."
+has "$r" "Stale rulings, not counted: a1000000 \`f454a3\`; b4000000 \`ffffff\`."
+it "R5: a ruling line that is malformed is rejected with a reason that says what is wrong with it, not as an unknown line"
+# badline LINE: the report's complaint about the first session's label file with LINE added to it
+badline() { copy badline; printf '%s\n' "$1" >> "$TMPROOT/badline/labels/$R5.txt"; report "$TMPROOT/badline" 2>&1 >/dev/null; }
+out="$(badline 'said-again: wrong 12345 | right abcdef')"
+has "$out" "$R5.txt: said-again: '12345' is not a claim's id (six hex digits, as the sheet shows them); the file is rejected"; lacks "$out" "unknown line"
+has "$(badline 'defects: maybe abcdef')" "defects: 'maybe abcdef' is neither \`wrong <id>...\` nor \`right <id>...\`"
+has "$(badline 'defects: wrong abcdef | right abcdef')" "defects: abcdef is ruled both wrong and right"
+has "$(badline 'said-again: wrong abcdef | wrong 123456')" "said-again: wrong is there twice"
+it "R5: a ruling needs a person's name and date like a verdict does, and a line with no ruling is no ruling"
+copy unsigned; sed -i.bak 's/^labelled-by:.*/labelled-by:/' "$TMPROOT/unsigned/labels/$R5.txt"; printf 'defects: right abcdef\n' >> "$TMPROOT/unsigned/labels/$R5.txt"
+has "$(report "$TMPROOT/unsigned" 2>&1 >/dev/null)" "$R5.txt: verdicts with no labelled-by"
+copy blank; printf 'said-again:\ndefects:\n' >> "$TMPROOT/blank/labels/$R5.txt"
+assert_eq "" "$(report "$TMPROOT/blank" 2>&1 >/dev/null)"
+it "R5: every text the two sections take from an answer is redacted, and an answer that is not what the measure writes is not counted, with no traceback"
+copy leak3; python3 - "$TMPROOT/leak3" "$R4" "$EMAIL" <<'PY2'
+import json, sys
+d, r4, email = sys.argv[1:]
+p = f"{d}/repeats/{r4}.json"; doc = json.load(open(p)); doc["detail"] = "refused, see " + email; json.dump(doc, open(p, "w"))
+p = f"{d}/reviews/{r4}/sonnet/review.json"; doc = json.load(open(p)); doc.update(status="error", detail="no clone for " + email); json.dump(doc, open(p, "w"))
+json.dump(["not", "an", "answer"], open(f"{d}/repeats/odd.json", "w"))
+json.dump({"status": "reviewed", "defects": "many", "changed_lines": "lots"}, open(f"{d}/reviews/{r4}/opus/review.json", "w"))
+PY2
+r="$(report "$TMPROOT/leak3" 2>&1)"; rc=$?
+assert_eq 0 "$rc"; lacks "$r" "$EMAIL"; lacks "$r" "Traceback"
+has "$r" "Not counted: b4000000 (malformed: refused, see <redacted:email>)."
+has "$r" "b4000000 sonnet (error: no clone for <redacted:email>)"; has "$r" "| b4000000 | opus | unknown | 0 | - | none |"
+it "R5: the sheet lists a session's pairs and its shown defects with their ids, redacted, and says how to rule them"
+copy sheets; (cd "$TMPROOT" && "$T" sheet "$TMPROOT/sheets" --labels "$TMPROOT/sheets/labels" > /dev/null 2>&1)
+s3="$(cat "$TMPROOT/sheets/sheets/$R3.md" 2>&1)"; s1="$(cat "$TMPROOT/sheets/sheets/$R1.md" 2>&1)"
+has "$s3" "## Claims to rule"; has "$s3" "- \`cb33eb\`: \"Point 1 is made.\" and again \"Point 1, again.\""
+has "$s3" "- \`f7c8a1\` (opus, data lost or leaked, in greet.py): made up"; has "$s3" "reviews/$R3/opus/scripts/defect-4.sh"
+has "$s3" "\`said-again: wrong <id>... | right <id>...\`"
+it "R5: a script that also passes at the base is no claim, nor is a defect of a review that looked outside; and an address in a pair is redacted"
+lacks "$s3" "662740"; lacks "$s1" "f454a3"; lacks "$s1" "alice@example.org"; has "$s1" "\"Write to <redacted:email> for the key.\""
+it "R5: a session with no claim has no such section in its sheet"
+lacks "$(cat "$TMPROOT/sheets/sheets/$R5.md" 2>&1)" "Claims to rule"
 it "a folder with no score rows is an error"
 mkdir -p "$TMPROOT/empty"; (cd "$TMPROOT" && "$T" report "$TMPROOT/empty" > /dev/null 2>&1); assert_eq 1 "$?"
 
@@ -1126,6 +1196,7 @@ RV="$VROOT/rv"; mkdir -p "$RV"; (
   printf 'the same\n' > twin-a; printf 'the same\n' > twin-b
   git add -A && at 09 commit -qm init
   printf 'import sys\nargs = sys.argv[1:]\nnames = [a for a in args if a != "--shout"]\ntext = "Hello, " + names[0] + "!"\nprint(text.upper() if "--shout" in args else text)\n' > greet.py
+  printf 'a\0b\n' > picture.bin   # a binary file: its lines are not counted
   git add -A && at 10 commit -qm "feat: shout"
   printf 'the fix\n' > answer.txt; git add -A && at 12 commit -qm "fix: no name"
   git checkout -q --orphan side && git rm -rqf . && printf 'x\n' > side.txt && git add -A && at 10:40 commit -qm "a line of its own" && git checkout -q main
@@ -1241,6 +1312,8 @@ st() { py -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" | ".join(
 assert_eq "defect-1.sh shown named | defect-2.sh shown at the base too named | defect-3.sh not shown at the last commit named | defect-4.sh timed out named | defect-5.sh changed the clone named | defect-6.sh named and missing named | box.sh shown not named | defect-7.sh changed the clone not named | defect-8.sh changed the clone not named | escape.sh shown not named | extra.sh shown not named" "$(st)"
 assert_eq "reviewed 4 False 2 1 0.3 $VB $VL" "$(rj "$VJ" '" ".join(str(d[k]) for k in ("status", "shown", "looked_outside", "experiments", "unverified", "cost_usd", "base", "last"))')"
 has "$out" "${V1:0:8} review: 4 defects shown (1 crash, 3 not named in the answer); not counted: 1 shown at the base too, 1 not shown at the last commit, 1 timed out, 3 changed the clone, 1 named and missing"
+it "R4: the review keeps the lines the session changed, added plus removed, as git counts them, a binary file left out"
+assert_eq "7 $(git -C "$RV" diff --numstat "$VB" "$VL" | awk '$1 != "-" { n += $1 + $2 } END { print n }')" "$(rj "$VJ" 'd.get("changed_lines")') 7"
 it "R3: a shown defect's id is made from its script, and what the reviewer said of it is kept, redacted"
 assert_eq "$(sha256sum "$FRD/.review/defect-1.sh" | cut -c1-6) crash greet.py" "$(rj "$VJ" '" ".join(d["defects"][0][k] for k in ("id", "kind", "file"))')"
 lacks "$(cat "$VJ" 2>/dev/null)" "$EMAIL"; has "$(cat "$VJ" 2>/dev/null)" "<redacted:email>"

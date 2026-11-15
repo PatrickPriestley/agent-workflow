@@ -8,3 +8,4 @@ red-first: pass | made up: run-tests.sh printed a failed test before greet.py wa
 change-line: na | made up: nothing to judge
 record-check: na | made up: nothing to judge
 outcome-filled: na | made up: nothing to judge
+defects: wrong ffffff

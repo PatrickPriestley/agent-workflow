@@ -8,3 +8,5 @@ red-first: pass | made up: a run failed before the code
 change-line: pass | made up: the last message is the Change: line
 record-check: na | made up: nothing to judge
 outcome-filled: na | made up: nothing to judge
+said-again: wrong cb33eb 336aee | right e6e1ee 57cca9 651a0b f40a5a 6f9038 223edf 0a0b0c
+defects: right f454a3 | wrong f7c8a1
