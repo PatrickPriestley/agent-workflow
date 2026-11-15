@@ -40,7 +40,7 @@ jobs:
         run: bash bin/agent-review.test.sh
       - name: plan skill scripts
         run: for t in skills/plan/scripts/test-*.sh; do bash "$t"; done
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: PR-Agent config and review skill
