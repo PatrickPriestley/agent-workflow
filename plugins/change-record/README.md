@@ -191,6 +191,8 @@ turns of reading the repository and 3.62 dollars.
     transcripts grade --transcript FILE [--cwd DIR]
     transcripts judge [DIR] [--session ID]... [--repo-dir DIR] [--judge claude|opencode] [--limit N] [--store] [--verbose]
     transcripts judge --transcript FILE --record FILE [--judge claude|opencode]
+    transcripts judge --repeats [DIR] (--session ID... | --limit N) [--again]
+    transcripts judge --repeats --transcript FILE... --out DIR [--again]
     transcripts report [DIR] [--store] [--labels DIR]
     transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR]
     transcripts sheet --transcript FILE... --out DIR [--labels DIR]
@@ -384,6 +386,24 @@ also sends the rows of sessions judged at an earlier run that did not store them
 not: a judge file is marked `stored_at` when all of its rows went.
 `--verbose` prints each prompt and vote. `--transcript FILE --record FILE` judges one record and
 prints everything, writing nothing.
+
+**Said twice.** `transcripts judge --repeats` measures the prose a session ended on (record
+`docs/changes/2026-11-15-checkable-judges.md`; it replaces the `verbosity` rubric, which gave a
+label no judge could match). It sends each chosen session's closing message, redacted as for
+the store, to Claude Sonnet once, with no tools, with the brief in `grade/briefs/repeats.md`:
+list the points the message makes, each with a quote of where it is first said and, when it is
+told a second time, a quote of where. Nothing in the answer is taken on trust. A point counts
+only if its quote is in the message that was sent, a pair only if both quotes are and differ
+(compared with backticks and asterisks removed, white space run together and case lowered). It
+keeps, in `<DIR>/repeats/<sessionId>.json`: the points, the pairs, each with an id made from
+its two quotes, the quotes that were not found, and the share of points said again. It gives
+a number, not a verdict: what share is too much is the reader's call. It makes no call until
+you choose the sessions, with `--session ID` or `--limit N` (the newest N not yet answered),
+and it prints the sessions, the calls and the most they can cost (25 cents each; a call
+has cost about 1.5 cents) before the first. A kept answer is for the message it was given and is
+not asked for again without `--again`; an answer that did not count (not JSON, a refusal, an
+error, another model) is kept as what it is and asked for again at the next run.
+`--transcript FILE... --out DIR` does the same for transcript files.
 
 **The agreement check.** `transcripts judge --judge opencode` asks `opencode-go/kimi-k3.1-pro`
 the same prompts through `opencode run`, with an agent that may use no tool and project config

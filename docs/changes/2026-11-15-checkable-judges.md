@@ -387,6 +387,14 @@ chat, 2026-11-15.
 - An answer is kept until `--again`, and a review's answers are kept per model, so that
   rulings made on one run are not lost to the next and two models can be compared on the
   same sessions.
+- Decided while building task 1. `--repeats --transcript FILE...` takes `--out DIR` for the
+  answers, as `sheet --transcript` does; R1 named no place for them. A kept answer is for
+  the message it was given: when the session has since written a later one it is asked
+  again, with no `--again`. A point that is not an object counts among the quotes not
+  found, and a pair listed twice counts once, as the probe counted them. The model's
+  answer is kept redacted as well as the message, since a model can write what it was not
+  sent. One call may spend 25 cents (`--max-budget-usd 0.25`), sixteen times what a call
+  has cost.
 
 ## Tasks
 
@@ -518,3 +526,51 @@ The session's closing message follows the last line.
      "experiments": ["one line each: what you tried and what happened"]}
 
 ## Outcome
+
+### Task 1: repeats
+
+Built test first: 27 assertions of `bin/transcripts-judge.test.sh` failed before the code
+(`--repeats` a usage error), committed red, then `grade/repeats.py`, `grade/briefs/
+repeats.md` and `cmd_repeats` in `bin/transcripts`. One assertion then failed for a reason
+of the code's own: the model's answer was kept as given, and the stand-in's answer held an
+address. Suites after: transcripts-judge 266, transcripts 350, transcripts-grade 212,
+transcripts-store 156, none failing.
+
+Guards shown by breaking them by hand, one at a time: 34 breaks. 30 were caught. Four
+survived and each was a gap in the tests, now closed and the break seen caught: a run that
+failed with a well-formed answer was read as an answer; the judge's call inheriting the
+caller's environment, and running in the caller's folder (the assertions for both could
+not fail); and a kept answer being used for a later closing message.
+
+Real use, in this container, Claude Sonnet, on three fixture sessions of this repository
+(made-up eval runs): one labelled verbose on 2026-11-12, one proportionate, one that wrote
+no code.
+
+```
+$ transcripts judge --repeats --transcript eval-04-d7098b89.jsonl.gz eval-09-9d1fcbcc.jsonl.gz eval-06-831141da.jsonl.gz --out <scratch>
+transcripts: 3 sessions to send to Claude Sonnet, 3 calls, at most $0.75: d7098b89, 9d1fcbcc, 831141da
+d7098b89 repeats: 10 of 18 points said again (0.56)
+9d1fcbcc repeats: 1 of 14 points said again (0.07)
+831141da repeats: 2 of 11 points said again (0.18)
+transcripts: repeats asked of 3 sessions into <scratch>/repeats, $0.04
+$ the same again, for the first two
+transcripts: repeats asked of 0 sessions into <scratch>/repeats, $0.00; 2 already answered
+$ transcripts judge --repeats <scratch>
+transcripts: nothing was sent: choose the sessions whose closing message goes to Claude Sonnet with --session ID or --limit N (the newest N)
+exit 2
+```
+
+The first two shares are the probe's (0.56, 0.07). Each answer was served by
+`claude-sonnet-5-5`, every quote was found, and the calls cost $0.011 to $0.020. Two of the
+pairs it kept, as a person would be shown them:
+
+```
+34282d | `greet.py` now takes `--shout` and prints the greeting in upper case. => `python3 greet.py [name] [--shout]` prints the greeting in upper case
+4c9a82 | I fixed the typo, but I couldn't commit it. => It's unstaged in the working tree.
+```
+
+The first is one point said twice. The second is arguable, which is what the rulings of
+task 3 are for. Spent on this task: $0.04.
+
+Not done here: the report and the sheet do not show the measure yet (task 3), and no claim
+has been ruled (task 4).

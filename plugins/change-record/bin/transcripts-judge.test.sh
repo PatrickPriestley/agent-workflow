@@ -81,8 +81,10 @@ if kind == "opencode":
     else:
         print(answers.get(mode, js))
     sys.exit(0)
+if os.environ.get("FAKE_ANSWER_FILE"):  # judge --repeats: the answer is whatever the test wrote there
+    answers["content"] = js = open(os.environ["FAKE_ANSWER_FILE"]).read()
 out = {"type": "result", "subtype": "success", "is_error": False, "stop_reason": "end_turn", "terminal_reason": "completed",
-       "result": answers.get(mode, js), "modelUsage": {"claude-%s-5-5" % asked: {"outputTokens": 20}}}
+       "result": answers.get(mode, js), "modelUsage": {"claude-%s-5-5" % asked: {"outputTokens": 20}}, "total_cost_usd": 0.015}
 rc = 0
 if mode == "refused":
     out.update(is_error=True, stop_reason="refusal", terminal_reason="api_error",
@@ -892,6 +894,122 @@ if [ "${TRANSCRIPTS_LIVE_JUDGE:-}" = 1 ]; then
   assert_eq "fail vote vote vote" "$(jv "$AR7/judges/$J6.claude.json" decisions-alternative) $(jst "$AR7/judges/$J6.claude.json" decisions-alternative)"
   assert_eq "fail fail fail" "$(py -c 'import json,sys; print(" ".join(v["verdict"] for v in json.load(open(sys.argv[1]))["questions"]["decisions-alternative"]["votes"]))' "$AR7/judges/$J6.claude.json")"
 fi
+
+echo "judge --repeats: how much of a closing message is said twice (record 2026-11-15-checkable-judges, R1 and R6)"
+RW="$TMPROOT/repeats"; mkdir -p "$RW"; BRIEF="$here/../grade/briefs/repeats.md"
+R1=e1000000-0000-0000-0000-000000000001; R2=e2000000-0000-0000-0000-000000000002; R3=e3000000-0000-0000-0000-000000000003
+# rsession ID HOUR CLOSING-FILE|none: a session that says "Starting.", runs one command and writes the closing message;
+# with none it only runs the command and writes nothing
+rsession() {
+  python3 - "$RW/$1.jsonl" "$1" "$2" "$3" "$REPO" <<'PY'
+import json, sys
+path, sid, hour, closing, cwd = sys.argv[1:]
+def line(minute, kind, content):
+    return json.dumps({"sessionId": sid, "timestamp": "2026-11-10T%s:%02d:00.000Z" % (hour, minute), "cwd": cwd, "gitBranch": "x",
+                       "type": kind, "message": {"role": kind, "content": content}})
+rows = [line(0, "user", "Add --shout.")]
+if closing != "none":
+    rows.append(line(1, "assistant", [{"type": "text", "text": "Starting."}]))
+rows += [line(2, "assistant", [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "python3 greet.py --shout ann"}}]),
+         line(3, "user", [{"type": "tool_result", "tool_use_id": "t1", "content": "HELLO, ANN!"}])]
+if closing != "none":
+    rows.append(line(4, "assistant", [{"type": "text", "text": open(closing).read()}]))
+    rows.append(line(5, "assistant", [{"type": "text", "text": "  \n"}]))   # an empty text is not the closing message
+open(path, "w").write("\n".join(rows) + "\n")
+PY
+}
+cat > "$RW/closing.md" <<EOF
+Done. The flag \`--shout\` works and **7 tests** pass.
+
+I did not run a mutation tool.
+
+## Description
+\`--shout\` is added. Seven tests pass now.
+Contact $EMAIL for the key.
+EOF
+rsession $R1 15 "$RW/closing.md"; rsession $R2 16 "$RW/closing.md"; rsession $R3 17 none
+# the answer the stand-in gives: two pairs, one point said once, and one of each thing that does not count
+cat > "$RW/answer.json" <<EOF
+Here it is.
+{"points": [
+ {"first": "The flag \`--shout\` works", "again": "--shout is  added"},
+ {"first": "7 tests pass", "again": "Seven tests pass now"},
+ {"first": "I did not run a mutation tool", "again": null},
+ {"first": "this quote is nowhere in the message", "again": null},
+ {"first": "Done.", "again": "the flag was never added"},
+ {"first": "Contact <redacted:email> for the key", "again": "contact <REDACTED:EMAIL> for the **key**"},
+ {"first": "Contact $EMAIL for the key", "again": null},
+ "not an object"
+]}
+EOF
+RAR="$TMPROOT/rar"
+for s in $R1 $R2 $R3; do (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$RAR" "$T" archive --transcript "$RW/$s.jsonl" < /dev/null > /dev/null 2>&1); done
+# run with an archive named in the environment, as a hook's shell has: the judge's own call must not inherit it
+repeats() { (cd "$TMPROOT" && AGENT_TRANSCRIPTS="$RAR" FAKE_ANSWER_FILE="$RW/answer.json" "$T" judge --repeats "$@" 2>&1); }
+rj() { py -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"d": d}))' "$1" "$2"; }
+pid() { python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\n"+sys.argv[2]).encode()).hexdigest()[:6])' "$1" "$2"; }
+
+it "R6: with neither --session nor --limit no call is made, and it says which two options choose the sessions"
+rm -f "$COUNTER"; : > "$FAKELOG"; out="$(repeats "$RAR")"; rc=$?
+assert_eq "2 0" "$rc $(calls)"; has "$out" "--session ID or --limit N"
+it "R6: before any call it prints the sessions it will send, the calls and the most they can cost"
+out="$(repeats "$RAR" --limit 1)"; rc=$?
+assert_eq "0 1" "$rc $(calls)"
+has "$out" "1 session to send to Claude Sonnet, 1 call, at most \$0.25: ${R2:0:8}"
+it "--limit takes the newest sessions that have a closing message; one with none is not sent and says so"
+has "$out" "${R3:0:8} not asked: the session wrote no message"
+[ -f "$RAR/repeats/$R2.json" ] && [ ! -e "$RAR/repeats/$R1.json" ] && [ ! -e "$RAR/repeats/$R3.json" ] && ok || bad "$(ls "$RAR/repeats" 2>&1)"
+it "R1: a known answer gives known numbers: points, pairs, quotes not found, same quote twice, the share"
+F="$RAR/repeats/$R2.json"
+assert_eq "counted 5 2 4 1 0.4" "$(rj "$F" '" ".join(str(d[k]) for k in ("status", "points", "said_again", "quotes_not_found", "same_quote_twice", "share"))')"
+has "$out" "${R2:0:8} repeats: 2 of 5 points said again (0.40); 4 quotes not found, 1 pair that is one quote twice"
+it "R1: each pair has the id made from its two quotes as compared, and keeps the quotes as given"
+assert_eq "$(pid "the flag --shout works" "--shout is added") $(pid "7 tests pass" "seven tests pass now")" "$(rj "$F" '" ".join(p["id"] for p in d["pairs"])')"
+assert_eq "The flag \`--shout\` works | --shout is  added" "$(rj "$F" 'd["pairs"][0]["first"] + " | " + d["pairs"][0]["again"]')"
+it "R1: it keeps which message it took: its place in the transcript and its length"
+assert_eq "4 $(python3 -c 'import sys; print(len(open(sys.argv[1]).read().replace(sys.argv[2], "<redacted:email>")))' "$RW/closing.md" "$EMAIL")" "$(rj "$F" 'str(d["message"]["entry"]) + " " + str(d["message"]["characters"])')"
+it "R1: what the model was sent is the brief and then the closing message, redacted; the judge file holds no address either"
+sent="$(py -c 'import json,sys; print(json.loads(open(sys.argv[1]).readlines()[-1])["prompt"], end="")' "$FAKELOG")"
+assert_eq "$(cat "$BRIEF" 2>&1; sed "s/$EMAIL/<redacted:email>/" "$RW/closing.md")" "$sent"
+lacks "$(cat "$F" 2>/dev/null)" "$EMAIL"
+it "the brief is Appendix A of the record, word for word"
+assert_eq "$(sed -n '/^## Appendix A/,/^## Appendix B/p' "$here/../../../docs/changes/2026-11-15-checkable-judges.md" | sed -n 's/^    //p; /^$/p' | sed -e '1,/./{/^$/d}' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')" "$(cat "$BRIEF" 2>&1)"
+it "the call: Sonnet, no tools, no settings, no saved session, a spending limit, in a folder of its own that is gone after, no archive in its environment"
+assert_eq "True" "$(py -c '
+import json,os,sys
+c=json.loads(open(sys.argv[1]).readlines()[-1]); a=c["argv"]
+def after(flag): return a[a.index(flag)+1]
+print(after("--model")=="sonnet" and after("--tools")=="" and after("--setting-sources")=="" and "--no-session-persistence" in a
+      and after("--max-budget-usd")=="0.25" and c["AGENT_TRANSCRIPTS"] is None
+      and os.path.basename(c["cwd"]).startswith("transcripts-repeats-") and not os.path.exists(c["cwd"]) and c["cwd"] != sys.argv[2])' "$FAKELOG" "$TMPROOT")"
+it "a session that has an answer for this brief and this message is not asked again; --again asks"
+before="$(calls)"; out="$(repeats "$RAR" --session $R2)"; assert_eq "0 $before" "$? $(calls)"; has "$out" "1 already answered"
+out="$(repeats "$RAR" --session $R2 --again)"; assert_eq "0 $((before + 1))" "$? $(calls)"
+it "an answer that is not JSON, a refusal, an error, a run that failed and another model's answer are each kept as what they are, with no pair, and asked again next time"
+for m in malformed refused error iserror haiku; do   # iserror: the answer is well formed, but the run says it failed
+  out="$(FAKE_SCRIPT="$(printf 'content,%.0s' $(seq "$(calls)"))$m" repeats "$RAR" --session $R1)"; rc=$?
+  want=$m; [ $m = haiku ] && want=error; [ $m = iserror ] && want=error
+  assert_eq "1 $want 0 None" "$rc $(rj "$RAR/repeats/$R1.json" '" ".join(str(d[k]) for k in ("status", "said_again", "share"))')"
+done
+has "$out" "served by claude-haiku-5-5, not Sonnet"
+before="$(calls)"; out="$(repeats "$RAR" --session $R1)"; assert_eq "0 $((before + 1)) counted" "$? $(calls) $(rj "$RAR/repeats/$R1.json" 'd["status"]')"
+it "an answer whose points are not a list is malformed, not a session with no repeats"
+printf '{"points": "none"}' > "$RW/odd.json"
+out="$(cd "$TMPROOT" && FAKE_ANSWER_FILE="$RW/odd.json" "$T" judge --repeats "$RAR" --session $R1 --again 2>&1)"; assert_eq "1 malformed" "$? $(rj "$RAR/repeats/$R1.json" 'd["status"]')"
+it "--transcript FILE... --out DIR judges transcript files into DIR, which is outside every working tree"
+RO="$TMPROOT/rout"; out="$(repeats --transcript "$RW/$R1.jsonl" "$RW/$R3.jsonl" --out "$RO")"; rc=$?
+assert_eq "0 counted 0.4" "$rc $(rj "$RO/repeats/$R1.json" 'd["status"] + " " + str(d["share"])')"; has "$out" "${R3:0:8} not asked: the session wrote no message"
+it "a kept answer is for the message it was given: when the session has written a later one, it is asked again"
+before="$(calls)"; out="$(repeats --transcript "$RW/$R1.jsonl" --out "$RO")"; assert_eq "0 $before" "$? $(calls)"; has "$out" "1 already answered"
+cp "$RW/$R1.jsonl" "$RW/keep.jsonl"
+printf '{"sessionId":"%s","timestamp":"2026-11-10T15:09:00.000Z","cwd":"%s","gitBranch":"x","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"One more thing: the flag is documented."}]}}\n' "$R1" "$REPO" >> "$RW/$R1.jsonl"
+out="$(repeats --transcript "$RW/$R1.jsonl" --out "$RO")"; assert_eq "0 $((before + 1))" "$? $(calls)"
+assert_eq "6 39" "$(rj "$RO/repeats/$R1.json" 'str(d["message"]["entry"]) + " " + str(d["message"]["characters"])')"; mv "$RW/keep.jsonl" "$RW/$R1.jsonl"
+it "--out must be outside every working tree, and --transcript needs it"
+out="$(repeats --transcript "$RW/$R1.jsonl" --out "$REPO/out")"; assert_eq 2 "$?"; has "$out" "working tree"
+out="$(repeats --transcript "$RW/$R1.jsonl")"; assert_eq 2 "$?"; has "$out" "--out DIR"
+it "the record judge is as it was: it still runs with neither --session nor --limit"
+RAR2="$TMPROOT/rar2"; fresh "$RAR2" $J1; out="$(judge "$RAR2" --repo-dir "$REPO")"; assert_eq 0 "$?"; has "$out" "judged 1 sessions"
 
 echo
 echo "transcripts judge and report: $pass passed, $fail failed"

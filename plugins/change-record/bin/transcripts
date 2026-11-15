@@ -15,6 +15,8 @@
   transcripts accuracy [DIR] [--labels DIR]
   transcripts accuracy --transcript FILE... [--labels DIR]
   transcripts probe --agent codex|cursor [--out DIR]
+  transcripts judge --repeats [DIR] (--session ID... | --limit N) [--again]
+  transcripts judge --repeats --transcript FILE... --out DIR [--again]
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
 transcript_path, cwd), or takes --transcript PATH instead, and adds the transcript's new
@@ -106,6 +108,11 @@ fails, false passes and false n/a, then each disagreement with its session id, t
 not counted and why. A label whose transcript hash no longer matches is stale and is not
 counted. --transcript grades the files as `grade --transcript` does and compares those rows.
 It exits 1 when a label file is rejected (a missing step, an unknown verdict), 0 otherwise.
+
+judge --repeats sends each chosen session's closing message, redacted, to Claude Sonnet, which
+lists what the message says twice; the quotes are checked against the message and the share of
+points said again is kept in DIR/repeats (grade/repeats.py). No call is made until the sessions
+are chosen with --session or --limit.
 
 probe is a Codex or Cursor hook command that writes a sample of what the hook passed, holding
 structure and no content, to DIR (default grade/fixtures/agents): see probe/agent_sample.py.
@@ -1726,7 +1733,129 @@ def send_judged(url, key, path, doc, rows):
     return n
 
 
+REPEATS_USAGE = ("usage: transcripts judge --repeats [DIR] (--session ID... | --limit N) [--again]\n"
+                 "       transcripts judge --repeats --transcript FILE... --out DIR [--again]\n"
+                 "Each chosen session's closing message goes, redacted, to Claude Sonnet, which lists what it says twice; "
+                 "the answers are kept in DIR/repeats. --limit: the newest N sessions not yet answered. "
+                 "--again: ask though an answer is kept.")
+
+
+def cmd_repeats(args):
+    """judge --repeats: the share of each chosen session's closing message that is said twice (grade/repeats.py)."""
+    d, only, limit, again, files, out, i = None, [], None, False, [], None, 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--session", "--limit", "--out") and i + 1 < len(args):
+            if a == "--session":
+                only.append(args[i + 1])
+            elif a == "--limit":
+                limit = int(args[i + 1]) if args[i + 1].isdigit() else -1
+            else:
+                out = args[i + 1]
+            i += 2
+        elif a == "--transcript":
+            i += 1
+            while i < len(args) and not args[i].startswith("--"):
+                files.append(args[i])
+                i += 1
+        elif a == "--again":
+            again, i = True, i + 1
+        elif d is None and not a.startswith("--"):
+            d, i = a, i + 1
+        else:
+            say(REPEATS_USAGE)
+            return 2
+    if (limit is not None and limit < 1) or (files and (d or only or limit)) or (out and not files) or ("--transcript" in args and not files):
+        say(REPEATS_USAGE)
+        return 2
+    if files and not out:
+        say("--transcript needs --out DIR, a folder outside every working tree, for the answers")
+        return 2
+    if not files and not only and limit is None:
+        say("nothing was sent: choose the sessions whose closing message goes to Claude Sonnet with --session ID or --limit N "
+            "(the newest N)")
+        return 2
+    fields, _, _ = load_grade_modules()
+    import repeats
+    try:
+        d = folder_arg(out if files else d)
+    except PermissionError as e:
+        say(str(e))
+        return 2
+    found = []  # (newest first, session id, the transcript's lines or why there are none)
+    if files:
+        for path in files:
+            try:
+                lines = read_transcript(path)
+            except OSError as e:
+                lines = e
+            sid = os.path.basename(path).split(".")[0]
+            if not isinstance(lines, Exception):
+                sid = next((m.group(1).decode() for m in (re.search(rb'"sessionId":"([^"]+)"', ln) for ln in lines) if m), sid)
+            found.append((sid, lines))
+    else:
+        entries = {os.path.basename(p)[:-5]: read_json(p, {}) or {} for p in glob.glob(os.path.join(d, "sessions", "*.json"))}
+        for sid in sorted((s for s in entries if not only or s in only),
+                          key=lambda s: (entries[s].get("last_timestamp") or "", s), reverse=True):
+            try:
+                found.append((sid, session_lines(d, sid, entries[sid])))
+            except (OSError, LookupError) as e:
+                found.append((sid, e))
+        for sid in only:
+            if sid not in entries:
+                found.append((sid, LookupError(f"no session {sid} in {d}/sessions")))
+    todo, already, skipped = [], 0, 0
+    for sid, lines in found:
+        why = str(lines) if isinstance(lines, Exception) else None
+        if why is None:
+            try:
+                closing = repeats.closing_message(lines)
+            except fields.Unparsable as e:
+                closing, why = None, str(e)
+            if closing is None and why is None:
+                why = "the session wrote no message"
+        if why is not None:
+            print(f"{sid[:8]} not asked: {why}")
+            skipped += 1
+            continue
+        message, described = repeats.describe(closing[1], redact_text)
+        if not again and repeats.answered(read_json(os.path.join(d, "repeats", sid + ".json")), described):
+            already += 1
+            continue
+        todo.append((sid, message, dict(described, entry=closing[0])))
+    left = max(0, len(todo) - limit) if limit else 0
+    todo = todo[:limit] if limit else todo
+    if todo:
+        n = len(todo)
+        print(f"transcripts: {n} session{'s' if n != 1 else ''} to send to Claude Sonnet, {n} call{'s' if n != 1 else ''}, "
+              f"at most ${n * repeats.BUDGET:.2f}: {', '.join(s[:8] for s, _, _ in todo)}", flush=True)
+    asked = uncounted = 0
+    cost = 0.0
+    for sid, message, described in todo:
+        doc = dict(repeats.judge_message(message, redact_text), session_id=sid, message=described,
+                   asked_at=datetime.now().astimezone().isoformat(timespec="seconds"))
+        write_atomic(os.path.join(d, "repeats", sid + ".json"), (json.dumps(doc, indent=2) + "\n").encode())
+        asked += 1
+        cost += doc.get("cost_usd") or 0
+        if doc["status"] != "counted":
+            uncounted += 1
+            print(f"{sid[:8]} repeats: not counted ({doc['status']}): {doc['detail']}")
+            continue
+        extra = [f"{doc['quotes_not_found']} quote{'s' if doc['quotes_not_found'] != 1 else ''} not found" if doc["quotes_not_found"] else "",
+                 f"{doc['same_quote_twice']} pair{'s' if doc['same_quote_twice'] != 1 else ''} that {'are' if doc['same_quote_twice'] != 1 else 'is'} one quote twice"
+                 if doc["same_quote_twice"] else ""]
+        share = "no point counted" if doc["share"] is None else f"{doc['said_again']} of {doc['points']} points said again ({doc['share']:.2f})"
+        print(f"{sid[:8]} repeats: {share}" + "".join("; " + ", ".join(x for x in extra if x) for _ in [0] if any(extra)))
+    print(f"transcripts: repeats asked of {asked} session{'s' if asked != 1 else ''} into {d}/repeats, ${cost:.2f}"
+          + (f"; {already} already answered" if already else "") + (f"; {skipped} not asked" if skipped else "")
+          + (f"; {uncounted} not counted, asked again at the next run" if uncounted else "")
+          + (f"; {left} left for the next run (--limit {limit})" if left else ""))
+    return 1 if uncounted else 0
+
+
 def cmd_judge(args):
+    if "--repeats" in args:
+        return cmd_repeats([a for a in args if a != "--repeats"])
     d, only, repo, kind, limit, store, verbose, transcript, record_file, i = None, [], os.getcwd(), "claude", None, False, False, None, None, 0
     while i < len(args):
         a = args[i]
