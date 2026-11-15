@@ -721,32 +721,50 @@ has "$(report "$TMPROOT/unsigned" 2>&1 >/dev/null)" "$R5.txt: verdicts with no l
 copy blank; printf 'said-again:\ndefects:\n' >> "$TMPROOT/blank/labels/$R5.txt"
 assert_eq "" "$(report "$TMPROOT/blank" 2>&1 >/dev/null)"
 it "R5: every text the two sections take from an answer is redacted, and an answer that is not what the measure writes is not counted, with no traceback"
-copy leak3; python3 - "$TMPROOT/leak3" "$R4" "$EMAIL" <<'PY2'
+copy leak3; python3 - "$TMPROOT/leak3" "$R4" "$EMAIL" "$R1" <<'PY2'
 import json, os, sys
-d, r4, email = sys.argv[1:]
+d, r4, email, r1 = sys.argv[1:]
 p = f"{d}/repeats/{r4}.json"; doc = json.load(open(p)); doc["detail"] = "refused, see " + email; json.dump(doc, open(p, "w"))
 p = f"{d}/reviews/{r4}/sonnet/review.json"; doc = json.load(open(p)); doc.update(status="error", detail="no clone for " + email); json.dump(doc, open(p, "w"))
 json.dump(["not", "an", "answer"], open(f"{d}/repeats/odd.json", "w"))
 doc = json.load(open(f"{d}/repeats/a2000000-0000-0000-0000-000000000002.json"))   # a counted answer for a session the folder does not know
-json.dump(dict(doc, points=5), open(f"{d}/repeats/e9000000-0000-0000-0000-000000000009.json", "w"))
+json.dump(dict(doc, points=5, pairs=["no pair", {"first": "a pair with no id"}]), open(f"{d}/repeats/e9000000-0000-0000-0000-000000000009.json", "w"))
+# counted answers that are not what the measure writes: points that are no number, pairs that are no list; and one with no point
+json.dump(dict(doc, points="many"), open(f"{d}/repeats/e8000000-0000-0000-0000-000000000008.json", "w"))
+json.dump(dict(doc, pairs="none"), open(f"{d}/repeats/e7000000-0000-0000-0000-000000000007.json", "w"))
+json.dump(dict(doc, points=0), open(f"{d}/repeats/e6000000-0000-0000-0000-000000000006.json", "w"))
+# a review of no changed line, and a review whose defects are no list
+os.makedirs(f"{d}/reviews/e6000000-0000-0000-0000-000000000006/sonnet"); os.makedirs(f"{d}/reviews/{r1}/opus")
+json.dump({"status": "reviewed", "defects": [], "changed_lines": 0}, open(f"{d}/reviews/e6000000-0000-0000-0000-000000000006/sonnet/review.json", "w"))
+json.dump({"status": "reviewed", "defects": "many"}, open(f"{d}/reviews/{r1}/opus/review.json", "w"))
 os.makedirs(f"{d}/reviews/{r4}/opus")
 json.dump({"status": "reviewed", "defects": ["x", {"status": "shown"}], "changed_lines": "lots"}, open(f"{d}/reviews/{r4}/opus/review.json", "w"))
 PY2
 r="$(report "$TMPROOT/leak3" 2>&1)"; rc=$?
 assert_eq 0 "$rc"; lacks "$r" "$EMAIL"; lacks "$r" "Traceback"
-has "$r" "Not counted: b4000000 (malformed: refused, see <redacted:email>); odd (not an answer)."
+has "$r" "Not counted: b4000000 (malformed: refused, see <redacted:email>); e7000000 (not what the measure writes); e8000000 (not what the measure writes); odd (not an answer)."
+has "$r" "Not counted: a1000000 sonnet (looked outside); a1000000 opus (not what the measure writes); b4000000 sonnet (error: no clone for <redacted:email>)."
 has "$r" "b4000000 sonnet (error: no clone for <redacted:email>)"; has "$r" "| b4000000 | opus | unknown | 0 | - | none |"
 it "R4: lines that are unknown for one session are unknown for the sessions together; an answer for a session the folder does not know is shown apart"
 has "$r" "| Together (2) | opus | unknown | 2 | - | 1 data lost or leaked, 1 not named in the answer |"
-has "$r" "### Sessions with no index entry and no score row here"; has "$r" "| e9000000 | 5 | 0 | 0.00 |"; has "$r" "4 of 7 sessions here have a counted answer"
+has "$r" "### Sessions with no index entry and no score row here"; has "$r" "| e9000000 | 5 | 0 | 0.00 |"; has "$r" "5 of 10 sessions here have a counted answer"
+it "R4: an answer with no point has no share, and a review of no changed line has no rate"
+has "$r" "| e6000000 | 0 | 0 | - |"; has "$r" "| e6000000 | sonnet | 0 | 0 | - | none |"
 it "R5: the sheet lists a session's pairs and its shown defects with their ids, redacted, and says how to rule them"
-copy sheets; (cd "$TMPROOT" && "$T" sheet "$TMPROOT/sheets" --labels "$TMPROOT/sheets/labels" > /dev/null 2>&1)
-s3="$(cat "$TMPROOT/sheets/sheets/$R3.md" 2>&1)"; s1="$(cat "$TMPROOT/sheets/sheets/$R1.md" 2>&1)"
+copy sheets; R2=a2000000-0000-0000-0000-000000000002
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pairs"][1]["first"]="x" * 500; json.dump(d, open(p, "w"))' "$TMPROOT/sheets/repeats/$R3.json"
+(cd "$TMPROOT" && "$T" sheet "$TMPROOT/sheets" --labels "$TMPROOT/sheets/labels" > /dev/null 2>&1)
+s3="$(cat "$TMPROOT/sheets/sheets/$R3.md" 2>&1)"; s1="$(cat "$TMPROOT/sheets/sheets/$R1.md" 2>&1)"; s2="$(cat "$TMPROOT/sheets/sheets/$R2.md" 2>&1)"
 has "$s3" "## Claims to rule"; has "$s3" "- \`cb33eb\`: \"Point 1 is made.\" and again \"Point 1, again.\""
 has "$s3" "- \`f7c8a1\` (opus, data lost or leaked, in greet.py): made up"; has "$s3" "reviews/$R3/opus/scripts/defect-4.sh"
 has "$s3" "\`said-again: wrong <id>... | right <id>...\`"; has "$s3" "They are at the end, under Claims to rule"
 it "R5: a script that also passes at the base is no claim, nor is a defect of a review that looked outside; and an address in a pair is redacted"
 lacks "$s3" "662740"; lacks "$s1" "f454a3"; lacks "$s1" "alice@example.org"; has "$s1" "\"Write to <redacted:email> for the key.\""
+it "R5: the sheet has a part for pairs only where the session has a pair, and one for defects only where it has a shown defect"
+has "$s1" "### Said again"; lacks "$s1" "### Defects shown"; has "$s2" "### Defects shown"; lacks "$s2" "### Said again"
+it "R5: what a reviewer said of a defect is redacted in the sheet, and a long quote is cut to 400 characters"
+lacks "$s2" "bob@example.org"; has "$s2" "\`5609ac\` (sonnet, wrong result, in greet.py): greets <redacted:email> by the wrong name"
+has "$s3" "- \`336aee\`: \"$(printf 'x%.0s' $(seq 400)) [...]\" and again"; lacks "$s3" "$(printf 'x%.0s' $(seq 401))"
 it "R5: a session with no claim has no such section in its sheet"
 s5="$(cat "$TMPROOT/sheets/sheets/$R5.md" 2>&1)"; has "$s5" "# Label sheet: $R5"; lacks "$s5" "Claims to rule"
 it "a folder with no score rows is an error"
@@ -1323,6 +1341,9 @@ has "$out" "${V1:0:8} review: 4 defects shown (1 crash, 3 not named in the answe
 it "R4: the review keeps the lines the session changed, added plus removed, as git counts them, a binary file left out"
 assert_eq "5 5" "$(rj "$VJ" 'd.get("changed_lines")') $(git -C "$RV" diff --numstat "$VB" "$VL" | awk '$1 != "-" { n += $1 + $2 } END { print n }')"
 has "$(git -C "$RV" diff --numstat "$VB" "$VL")" "-	-	picture.bin"
+it "R4: when git cannot say what changed between two commits the review keeps no number, where it would otherwise keep 0"
+assert_eq "None 5" "$(cd "$here/../grade" && python3 -B -c 'import sys; sys.dont_write_bytecode = True; import review
+print(review.changed_lines(sys.argv[1], "0" * 40, sys.argv[2]), review.changed_lines(sys.argv[1], sys.argv[3], sys.argv[2]))' "$RV" "$VL" "$VB" 2>&1)"
 it "R3: a shown defect's id is made from its script, and what the reviewer said of it is kept, redacted"
 assert_eq "$(sha256sum "$FRD/.review/defect-1.sh" | cut -c1-6) crash greet.py" "$(rj "$VJ" '" ".join(d["defects"][0][k] for k in ("id", "kind", "file"))')"
 lacks "$(cat "$VJ" 2>/dev/null)" "$EMAIL"; has "$(cat "$VJ" 2>/dev/null)" "<redacted:email>"
