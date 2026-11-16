@@ -7,6 +7,7 @@
   transcripts scope [DIR]
   transcripts push [--session ID]... [--background]
   transcripts materialize DIR [--session ID]... [--repo-dir DIR]
+  transcripts messages [--session ID]... [--check]
   transcripts redact < lines > redacted-lines
   transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store]
   transcripts grade --transcript FILE [--cwd DIR]
@@ -142,7 +143,8 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+import zlib
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlsplit
 
 SCHEMA = 1
@@ -1226,6 +1228,229 @@ def cmd_materialize(args):
     print(f"transcripts: materialized {done} sessions into {out}" + (f", {failed} failed" if failed else ""))
     return 1 if failed else 0
 
+# ---- the store's text, for reading (record docs/changes/2026-11-15-readable-store.md) ----
+
+TEXT_BYTES = 3_000_000  # the most one text may be in a request's body; a longer one is stored cut
+ROWS_BYTES = 1_000_000  # the most a request of several rows may be; a row that is more goes alone
+ROW_FIELDS = ("at", "who", "kind", "tool", "call_id", "failed", "side", "text")
+AT = re.compile(r"^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)$")
+HALF_PAIR = re.compile("[\ud800-\udfff]")  # in a decoded string a surrogate is always a lone one
+
+
+def body_bytes(v):
+    """The bytes a value takes in a request's body, as `request` writes it: every non-ASCII character escaped."""
+    return len(json.dumps(v, separators=(",", ":")))
+
+
+def storable(s):
+    """A string PostgreSQL can hold: U+0000 is shown as U+2400 and half of a surrogate pair as U+FFFD."""
+    return HALF_PAIR.sub("\ufffd", s.replace("\x00", "\u2400"))
+
+
+def instant(s):
+    """The moment a timestamp names, when it has the form 2026-11-15T10:00:00Z (a fraction or none, Z or an
+    offset) and is a real date; None for anything else."""
+    m = AT.match(s) if isinstance(s, str) else None
+    if not m:
+        return None
+    try:
+        t = datetime(*(int(x) for x in m.group(1, 2, 3, 4, 5, 6)), tzinfo=timezone.utc)
+        if m.group(8) != "Z":
+            hours, minutes = int(m.group(8)[1:3]), int(m.group(8)[4:6])
+            if hours > 15 or minutes > 59:
+                return None
+            t -= timedelta(hours=hours, minutes=minutes) * (1 if m.group(8)[0] == "+" else -1)
+        return t + timedelta(microseconds=round(float("0" + m.group(7)) * 1_000_000) if m.group(7) else 0)
+    except (ValueError, OverflowError):
+        return None
+
+
+def cut_text(t):
+    """A text as one row may hold it: whole when its form in a request's body is at most TEXT_BYTES, else its
+    longest beginning that is, with a last line saying how many characters were left in the chunk."""
+    if len(t) * 12 + 2 <= TEXT_BYTES or body_bytes(t) <= TEXT_BYTES:
+        return t
+
+    def cut(k):
+        return t[:k] + f"\n[cut here: {len(t) - k} more characters of this text are in the chunk]"
+    fits, over = 0, len(t)  # one more character kept is never fewer bytes, so the longest that fits is found by halving
+    while over - fits > 1:
+        mid = (fits + over) // 2
+        if body_bytes(cut(mid)) <= TEXT_BYTES:
+            fits = mid
+        else:
+            over = mid
+    return cut(fits)
+
+
+def result_text(content):
+    """A tool result's content as text: a string as it is, a list as its text blocks joined by a newline with
+    each other block as its type in square brackets, nothing as an empty text, anything else as JSON."""
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        return "\n".join(b["text"] if b["type"] == "text" and isinstance(b.get("text"), str) else f"[{b['type']}]"
+                         for b in content if isinstance(b, dict) and b.get("type"))
+    return json.dumps(content, sort_keys=True, ensure_ascii=False)
+
+
+def message_rows(raw):
+    """The rows of one chunk for `messages`, read from its redacted bytes: one for each text, tool call and
+    tool result of each user or assistant line (the record's R4 says each field). The one rule both senders
+    of rows use; a change to it is a change of SHAPE, with a fixture of its own in store/fixtures."""
+    rows = []
+    for n, line in enumerate(raw.split(b"\n"), 1):
+        try:
+            d = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(d, dict) or d.get("type") not in ("user", "assistant"):
+            continue
+        content = d["message"].get("content") if isinstance(d.get("message"), dict) else None
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        at = d.get("timestamp") if instant(d.get("timestamp")) is not None else None
+
+        def row(block, who, kind, text, tool=None, call_id=None, failed=False):
+            tool, call_id = (storable(v)[:200] if isinstance(v, str) else None for v in (tool, call_id))
+            rows.append({"shape": SHAPE, "line": n, "block": block, "at": at, "who": who, "kind": kind, "tool": tool,
+                         "call_id": call_id, "failed": failed, "side": d.get("isSidechain") is True,
+                         "text": cut_text(storable(text))})
+        for b, block in enumerate(content if isinstance(content, list) else []):
+            kind = block.get("type") if isinstance(block, dict) else None
+            if kind == "text" and isinstance(block.get("text"), str) and block["text"].strip():
+                row(b, "assistant" if d["type"] == "assistant" else
+                    "context" if d.get("isMeta") is True or d.get("isCompactSummary") is True else "user", "text", block["text"])
+            elif kind == "tool_use" and d["type"] == "assistant":
+                row(b, "assistant", "call", json.dumps(block.get("input"), sort_keys=True, ensure_ascii=False),
+                    tool=block.get("name"), call_id=block.get("id"))
+            elif kind == "tool_result" and d["type"] == "user":
+                row(b, "tool", "result", result_text(block.get("content")), call_id=block.get("tool_use_id"),
+                    failed=block.get("is_error") is True)
+    return rows
+
+
+def row_requests(rows):
+    """A chunk's rows cut into requests, in order: each body at most ROWS_BYTES, a row that is more alone.
+    Whoever sends a chunk's rows cuts them by this, so its requests are the same from any sender."""
+    out, cur, size = [], [], 2
+    for r in rows:
+        b = body_bytes(r) + (1 if cur else 0)
+        if cur and size + b > ROWS_BYTES:
+            out.append(cur)
+            cur, size, b = [], 2, b - 1
+        cur.append(r)
+        size += b
+    return out + ([cur] if cur else [])
+
+
+def same_field(name, a, b):
+    """Whether a row's field as the chunk gives it and as the table holds it are one value: a time is compared
+    as the moment it names, since the table gives it back in its own form and to the microsecond."""
+    if name != "at" or a is None or b is None:
+        return a == b
+    a, b = instant(a), instant(b)
+    return a is not None and b is not None and abs(a - b) <= timedelta(microseconds=1)
+
+
+def so_many(n, what):
+    return f"{n} {what}{'' if n == 1 else 's'}"
+
+
+MESSAGES_USAGE = "usage: transcripts messages [--session ID]... [--check]"
+
+
+def cmd_messages(args):
+    only, check, i = [], False, 0
+    while i < len(args):
+        if args[i] == "--session" and i + 1 < len(args):
+            only.append(args[i + 1])
+            i += 2
+        elif args[i] == "--check":
+            check, i = True, i + 1
+        else:
+            say(MESSAGES_USAGE)
+            return 2
+    try:
+        url = store_url()
+        if url is None:
+            raise StoreError("messages needs AGENT_TRANSCRIPTS_URL, the store's URL")
+        key = key_file("read-key", required=True)
+    except StoreError as e:
+        say(str(e))
+        return 2
+    sessions, chunks, inserted, none, left_out, unfilled, compared = set(), 0, 0, 0, 0, 0, 0
+    found = {"missing": 0, "not the chunk's": 0, "differs": 0}
+    try:
+        q = "/rest/v1/chunks?select=session_id,stream,chunk_id&order=session_id,stream,chunk_id"
+        if only:
+            q += "&session_id=in.(" + ",".join(quote(x, safe="") for x in only) + ")"
+        for c in read_rows(url, key, q):
+            sid, stream, cid = c["session_id"], c["stream"], c["chunk_id"]
+            where = f"session_id=eq.{quote(sid, safe='')}&stream=eq.{quote(stream, safe='')}&chunk_id=eq.{quote(cid, safe='')}"
+            sessions.add(sid)
+            chunks += 1
+            try:
+                got = read_rows(url, key, f"/rest/v1/chunks?select=start_id,data&{where}&order=chunk_id")[0]
+                raw = gzip.decompress(base64.b64decode(got["data"]))
+                if chunk_id(got["start_id"], raw) != cid:
+                    raise ValueError("its bytes are not the ones its id was made from")
+            except (IndexError, KeyError, TypeError, ValueError, EOFError, OSError, zlib.error):
+                say(f"{sid} {stream}: chunk {cid[:12]} does not match its chain id; left out")
+                left_out += 1
+                continue
+            rows = [dict({"session_id": sid, "stream": stream, "chunk_id": cid}, **r) for r in message_rows(raw)]
+            want = {(r["line"], r["block"]): r for r in rows}
+            there = {(r["line"], r["block"]): r for r in read_rows(
+                url, key, f"/rest/v1/messages?select=line,block{',' + ','.join(ROW_FIELDS) if check else ''}"
+                          f"&{where}&shape=eq.{SHAPE}&order=line,block")}
+            if check:
+                compared += len(there)
+                for k in sorted(want.keys() | there.keys()):
+                    differ = [f for f in ROW_FIELDS if k in want and k in there and not same_field(f, want[k][f], there[k].get(f))]
+                    what = "missing" if k not in there else "not the chunk's" if k not in want else "differs" if differ else None
+                    if what:
+                        found[what] += 1
+                        print(f"{what}{' (' + ', '.join(differ) + ')' if differ else ''}: {sid} {stream} chunk {cid[:12]} "
+                              f"line {k[0]} block {k[1]}")
+                continue
+            added, failed = 0, None
+            try:
+                for req in row_requests(rows):
+                    missing = [r for r in req if (r["line"], r["block"]) not in there]
+                    if len(missing) == len(req) and insert(url, key, "messages", req):
+                        added += len(req)  # none of it was there: the request goes whole
+                    else:  # some of it is there, or was written while this ran: what is missing goes a row at a time
+                        added += sum(insert(url, key, "messages", [r]) for r in missing)
+            except StoreError as e:
+                if e.status is None:  # the store cannot be reached at all: the next chunk would fare no better
+                    raise
+                failed = e
+            inserted += added
+            if failed:
+                say(f"{sid} {stream}: chunk {cid[:12]} could not be filled: {failed}")
+                unfilled += 1
+            elif not added:
+                none += 1
+    except StoreError as e:
+        say(str(e))
+        return 1
+    tail = (f", {so_many(left_out, 'chunk')} left out" if left_out else "")
+    if check:
+        m, x, d = found["missing"], found["not the chunk's"], found["differs"]
+        bad = [s for n, s in ((m, f"{so_many(m, 'row')} missing"),
+                              (x, f"{so_many(x, 'row')} that {'is' if x == 1 else 'are'} not its chunk's"),
+                              (d, f"{so_many(d, 'row')} that differ{'s' if d == 1 else ''}")) if n]
+        print(f"transcripts: messages --check: {so_many(chunks, 'chunk')}"
+              + (f"; {', '.join(bad)}" if bad else f", {so_many(compared, 'row')}, each as its chunk gives it") + tail)
+        return 1 if bad or left_out else 0
+    print(f"transcripts: messages: read {so_many(chunks, 'chunk')} of {so_many(len(sessions), 'session')}, inserted "
+          f"{so_many(inserted, 'row')}, {so_many(none, 'chunk')} needed none" + tail
+          + (f", {so_many(unfilled, 'chunk')} could not be filled" if unfilled else ""))
+    return 1 if left_out or unfilled else 0
+
 # ---- grading ----
 
 GRADER = "fields/3"  # bump when a grader's rules change, so scores from two rule sets are not mixed
@@ -2260,6 +2485,8 @@ def main(argv):
         return cmd_push(argv[1:])
     if argv[:1] == ["materialize"]:
         return cmd_materialize(argv[1:])
+    if argv[:1] == ["messages"]:
+        return cmd_messages(argv[1:])
     if argv[:1] == ["grade"]:
         return cmd_grade(argv[1:])
     if argv[:1] == ["sheet"]:

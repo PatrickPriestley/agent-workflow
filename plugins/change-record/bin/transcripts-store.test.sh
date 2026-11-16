@@ -674,14 +674,14 @@ it "a store with chunks and no rows is filled: it says the chunks read, the rows
 out="$(messages)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "read 4 chunks of 1 session"; has "$out" "inserted 6 rows"; has "$out" "1 chunk needed none"
 it "the rows are each line's texts, calls and results, in the chunk they were read from, under the tool's shape"
-assert_eq "main 1 0 user text 1 main 1 0 assistant text 1 main 2 0 assistant call 1 main 2 0 user text 1 main 3 0 tool result 1 subagents/agent-a1 1 0 user text 1" \
+assert_eq "main 1 0 assistant text 1 main 1 0 user text 1 main 2 0 assistant call 1 main 2 0 user text 1 main 3 0 tool result 1 subagents/agent-a1 1 0 user text 1" \
   "$(stored | cut -d' ' -f1-6 | sort | tr '\n' ' ' | sed 's/ $//')"
 it "what is stored is the redacted text: no secret or address of the fixture is in any row or request"
 rows="$(get 'messages?select=*')"
 for s in "${SECRETS[@]}"; do lacks "$rows" "$s"; lacks "$(cat "$LOG")" "$s"; done
 has "$rows" "Mail <redacted:email> about it."; has "$rows" "Bearer <redacted:token>"
 it "each chunk's rows went in one request, a list, and a chunk with no row sent none"
-assert_eq "1 1 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "1 2 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
 it "a second run inserts nothing: every chunk needs none, the one whose lines give no row among them both times"
 before="$(posts | wc -l | tr -d ' ')"; out="$(messages)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "inserted 0 rows"; has "$out" "4 chunks needed none"; assert_eq "$before" "$(posts | wc -l | tr -d ' ')"
