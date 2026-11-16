@@ -727,12 +727,14 @@ What was built, where R6 and R7 left a choice:
 - The report lists the proposals a folder holds, whether or not it was graded.
 
 The real use, with the owner's leave ("Run it", in chat): the store's sessions rebuilt by
-`materialize`, and the labels of the repository.
+`materialize`, and the labels of the repository. It was run twice: once on the code as first
+built, and, after the three fixes below and the reviewer's asking, once on the final code.
+This is the second, at commit 546ba7c:
 
 ```
 $ transcripts propose <folder> --session bf01bd72... --step red-first
 transcripts: a proposed edit to change-record:change is in <folder>/proposals/bf01bd72.../red-first: SKILL.md, SKILL.diff and proposal.md; nothing else was changed
-exit 0, in 18 seconds; claude-sonnet-5-5, $0.14
+exit 0, in 18 seconds; claude-sonnet-5-5, $0.03
 $ transcripts propose <folder> --session bf01bd72... --step change-line        (the error path)
 transcripts: no label confirms that bf01bd72... failed change-line: a proposal is drafted only from a failure a person has labelled (transcripts sheet, then the session's file in plugins/change-record/grade/labels)
 exit 1
@@ -744,13 +746,22 @@ proposed edit adds to step 3 of the skill, and nothing else:
 
 ```
 +   nothing), commit the test, make it pass, run the whole suite, commit. Code is any file
-+   outside docs, tests and fixtures, a CI workflow file included: no such file is edited
-+   until a test run has reported a failed test. Reading and searching are not a run. When the
-+   test can only run in CI, push the test or job alone as a draft, read its red log, and only
-+   then write the fix. Where the repository
++   outside docs, tests and fixtures: a CI workflow, build file, config or script counts. Run
++   the test and see it fail before the first edit to any such file, even when the brief
++   names CI as the test; if it cannot be run red before that edit, stop and report rather than
++   edit first. Where the repository
 ```
 
-It named calls 8, 9, 11, 25, 43 and 63, each of which the label's reason names.
+Its page names blob 597d465d4d3c, calls 8, 25, 43 and 63, each of which the label's reason
+names, and says of `evals/red-first`: "Check that it shows this failure, and extend it if
+it does not".
+
+The first run (18 seconds, $0.14) drafted from the same label and the same file and gave
+another edit: the same first sentence, then "When the test can only run in CI, push the
+test or job alone as a draft, read its red log, and only then write the fix" where the
+second says to stop and report. So two runs give two edits for one failure, and they
+differ on what the agent should do, not only in words. A proposal is one draft to weigh,
+and the eval comparison of C5 is what chooses. The two calls cost $0.17 together.
 
 What that run showed of the tool, each fixed test first (8 assertions failing):
 
@@ -763,6 +774,11 @@ What that run showed of the tool, each fixed test first (8 assertions failing):
 - The page said the eval case "shows this failure". The case is chosen by the step, and
   `evals/red-first` asks for a flag whose tests run on the machine, not one whose test can run only in CI. The page now says to check
   that the case shows this failure and to extend it if it does not, and it names the blob.
+
+The review of this task's pull request, by another model family (pr-agent, 2026-11-16,
+on the first push): two findings. No line naming the reviewer: added with what it found.
+And that the real run was made before the three fixes and not again, so the evidence was
+not of the final program: right, and the run above is the one made again.
 
 Guards, each broken by hand in a clone of the repository: 40 breaks, 36 caught at the first
 run. The four that survived were gaps in the tests, each closed and broken again: a run
@@ -829,8 +845,7 @@ Not done:
   when the eval comparison improves with it: no case shows this failure yet, so the next
   step is a case that does (a change whose test can run only in CI), run with the edit and
   without. That is a change of its own.
-- The proposal's page from the real run was written before the three fixes above, so its
-  words are the earlier ones. The run was not made again: it would spend a second call to
-  show a change of wording that the suite shows.
+- Nothing chooses between two drafts of one failure but the owner and the eval comparison.
+  The tool keeps the last one: a second run writes over the first.
 - Not verified: a proposal for `record-before-code`, the other step with an eval case; and a
   long session, whose sheet is cut, against the real model.
