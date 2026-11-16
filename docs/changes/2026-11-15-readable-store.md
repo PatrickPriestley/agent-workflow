@@ -769,3 +769,194 @@ order: a probe that fails is then mended here, before anything is merged.
 Changed after approval, each from a review and each run in the probe's PostgreSQL: an
 index row that cannot be read ranks last and has no stream (the review of the approval
 pull request, pushed after its merge); and the unreachable clause above.
+
+### Task 2: filling in and checking
+
+Built test first, each step committed red before its code: the fixture, the rule, the
+command and its check in `bin/transcripts-store.test.sh`, 73 assertions failing with no
+such command; then `message_rows`, `row_requests` and `cmd_messages` in `bin/transcripts`;
+the README's two queries in `store/schema.test.sh`, 3 failing with no query in the README;
+and a store with no such table yet, 3 failing, then the message for it. Two expectations
+of the first tests were wrong and were corrected with the code, each said in its commit:
+the order of two rows in a sorted list, and the number of rows in a chunk's request.
+Suites after: transcripts-store 307, store schema 58, transcripts 364, transcripts-grade
+212, transcripts-judge 422, ci-workflow 21, none failing.
+
+The fixture is `store/fixtures/shape-1.jsonl`, 21 made-up lines with one for each clause
+of R4, and `shape-1.rows.jsonl`, its 16 rows, written by hand from R4 before the function
+was; the function gave them at its first run. `store/schema.test.sh` puts those rows into
+the real table as the store's interface does (`json_populate_recordset`), reads them back
+as the interface gives rows, and has the tool's own comparison find each the same: the
+time `2026-11-15T10:00:00.250Z` comes back as `2026-11-15T10:00:00.25+00:00`, and one
+with nine digits of fraction comes back rounded to six.
+
+Where R4 to R6 left a choice, what was built:
+
+- A row's own fields are read by `message_rows`; the session, stream and chunk are put
+  before them by the command. A request is always a list, of one row too.
+- A chunk's lines are cut at each newline and at nothing else, as its `lines` are counted.
+- A result's content that is neither a string, a list nor absent is JSON with its keys
+  sorted, as a call's input is. In a list, a block with no type is left out.
+- A time is kept only when it is a real date and its offset is at most 15:59; else null.
+- A cut text ends with the line `[cut here: N more characters of this text are in the
+  chunk]`, and the limit of 3,000,000 bytes counts that line.
+- The command inserts with the read key. It first asks for the table, and where the
+  store has none it says to run `schema.sql` and exits 1 with nothing sent.
+- A request refused whole because another hand wrote one of its rows meanwhile has its
+  rows sent one at a time, a duplicate counted as there.
+- A chunk whose insert gets no answer is named as one that could not be filled, and the
+  others are still tried.
+- The check compares a time as the moment it names, to the microsecond the table keeps.
+
+Not built in this task: R5's last check, that the command's requests are body for body
+the ones `push` sends. `push` sends none until task 3, which adds it; here the cutting
+rule is tested by itself. The stand-in gained three things for these tests:
+`/__admin/forget`, `/__admin/after-read` and `--without TABLE`.
+
+Guards, each broken by hand in a clone of the repository: 83 breaks, 79 caught at the
+first run. Of the four that survived, three were gaps in the tests, each closed and
+broken again: the fraction of a second, the microsecond the check allows, and a chunk
+left out that was read as an empty one. The fourth was a guard that did less than it
+cost and is taken out: it ended the whole fill when one insert got no answer, and a
+store that cannot be reached still ends the run at the next reading. The 82 guards that
+stand, by the assertion that failed first for each:
+
+- Caught first by "the fixture named for the tool's shape gives its rows, compared whole":
+  rows: U+0000 is left as it is; rows: an offset of any size is kept; rows: a result's
+  list is given as JSON; rows: a result's object keeps its keys' order; rows: a line of
+  any type gives rows; rows: a time is kept whatever it is; rows: any truthy isSidechain
+  makes a side line; rows: a text that is no string is read; rows: isCompactSummary makes
+  no context; rows: a result on an assistant line gives a row; rows: no result is a
+  failure; rows: half of a surrogate pair is left as it is; rows: a time that is no string
+  is read; rows: a text block of a result whose text is no string is taken for text; rows:
+  a result's object has its non-ASCII escaped; rows: a line that is no object is read;
+  rows: a name or an id that is no string is kept; rows: no line is a side line; rows: a
+  blank text gives a row; rows: any truthy isMeta makes context; rows: a call's input
+  keeps its keys' order; rows: the lines are counted from 0; rows: a time of any form is
+  kept; rows: an offset of 16 hours is kept; rows: a block of a result with no type is
+  read; rows: a line that is no JSON stops the reading; rows: a message that is no object
+  is read; rows: a name of any length is kept; rows: a content that is no list is read;
+  rows: an assistant's text is the user's; rows: any truthy isCompactSummary makes
+  context; rows: a call's input has its non-ASCII escaped; rows: a date that is none is
+  kept; rows: a result with no content reads null; rows: a block of a result that is no
+  object is read; rows: a content that is a string gives no row; rows: a name's U+0000 is
+  kept; rows: a block that is no object is read; rows: isMeta makes no context; rows: a
+  call on a user line gives a row; rows: any truthy is_error is a failure.
+- Caught first by "a chunk whose bytes do not match its id is named and left out, the
+  others are filled, and the exit status is 1": command: a chunk left out is filled all
+  the same (survived the first run); command: the fill exits 0 with a chunk left out;
+  command: a chunk is not checked against its id; command: a chunk that cannot be opened
+  stops it.
+- Caught first by "a row planted before the fill under a key the chunk does not give, and
+  one planted under a key it does with another text, are each reported": command: the
+  check reports no row that is not the chunk's; command: the check reports no row that
+  differs; command: the check exits 0 with a row to report; command: the check does not
+  compare the text.
+- Caught first by "R5: two rows whose request is exactly 1,000,000 bytes go together, one
+  byte more and they part, and a first row that is over gives no empty request": requests:
+  the comma between rows is not counted; requests: a first row that is over leaves an
+  empty request; requests: cut at exactly the limit.
+- Caught first by "a text whose form in a request would be over 3,000,000 bytes is cut to
+  the longest beginning that is not, and its last line says how many characters are left
+  in the chunk": rows: no text is ever cut; rows: the cut is not the longest; rows: the
+  cut is counted in characters.
+- Caught first by "R6: two times are one moment whatever the offset or the fraction they
+  are written with, and an hour apart they are not": rows: an offset is added the wrong
+  way; check: two times an hour apart are one.
+- Caught first by "a chunk the store will not take rows for is named with the store's
+  answer, and the exit status is 1": command: a chunk that could not be filled is not
+  counted; command: the fill exits 0 with a chunk it could not fill.
+- Caught first by "a second run inserts nothing: every chunk needs none, the one whose
+  lines give no row among them both times": command: a request with a row there is sent
+  whole; command: rows that are there are sent again.
+- Caught first by "the limit is in the bytes of the request and not in characters: 600,000
+  characters of 6 bytes each are cut, and 2,999,998 of one byte are not": rows: a text of
+  exactly the limit is cut; rows: the cut text may be one byte over.
+- Caught first by "R4, R6: read back as the interface gives rows, each is the row that
+  went in by the tool's own comparison, the time of a line among them": check: a time is
+  compared as it is written.
+- Caught first by "R4: a line nested deeper than the reader goes gives no row and stops
+  nothing: the next line's row is there": rows: a line nested too deep stops the reading.
+- Caught first by "R4: a time is kept only when it names a moment: the form, a real date,
+  and an offset a clock can have": rows: an offset of 60 minutes is kept.
+- Caught first by "R5: a chunk's rows are cut into requests in order, each body at most
+  1,000,000 bytes, and a row that is more goes alone": requests: never cut.
+- Caught first by "R6: a microsecond apart is still one moment, since the table rounds a
+  longer fraction its own way, and two apart is not": check: a time rounded by the table
+  differs (survived the first run).
+- Caught first by "R6: two times are one moment whatever the offset or the fraction they
+  are written with; an hour apart, or half a second, they are not": rows: the fraction of
+  a second is dropped (survived the first run).
+- Caught first by "a chunk whose bytes do not match its id is named by the check too, and
+  the exit status is 1": command: the check exits 0 with a chunk left out.
+- Caught first by "a filled store is clean, and the check sends nothing but reads":
+  command: the check fills.
+- Caught first by "a row left out is reported as missing, the check does not put it there,
+  and the command then does, alone": command: the check reports no missing row.
+- Caught first by "a row under another shape does not count as there": command: rows of
+  every shape count as there.
+- Caught first by "a store with chunks and no rows is filled: it says the chunks read, the
+  rows inserted and the chunks that needed none": command: a chunk that got rows is
+  counted as needing none.
+- Caught first by "an unknown argument is a usage error, and nothing is asked of the
+  store": command: an unknown argument is taken.
+- Caught first by "and the same moment written another way is no difference": command: the
+  check compares the text alone.
+- Caught first by "each chunk's rows went in one request, a list, and a chunk with no row
+  sent none": command: every row goes alone.
+- Caught first by "the rows are each line's texts, calls and results, in the chunk they
+  were read from, under the tool's shape": command: a row with no text of the session is
+  keyed to another chunk.
+- Caught first by "where the store has no such table yet it says to run schema.sql, sends
+  nothing, and exits 1": command: a store with no table is not said.
+- Caught first by "with --session only that session's chunks are read": command: --session
+  reads every session.
+- Caught first by "with no store named, or one that cannot be reached, it says so: exit 2
+  and exit 1": command: with no store named it goes on.
+- Caught first by "without the read key it refuses before any request": command: the read
+  key is not required.
+
+A rehearsal of the real use on the copy of the real rows (mock only: the stand-in for
+the interface, then a real PostgreSQL 16.15 for the table and the view), on the final
+code:
+
+```
+$ transcripts messages
+transcripts: messages: read 271 chunks of 17 sessions, inserted 6199 rows, 42 chunks needed none
+$ transcripts messages --check
+transcripts: messages --check: 271 chunks, 6199 rows, each as its chunk gives it
+$ transcripts messages
+transcripts: messages: read 271 chunks of 17 sessions, inserted 0 rows, 271 chunks needed none
+```
+
+The 6,199 rows went in 230 requests, 16,121,104 bytes in all, the largest 978,277, each
+run in about 2 seconds against the stand-in. Read back and put through the real table,
+every row was taken, and the view shows 5,959 rows, the number of the plan's probe. Row
+for row against that probe, 5,189 are the same; 762 are calls whose input is the same
+JSON with its keys now sorted, as R4 has had it since the review; and 8 are results
+holding U+2400 where the probe's copy had dropped U+0000.
+
+The error paths, on the same copy:
+
+```
+$ transcripts messages      (a store where schema.sql has not been run)
+transcripts: the store has no table `messages` yet: run plugins/change-record/store/schema.sql in the project's SQL editor, then this again
+exit 1
+$ transcripts messages      (one chunk changed in the store)
+transcripts: <session> main: chunk 43e8fb7aa642 does not match its chain id; left out
+transcripts: messages: read 271 chunks of 17 sessions, inserted 6197 rows, 42 chunks needed none, 1 chunk left out
+exit 1
+$ transcripts messages --check      (11 rows taken out of the table since)
+transcripts: <session> main: chunk 43e8fb7aa642 does not match its chain id; left out
+missing: <session> main chunk 14b538649e46 line 3 block 0
+[...]
+transcripts: messages --check: 271 chunks; 11 rows missing, 1 chunk left out
+exit 1
+```
+
+Not done, and it is this task's real use: the 17 sessions filled in the real store
+through `agent-workflow-admin`, `--check` clean there, the view's rows against the files
+`materialize` rebuilds, and the owner reading a session in the dashboard. It waits for
+task 1's gate: the table is not in the project yet. Not verified: what the real
+interface answers to these requests, which is the probe's to show; and the command's
+time against the real store, where each of its roughly 800 requests crosses the network.
