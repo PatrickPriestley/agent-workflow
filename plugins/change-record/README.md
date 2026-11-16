@@ -320,6 +320,19 @@ against its chain id. Where the store holds a session more than once, it takes t
 the newest redaction version, then the latest and longest. For Skill Doctor, point `--claude-home` at that folder and `--skills-dir`
 at its `skills/`.
 
+**The store's text, for reading** (record `docs/changes/2026-11-15-readable-store.md`; being
+built: the table and the view are in `store/schema.sql`, and nothing fills them yet).
+`chunks` holds each transcript gzipped, which no query can open, so the dashboard shows that a
+session is stored and nothing of what was said. `schema.sql` now also creates `messages`, one
+row for each text, tool call and tool result of a transcript, and the view `transcript`, which
+shows each session's rows in order. Run the file again in the project's SQL editor to get
+them; it changes nothing that is there. The hooks' key can insert into `messages` and nothing
+else, and `store/probe` now checks that too. Its check that a request of several rows is
+stored whole or not at all needs the read key, so it now exits 1 where there is none: run it
+where both keys are. `store/schema.test.sh` runs the file in a PostgreSQL of its own and
+tests the grants and each rule of the view; it says so and passes nothing off where none is
+installed.
+
 **Grading.** `transcripts grade` scores every session in a folder (the local archive by
 default, or a folder `materialize` wrote) with the field graders in `grade/fields.py`, one
 verdict per step, pass, fail or not applicable, with its evidence:
