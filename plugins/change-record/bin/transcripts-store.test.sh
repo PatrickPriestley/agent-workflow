@@ -850,6 +850,23 @@ python3 -c 'import json,sys,urllib.request; urllib.request.urlopen(urllib.reques
 out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "chunk ${c2:0:12} does not match its chain id"; has "$out" "1 chunk left out"
 lacks "$out" "not the chunk's"; has "$out" "messages --check: 4 chunks, 4 rows, each as its chunk gives it, 1 chunk left out"
+it "a row whose chunk the store does not hold is reported too, by its chunk and with how many, whatever its shape"
+filled k6; messages > /dev/null
+ghost="$(printf ghost | shasum -a 256 | cut -c1-64)"
+plant "$ghost" 1 "a row with no chunk behind it" > /dev/null; plant "$ghost" 2 "and another" > /dev/null; plant "$ghost" 3 "of another shape" 7 > /dev/null
+: > "$LOG"; out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "no such chunk: $SID main chunk ${ghost:0:12}: 3 rows"
+has "$out" "messages --check: 4 chunks; 3 rows whose chunk the store does not hold"; assert_eq "GET" "$(methods)"
+it "with --session only that session's rows are looked at, and a store with rows and no chunk at all is not clean"
+out="$(messages --check --session "no-such-session")"; rc=$?
+assert_eq 0 "$rc"; lacks "$out" "no such chunk"
+standin k7; plant "$ghost" 1 "nothing behind it" > /dev/null
+out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "no such chunk: $SID main chunk ${ghost:0:12}: 1 row"; has "$out" "0 chunks; 1 row whose chunk the store does not hold"
+it "the rows store/probe leaves are under its own chunk, which the store holds: they are not reported"
+XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$here/../store/probe" > /dev/null 2>&1
+out="$(messages --check)"
+has "$out" "0 chunks; 1 row whose chunk the store does not hold, 1 chunk of store/probe's passed over"; assert_eq 1 "$(printf '%s\n' "$out" | grep -c 'no such chunk')"
 it "without the read key the check refuses too"
 mv "$XDG_CONFIG_HOME/agent-transcripts/read-key" "$TMPROOT/rk"
 out="$(messages --check)"; rc=$?
