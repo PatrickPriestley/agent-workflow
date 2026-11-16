@@ -562,6 +562,11 @@ PY2
 it "without the read key the probe says the read-back was not made, and exits 1"
 out="$(XDG_CONFIG_HOME="$TMPROOT/configQ" AGENT_TRANSCRIPTS_URL="$URL" python3 "$PROBE" 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "not made: no read key here"; lacks "$out" "FAIL"
+it "against a store that keeps the new row of a refused request, the probe fails on the read-back and exits 1"
+standin loose --loose messages
+out="$(XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$PROBE" 2>&1)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "FAIL read key: the new row of the refused request is not there: HTTP 200 but"; has "$out" " 1 failed"
+standin probe2
 it "the stand-in answers for the new table as PostgreSQL answered the probe of the record: a duplicate among several rows stores none of them"
 row() { printf '{"session_id":"standin-m","stream":"main","chunk_id":"%064d","shape":1,"line":%s,"block":0,"who":"user","kind":"text","text":"%s"}' 0 "$1" "$2"; }
 post() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "apikey: ${2:-insert-key-made-up}" --data-binary "$1" "$URL/rest/v1/messages"; }
