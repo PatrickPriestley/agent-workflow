@@ -895,6 +895,8 @@ mk() {
   (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1)
 }
 pushx() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" AGENT_TRANSCRIPTS_URL="$URL" "$T" push "$@" 2>&1); }
+# sentn TABLE: how many inserts into it the stand-in was sent, whatever it answered
+sentn() { python3 -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if json.loads(l)["method"] == "POST" and json.loads(l)["path"] == "/rest/v1/" + sys.argv[2]))' "$LOG" "$1"; }
 option() { curl -s -o /dev/null -X POST --data-binary "{\"name\":\"$1\",\"value\":${2:-null}}" "$URL/__admin/option"; }
 owed() { python3 -c 'import json,sys; print(len((json.load(open(sys.argv[1])).get("sent") or {}).get("owed") or []))' "$ARX/sessions/${1:-$SID}.json" 2>&1; }
 bodies() { python3 -c '
@@ -907,7 +909,7 @@ mk p1
 it "after a push the rows are there, each chunk's in a request after its chunk, and the check is clean"
 out="$(pushx)"; rc=$?
 assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
-assert_eq "chunks messages chunks messages chunks sessions" "$(python3 -c 'import json,sys; print(" ".join(json.loads(l)["path"].split("/")[-1] for l in open(sys.argv[1])))' "$LOG")"
+assert_eq "chunks messages chunks messages chunks sessions" "$(python3 -c 'import json,sys; print(" ".join(json.loads(l)["path"].split("/")[-1] for l in open(sys.argv[1]) if json.loads(l)["method"] == "POST"))' "$LOG")"
 out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"; has "$out" "3 chunks, 4 rows, each as its chunk gives it"
 it "it still sends with the hooks' key and only inserts"
 assert_eq "POST" "$(python3 -c 'import json,sys; print(" ".join(sorted({json.loads(l)["method"] for l in open(sys.argv[1]) if json.loads(l)["apikey"] != sys.argv[2]})))' "$LOG" "$READKEY")"
@@ -927,7 +929,7 @@ assert_eq "4" "$(stored | wc -l | tr -d ' ')"; has "$(stored)" 'main 2 0 user te
 it "where the store has no such table yet (404) the chunks and the index row are stored all the same, the exit status is 0, and the last line says what is owed"
 mk p3 --without messages
 out="$(pushx)"; rc=$?
-assert_eq 0 "$rc"; assert_eq "3 1" "$(count chunks) $(count sessions)"; has "$(printf '%s\n' "$out" | tail -1)" "2 requests of rows are owed"
+assert_eq 0 "$rc"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"; has "$(printf '%s\n' "$out" | tail -1)" "2 requests of rows are owed"
 assert_eq "2" "$(owed)"
 it "after the first 404 no more rows are sent in that run: what the table would have taken is owed, not uploaded"
 assert_eq "1" "$(posts | wc -l | tr -d ' ')"
@@ -938,14 +940,14 @@ it "a session that owes rows counts as unsent: the next push, once the table is 
 option --without
 out="$(pushx)"; rc=$?
 assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "0" "$(owed)"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
-assert_eq "3 1" "$(count chunks) $(count sessions)"
+assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"
 out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
 before="$(grep -c '"method": "POST"' "$LOG")"; pushx > /dev/null; assert_eq "$before" "$(grep -c '"method": "POST"' "$LOG")"
 it "every request of rows refused (503): nothing is held back, each is tried, each is owed, and the next push tries them again"
 mk p4 --refuse messages
 out="$(pushx)"; rc=$?
-assert_eq 0 "$rc"; assert_eq "3 1" "$(count chunks) $(count sessions)"; has "$out" "2 requests of rows are owed"; assert_eq "2" "$(posts | wc -l | tr -d ' ')"
-out="$(pushx)"; has "$out" "2 requests of rows are owed"; assert_eq "4" "$(posts | wc -l | tr -d ' ')"; assert_eq "3 1" "$(count chunks) $(count sessions)"
+assert_eq 0 "$rc"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"; has "$out" "2 requests of rows are owed"; assert_eq "2" "$(posts | wc -l | tr -d ' ')"
+out="$(pushx)"; has "$out" "2 requests of rows are owed"; assert_eq "4" "$(posts | wc -l | tr -d ' ')"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"
 it "one request refused (503), the second of a chunk's two: only that one is owed, and only it is sent again"
 standin p5 --refuse-line 25; SKIP=0; ARX="$TMPROOT/ar-p5"
 (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDL.jsonl" < /dev/null > /dev/null 2>&1)
