@@ -792,6 +792,21 @@ assert_eq 2 "$rc"; has "$out" "AGENT_TRANSCRIPTS_URL"
 out="$(cd "$REPO" && AGENT_TRANSCRIPTS_URL="http://127.0.0.1:1" "$T" messages 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "cannot reach"; lacks "$out" "Traceback"
 
+it "the rows store/probe leaves behind are passed over and said: its chunk is no transcript's, and it fails neither the fill nor the check"
+filled m11
+XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$here/../store/probe" > /dev/null 2>&1
+out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "read 4 chunks of 1 session"; has "$out" "inserted 6 rows"; has "$out" "1 chunk of store/probe's passed over"
+out="$(messages --check)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "4 chunks, 6 rows, each as its chunk gives it, 1 chunk of store/probe's passed over"
+it "only the probe's own chunk is passed over: another chunk in a session named like the probe's is read, and left out if it is not what its id says"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"probe-0000\",\"stream\":\"main\",\"chunk_id\":\"$(printf x | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf y | shasum -a 256 | cut -c1-64)\",\"sender\":\"probe\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"probe-0001\",\"stream\":\"main\",\"chunk_id\":\"$(printf z | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf %064d 0)\",\"sender\":\"machine-A\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "2 chunks left out"; has "$out" "1 chunk of store/probe's passed over"
+
 echo "readable-store R6: transcripts messages --check compares the table with the chunks and changes nothing"
 filled k1; messages > /dev/null
 it "a filled store is clean, and the check sends nothing but reads"
