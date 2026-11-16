@@ -32,7 +32,8 @@ rows would. --without TABLE answers 404 to
 anything asked of that table, as a project where schema.sql has not been run since the table was
 added. POST /__admin/after-read with {"rows": [...]} puts those rows into `messages` just after
 the next reading of their chunk's rows, as another hand writing between a sender's reading and
-its insert would.
+its insert would. POST /__admin/option with {"name": "--without" | "--refuse" | "--refuse-line",
+"value": ...} sets that option while it runs (null turns it off), as a store that is mended would.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -115,6 +116,16 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 TABLES[want["table"]][:] = [r for r in TABLES[want["table"]]
                                             if any(r.get(k) != v for k, v in want["match"].items())]
+            return self.answer(204)
+        if u.path == "/__admin/option":
+            global WITHOUT, REFUSE, REFUSE_LINE
+            want = json.loads(raw)
+            if want["name"] == "--without":
+                WITHOUT = want["value"]
+            elif want["name"] == "--refuse":
+                REFUSE = want["value"]
+            elif want["name"] == "--refuse-line":
+                REFUSE_LINE = want["value"]
             return self.answer(204)
         if u.path == "/__admin/after-read":
             with LOCK:
