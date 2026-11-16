@@ -224,6 +224,60 @@ assert_eq "${tool:-no SHAPE in the tool}" "${view:-no shape in the view}"
 it "R1: the read key sees the view as the suite's owner does"
 assert_eq "32 32" "$(sql "select count(*) from public.transcript") $(as_role service_role "select count(*) from public.transcript")"
 
+it "R4: the rows the tool reads from its fixture go into the real table, as the store's interface puts rows in"
+python3 - "$here/fixtures/shape-1.rows.jsonl" > "$PG/fixture.sql" <<'PY'
+import hashlib, json, sys
+rows = [dict(json.loads(l), session_id="fixture", stream="main", chunk_id="f" * 64) for l in open(sys.argv[1])]
+cols = ", ".join(rows[0])
+print(f"insert into public.messages ({cols}) select {cols} from json_populate_recordset(null::public.messages, $fixture${json.dumps(rows)}$fixture$::json);")
+root = hashlib.sha256(b"fixture/main").hexdigest()
+print("insert into public.chunks (session_id, stream, chunk_id, start_id, sender, generation, number, lines, bytes, redaction, data) "
+      f"values ('fixture', 'main', '{'f' * 64}', '{root}', 'test', 1, 1, 20, 1, 2, '');")
+entry = json.dumps({"redaction_version": 2, "sent": {"streams": {"main": {"tip": "f" * 64, "bytes": 1}}}})
+print(f"insert into public.sessions (session_id, row_id, sender, version, entry) values ('fixture', '{'e' * 64}', 'test', 1, '{entry}');")
+PY
+out="$(sql_file "$PG/fixture.sql")"; rc=$?; assert_eq "0 " "$rc $out"
+assert_eq "15" "$(sql "select count(*) from public.messages where session_id = 'fixture'")"
+it "R4, R6: read back as the interface gives rows, each is the row that went in by the tool's own comparison, the time of a line among them"
+run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -c "select json_agg(row_to_json(m) order by line, block) from (select shape, line, block, at, who, kind, tool, call_id, failed, side, text from public.messages where session_id = 'fixture') m" > "$PG/back.json" 2>&1
+assert_eq "15 rows, none differs; a time comes back as 2026-11-15T10:00:00.25+00:00 for 2026-11-15T10:00:00.250Z" "$(python3 - "$here/../bin/transcripts" "$here/fixtures/shape-1.rows.jsonl" "$PG/back.json" 2>&1 <<'PY'
+import importlib.machinery, importlib.util, json, sys
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("transcripts_tool", sys.argv[1])
+tr = importlib.util.module_from_spec(importlib.util.spec_from_loader("transcripts_tool", loader))
+loader.exec_module(tr)
+want, back = [json.loads(l) for l in open(sys.argv[2])], json.load(open(sys.argv[3]))
+differ = [(w["line"], w["block"], f) for w, b in zip(want, back) for f in tr.ROW_FIELDS + ("shape", "line", "block")
+          if not tr.same_field(f, w[f], b[f])]
+print(f"{len(back)} rows, {differ or 'none differs'}; a time comes back as {back[0]['at']} for {want[0]['at']}")
+PY
+)"
+it "R4: and the view shows them in the fixture's order, with each row's kind, tool and text"
+run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -c "select json_agg(json_build_array(kind, tool, text) order by n) from public.transcript where session_id = 'fixture'" > "$PG/view.json" 2>&1
+assert_eq "15 rows in the fixture's order" "$(python3 -c '
+import json, sys
+want = [[r["kind"], r["tool"], r["text"]] for r in map(json.loads, open(sys.argv[1]))]
+got = json.load(open(sys.argv[2]))
+print(len(got), "rows in the fixture" + chr(39) + "s order" if got == want else "rows that differ")' "$here/fixtures/shape-1.rows.jsonl" "$PG/view.json" 2>&1)"
+it "R8: the README's query for one session, run as it is printed with a session's id put in, gives that session's rows in order"
+# readme_query N: the Nth SQL block of the README's part on reading the store's text
+readme_query() { python3 - "$here/../README.md" "$1" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+part = text[text.index("**The store's text, for reading**"):]
+blocks = re.findall(r"```sql\n(.*?)```", part[:part.index("\n**Grading.**")], re.S)
+print(blocks[int(sys.argv[2]) - 1])
+PY
+}
+readme_query 1 > "$PG/q1.sql" 2>&1; readme_query 2 > "$PG/q2.sql" 2>&1
+assert_eq "1|user|text|good-1 2|user|text|good-2 3|user|text|good-3 4|user|text|good-4 5|user|text|good-5" \
+  "$(sed "s/<session id>/good/" "$PG/q1.sql" > "$PG/file.sql"; chmod 644 "$PG/file.sql"; run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -c 'set role service_role' -f "$PG/file.sql" 2>&1 | grep -v '^SET$' | cut -d'|' -f1,3,4,6 | tr '\n' ' ' | sed 's/ $//')"
+it "R8: the README's query that searches every session finds a text whatever its case, and says where it is"
+assert_eq "tie|main|1|user|text|tie-first tie|main|2|user|text|tie-first-2" \
+  "$(sed "s/<words>/TIE-FIRST/" "$PG/q2.sql" > "$PG/file.sql"; chmod 644 "$PG/file.sql"; run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -c 'set role service_role' -f "$PG/file.sql" 2>&1 | grep -v '^SET$' | tr '\n' ' ' | sed 's/ $//')"
+it "R8: and each query names its placeholder once, so that nothing else in it is left to fill in"
+assert_eq "1 1" "$(grep -c '<session id>' "$PG/q1.sql") $(grep -c '<words>' "$PG/q2.sql")"
+
 echo
 echo "store schema: passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
