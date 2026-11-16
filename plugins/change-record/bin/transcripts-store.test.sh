@@ -807,8 +807,10 @@ curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: ins
   "{\"session_id\":\"probe-0000\",\"stream\":\"main\",\"chunk_id\":\"$(printf x | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf y | shasum -a 256 | cut -c1-64)\",\"sender\":\"probe\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
 curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
   "{\"session_id\":\"probe-0001\",\"stream\":\"main\",\"chunk_id\":\"$(printf z | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf %064d 0)\",\"sender\":\"machine-A\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"not-the-probe\",\"stream\":\"main\",\"chunk_id\":\"$(printf w | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf %064d 0)\",\"sender\":\"probe\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
 out="$(messages)"; rc=$?
-assert_eq 1 "$rc"; has "$out" "2 chunks left out"; has "$out" "1 chunk of store/probe's passed over"
+assert_eq 1 "$rc"; has "$out" "3 chunks left out"; has "$out" "1 chunk of store/probe's passed over"
 
 echo "readable-store R6: transcripts messages --check compares the table with the chunks and changes nothing"
 filled k1; messages > /dev/null
