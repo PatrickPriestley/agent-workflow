@@ -666,14 +666,18 @@ echo "readable-store R5: transcripts messages fills the table from what the stor
 # filled NAME [stand-in options]: a new stand-in holding one session's chunks and no rows: main in two chunks,
 # one subagent's stream, and one stream whose only line gives no row.
 SUBN="$PROJ/$SID/subagents/agent-n0.jsonl"
+# norows: the rows a push left are taken out of the stand-in, and `posts` counts from here
+SKIP=0
+norows() { curl -s -o /dev/null -X POST --data-binary '{"table":"messages","match":{}}' "$URL/__admin/forget"; SKIP="$(wc -l < "$LOG" | tr -d ' ')"; }
 filled() {
-  standin "$@"; local ar="$TMPROOT/ar-$1"
+  standin "$@"; SKIP=0; local ar="$TMPROOT/ar-$1"
   part1 > "$TR"; line 2026-11-01T10:01:00.000Z user '"sub '"$EMAIL"'"' > "$SUB"; line 2026-11-01T10:02:00.000Z system '"nothing to read"' > "$SUBN"
   (cd "$REPO" && AGENT_TRANSCRIPTS="$ar" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1
    AGENT_TRANSCRIPTS="$ar" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
   part2 >> "$TR"
   (cd "$REPO" && AGENT_TRANSCRIPTS="$ar" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1
    AGENT_TRANSCRIPTS="$ar" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+  norows
 }
 messages() { (cd "$REPO" && AGENT_TRANSCRIPTS_URL="$URL" "$T" messages "$@" 2>&1); }
 get() { curl -s -H "apikey: $READKEY" "$URL/rest/v1/$1"; }
@@ -684,10 +688,10 @@ for r in sorted(json.load(sys.stdin), key=lambda r: (r["stream"], r["chunk_id"],
     print(r["stream"], r["line"], r["block"], r["who"], r["kind"], r["shape"], json.dumps(r["text"])[:60])'; }
 posts() { python3 -c '
 import json, sys
-for l in open(sys.argv[1]):
+for l in list(open(sys.argv[1]))[int(sys.argv[2]):]:
     r = json.loads(l)
     if r["method"] == "POST" and r["path"] == "/rest/v1/messages":
-        print(len(json.loads(r["body"])) if isinstance(json.loads(r["body"]), list) else "one", len(r["body"].encode()))' "$LOG"; }
+        print(len(json.loads(r["body"])) if isinstance(json.loads(r["body"]), list) else "one", len(r["body"].encode()))' "$LOG" "$SKIP"; }
 # chunk_of STREAM N: the id of the stream's Nth chunk as the stand-in was sent it
 chunk_of() { sent | python3 -c '
 import json, sys
@@ -721,7 +725,7 @@ filled m2
 c1="$(chunk_of main 1)"
 # plant CHUNK LINE TEXT [SHAPE] [AT, as JSON] [WHO]: a row of main put there by another hand, with the hooks' key
 plant() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
-  "[{\"session_id\":\"$SID\",\"stream\":\"main\",\"chunk_id\":\"$1\",\"shape\":${4:-1},\"line\":$2,\"block\":0,\"at\":${5:-null},\"who\":\"${6:-user}\",\"kind\":\"text\",\"tool\":null,\"call_id\":null,\"failed\":false,\"side\":false,\"text\":\"$3\"}]" "$URL/rest/v1/messages"; }
+  "[{\"session_id\":\"${PSID:-$SID}\",\"stream\":\"main\",\"chunk_id\":\"$1\",\"shape\":${4:-1},\"line\":$2,\"block\":0,\"at\":${5:-null},\"who\":\"${6:-user}\",\"kind\":\"text\",\"tool\":null,\"call_id\":null,\"failed\":false,\"side\":false,\"text\":\"$3\"}]" "$URL/rest/v1/messages"; }
 it "a chunk with one row already there gets the others, one at a time, and the row that was there is left as it was"
 assert_eq 201 "$(plant "$c1" 2 "planted by another hand")"
 out="$(messages)"; rc=$?
@@ -758,17 +762,19 @@ SIDM=60000000-2222-3333-4444-555555555555
 line 2026-11-03T10:00:00.000Z user '"another session"' | sed "s/$SID/$SIDM/" > "$PROJ/$SIDM.jsonl"
 (cd "$REPO" && AGENT_TRANSCRIPTS="$TMPROOT/ar-m6b" "$T" archive --transcript "$PROJ/$SIDM.jsonl" < /dev/null > /dev/null 2>&1
  AGENT_TRANSCRIPTS="$TMPROOT/ar-m6b" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+norows
 out="$(messages --session "$SIDM")"; rc=$?
 assert_eq 0 "$rc"; has "$out" "read 1 chunk of 1 session"; has "$out" "inserted 1 row"
 assert_eq "1" "$(stored | wc -l | tr -d ' ')"
 out="$(messages)"
 has "$out" "read 5 chunks of 2 sessions"; has "$out" "inserted 6 rows"; has "$out" "2 chunks needed none"
 it "a chunk whose rows are over 1,000,000 bytes goes in several requests, each a list and none over, and all its rows are there"
-standin m7
+standin m7; SKIP=0
 SIDL=70000000-2222-3333-4444-555555555555
 for i in $(seq 30); do line "2026-11-04T10:00:$(printf %02d "$i").000Z" user "\"$(printf 'row %02d ' "$i")$(head -c 50000 /dev/zero | tr '\0' x)\""; done | sed "s/$SID/$SIDL/" > "$PROJ/$SIDL.jsonl"
 (cd "$REPO" && AGENT_TRANSCRIPTS="$TMPROOT/ar-m7" "$T" archive --transcript "$PROJ/$SIDL.jsonl" < /dev/null > /dev/null 2>&1
  AGENT_TRANSCRIPTS="$TMPROOT/ar-m7" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+norows
 out="$(messages)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "inserted 30 rows"
 assert_eq "19 11 True" "$(posts | python3 -c '
@@ -791,7 +797,7 @@ assert_eq 0 "$rc"; has "$out" "inserted 5 rows"; assert_eq "6" "$(stored | wc -l
 assert_eq "1 1 1 1 2 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
 it "where the store has no such table yet it says to run schema.sql, sends nothing, and exits 1"
 filled m10 --without messages
-: > "$LOG"; out="$(messages)"; rc=$?
+: > "$LOG"; SKIP=0; out="$(messages)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "run plugins/change-record/store/schema.sql"; assert_eq "GET" "$(methods)"; assert_eq "1" "$(wc -l < "$LOG" | tr -d ' ')"
 out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "run plugins/change-record/store/schema.sql"
@@ -821,13 +827,13 @@ assert_eq 1 "$rc"; has "$out" "3 chunks left out"; has "$out" "1 chunk of store/
 echo "readable-store R6: transcripts messages --check compares the table with the chunks and changes nothing"
 filled k1; messages > /dev/null
 it "a filled store is clean, and the check sends nothing but reads"
-: > "$LOG"; out="$(messages --check)"; rc=$?
+: > "$LOG"; SKIP=0; out="$(messages --check)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "4 chunks, 6 rows, each as its chunk gives it"; assert_eq "GET" "$(methods)"
 it "a row planted before the fill under a key the chunk does not give, and one planted under a key it does with another text, are each reported"
 filled k2; c1="$(chunk_of main 1)"; c2="$(chunk_of main 2)"
 plant "$c1" 9 "no line 9 in this chunk" > /dev/null; plant "$c2" 1 "another text" 1 '"2026-11-01T10:05:00.000Z"' assistant > /dev/null
 messages > /dev/null
-: > "$LOG"; out="$(messages --check)"; rc=$?
+: > "$LOG"; SKIP=0; out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"
 has "$out" "not the chunk's: $SID main chunk ${c1:0:12} line 9 block 0"
 has "$out" "differs (text): $SID main chunk ${c2:0:12} line 1 block 0"
@@ -848,7 +854,7 @@ assert_eq "5" "$(stored | wc -l | tr -d ' ')"
 out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "missing: $SID main chunk ${c2:0:12} line 2 block 0"; has "$out" "1 row missing"
 assert_eq "5" "$(stored | wc -l | tr -d ' ')"
-: > "$LOG"; out="$(messages)"; rc=$?
+: > "$LOG"; SKIP=0; out="$(messages)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "inserted 1 row"; assert_eq "1" "$(posts | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')"
 out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
 it "a chunk whose bytes do not match its id is named by the check too, and the exit status is 1"
@@ -860,7 +866,7 @@ it "a row whose chunk the store does not hold is reported too, by its chunk and 
 filled k6; messages > /dev/null
 ghost="$(printf ghost | shasum -a 256 | cut -c1-64)"
 plant "$ghost" 1 "a row with no chunk behind it" > /dev/null; plant "$ghost" 2 "and another" > /dev/null; plant "$ghost" 3 "of another shape" 7 > /dev/null
-: > "$LOG"; out="$(messages --check)"; rc=$?
+: > "$LOG"; SKIP=0; out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "no such chunk: $SID main chunk ${ghost:0:12}: 3 rows"
 has "$out" "messages --check: 4 chunks; 3 rows whose chunk the store does not hold"; assert_eq "GET" "$(methods)"
 out="$(messages)"; rc=$?   # the fill has nothing to say of them: it cannot take a row out
@@ -868,7 +874,7 @@ assert_eq 0 "$rc"; lacks "$out" "no such chunk"
 it "with --session only that session's rows are looked at, and a store with rows and no chunk at all is not clean"
 out="$(messages --check --session "no-such-session")"; rc=$?
 assert_eq 0 "$rc"; lacks "$out" "no such chunk"
-standin k7; plant "$ghost" 1 "nothing behind it" > /dev/null
+standin k7; SKIP=0; plant "$ghost" 1 "nothing behind it" > /dev/null
 out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "no such chunk: $SID main chunk ${ghost:0:12}: 1 row"; has "$out" "0 chunks; 1 row whose chunk the store does not hold"
 it "the rows store/probe leaves are under its own chunk, which the store holds: they are not reported"
@@ -880,5 +886,181 @@ mv "$XDG_CONFIG_HOME/agent-transcripts/read-key" "$TMPROOT/rk"
 out="$(messages --check)"; rc=$?
 assert_eq 2 "$rc"; has "$out" "read-key"
 mv "$TMPROOT/rk" "$XDG_CONFIG_HOME/agent-transcripts/read-key"
+
+echo "readable-store R7: transcripts push sends a chunk's rows after the chunk, and never holds a transcript back for them"
+# mk NAME [stand-in options]: a new stand-in and a new archive holding the session's first part, not yet pushed
+mk() {
+  standin "$@"; SKIP=0; ARX="$TMPROOT/ar-$1"
+  part1 > "$TR"; line 2026-11-01T10:01:00.000Z user '"sub '"$EMAIL"'"' > "$SUB"; line 2026-11-01T10:02:00.000Z system '"nothing to read"' > "$SUBN"
+  (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1)
+}
+pushx() { (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" AGENT_TRANSCRIPTS_URL="$URL" "$T" push "$@" 2>&1); }
+# sentn TABLE: how many inserts into it the stand-in was sent, whatever it answered
+sentn() { python3 -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if json.loads(l)["method"] == "POST" and json.loads(l)["path"] == "/rest/v1/" + sys.argv[2]))' "$LOG" "$1"; }
+option() { curl -s -o /dev/null -X POST --data-binary "{\"name\":\"$1\",\"value\":${2:-null}}" "$URL/__admin/option"; }
+owed() { python3 -c 'import json,sys; print(len((json.load(open(sys.argv[1])).get("sent") or {}).get("owed") or []))' "$ARX/sessions/${1:-$SID}.json" 2>&1; }
+bodies() { python3 -c '
+import json, sys
+for l in list(open(sys.argv[1]))[int(sys.argv[2]):int(sys.argv[3]) if len(sys.argv) > 3 else None]:
+    r = json.loads(l)
+    if r["method"] == "POST" and r["path"] == "/rest/v1/messages":
+        print(r["body"])' "$LOG" "$@" | sort | cksum; }
+mk p1
+it "after a push the rows are there, each chunk's in a request after its chunk, and the check is clean"
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
+assert_eq "chunks messages chunks messages chunks sessions" "$(python3 -c 'import json,sys; print(" ".join(json.loads(l)["path"].split("/")[-1] for l in open(sys.argv[1]) if json.loads(l)["method"] == "POST"))' "$LOG")"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"; has "$out" "3 chunks, 4 rows, each as its chunk gives it"
+it "it still sends with the hooks' key and only inserts"
+assert_eq "POST" "$(python3 -c 'import json,sys; print(" ".join(sorted({json.loads(l)["method"] for l in open(sys.argv[1]) if json.loads(l)["apikey"] != sys.argv[2]})))' "$LOG" "$READKEY")"
+it "a second push sends nothing and leaves the session's state file as it was, with no word of rows owed in it"
+before="$(grep -c '"method": "POST"' "$LOG")"; ino="$(ls -i "$ARX/sessions/$SID.json" | awk '{print $1}')"; [ -n "$ino" ] || bad "no inode read"
+pushx > /dev/null; assert_eq "$before" "$(grep -c '"method": "POST"' "$LOG")"
+assert_eq "$ino" "$(ls -i "$ARX/sessions/$SID.json" | awk '{print $1}')"; lacks "$(cat "$ARX/sessions/$SID.json")" '"owed"'
+it "new lines send their chunk and its rows"
+part2 >> "$TR"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1)
+out="$(pushx)"; assert_eq "6" "$(stored | wc -l | tr -d ' ')"; out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
+it "the requests the command sends for a chunk are, body for body, the ones push sent for it"
+P1C1="$(chunk_of main 1)"; pushed="$(bodies 0)"; norows; messages > /dev/null
+assert_eq "$pushed" "$(bodies "$SKIP")"
+cp "$LOG" "$TMPROOT/p1.log"
+it "one row of a new chunk's request there before the push: the request is refused whole, its rows then go one at a time, and the others are there"
+mk p2; assert_eq 201 "$(plant "$P1C1" 2 "planted by another hand")"
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "1 1 1 1 1 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "4" "$(stored | wc -l | tr -d ' ')"; has "$(stored)" 'main 2 0 user text 1 "planted by another hand"'
+it "where the store has no such table yet (404) the chunks and the index row are stored all the same, the exit status is 0, and the last line says what is owed"
+mk p3 --without messages
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"; has "$(printf '%s\n' "$out" | tail -1)" "2 requests of rows are owed"
+assert_eq "2" "$(owed)"
+it "after the first 404 no more rows are sent in that run: what the table would have taken is owed, not uploaded"
+assert_eq "1" "$(posts | wc -l | tr -d ' ')"
+it "materialize rebuilds the session whose rows are owed"
+out="$(mat "$TMPROOT/mat-p3" --session "$SID")"; rc=$?
+assert_eq 0 "$rc"; assert_eq "$(python3 "$here/transcripts" redact < "$TR" 2>&1)" "$(cat "$TMPROOT/mat-p3/projects/github-com-owner-repo/$SID.jsonl" 2>&1)"
+it "a session that owes rows counts as unsent: the next push, once the table is there, stores them and strikes them off"
+option --without
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "0" "$(owed)"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
+assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
+before="$(grep -c '"method": "POST"' "$LOG")"; pushx > /dev/null; assert_eq "$before" "$(grep -c '"method": "POST"' "$LOG")"
+it "no more rows after a 404 holds for the whole run, not for one session: with two sessions to send, one request of rows is tried and the rest are owed"
+mk p3b --without messages
+(cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDM.jsonl" < /dev/null > /dev/null 2>&1)
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "4 2" "$(sentn chunks) $(sentn sessions)"; assert_eq "1" "$(posts | wc -l | tr -d ' ')"
+has "$out" "3 requests of rows are owed"; assert_eq "1 2" "$(owed "$SIDM") $(owed)"
+option --without; out="$(pushx)"; lacks "$out" "owed"; assert_eq "0 0 5" "$(owed "$SIDM") $(owed) $(stored | wc -l | tr -d ' ')"
+it "once a run holds when a session is sent again in the same run for lines archived meanwhile: what it owes is not tried again"
+mk p3c --refuse-line 1 --hang 2 --hang-table chunks
+pushx > "$TMPROOT/p3c.out" 2>&1 & pushpid=$!
+sleep 1; part2 >> "$TR"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1)
+wait "$pushpid"; out="$(cat "$TMPROOT/p3c.out")"
+assert_eq "4 2" "$(sentn chunks) $(sentn sessions)"   # the second part went in the same run: the session was sent twice
+assert_eq "3" "$(posts | wc -l | tr -d ' ')"; assert_eq "3" "$(owed)"; has "$out" "3 requests of rows are owed"
+it "every request of rows refused (503): nothing is held back, each is tried, each is owed, and the next push tries them again"
+mk p4 --refuse messages
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"; has "$out" "2 requests of rows are owed"; assert_eq "2" "$(posts | wc -l | tr -d ' ')"
+out="$(pushx)"; has "$out" "2 requests of rows are owed"; assert_eq "4" "$(posts | wc -l | tr -d ' ')"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"
+it "one request refused (503), the second of a chunk's two: only that one is owed, and only it is sent again"
+standin p5 --refuse-line 25; SKIP=0; ARX="$TMPROOT/ar-p5"
+(cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDL.jsonl" < /dev/null > /dev/null 2>&1)
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "1 request of rows is owed"; assert_eq "1" "$(owed "$SIDL")"; assert_eq "19" "$(stored | wc -l | tr -d ' ')"
+option --refuse-line
+out="$(pushx)"; lacks "$out" "owed"; assert_eq "0" "$(owed "$SIDL")"; assert_eq "30" "$(stored | wc -l | tr -d ' ')"
+assert_eq "19 11 11" "$(posts | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
+it "one row of an owed request stored by another hand before the retry: its rows go one at a time, and it is struck off"
+standin p6 --refuse-line 25; SKIP=0; ARX="$TMPROOT/ar-p6"
+(cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDL.jsonl" < /dev/null > /dev/null 2>&1)
+pushx > /dev/null; option --refuse-line
+assert_eq 201 "$(PSID="$SIDL" plant "$(chunk_of main 1)" 25 "there before the retry")"
+out="$(pushx)"; lacks "$out" "owed"; assert_eq "0" "$(owed "$SIDL")"; assert_eq "30" "$(stored | wc -l | tr -d ' ')"
+assert_eq "19 11 1 11 1 1 1 1 1 1 1 1 1 1 1" "$(posts | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')"
+it "a part sent again, its chunk already there and one row of its request with it: the push takes the refusal for the request being there, the check names what is missing and the command fills it"
+mk p7
+python3 - "$TMPROOT/p1.log" "$URL" "$P1C1" <<'PY'
+import json, sys, urllib.request
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r["method"] == "POST" and r["path"] == "/rest/v1/chunks" and json.loads(r["body"])["chunk_id"] == sys.argv[3]:
+        urllib.request.urlopen(urllib.request.Request(sys.argv[2] + "/rest/v1/chunks", data=r["body"].encode(), method="POST",
+                                                      headers={"apikey": "another-machine", "Content-Type": "application/json"}))
+PY
+plant "$P1C1" 2 "planted by another hand" > /dev/null
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "1 1 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"; assert_eq "2" "$(stored | wc -l | tr -d ' ')"
+out="$(messages --check)"; rc=$?; assert_eq 1 "$rc"; has "$out" "2 rows missing"
+out="$(messages)"; has "$out" "inserted 2 rows"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
+it "an owed request whose part no longer gives its chunk is struck off and left to transcripts messages, and the others are sent"
+mk p8 --refuse messages; pushx > /dev/null; option --refuse
+python3 - "$ARX/sessions/$SID.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+[o for o in d["sent"]["owed"] if o["stream"] == "main"][0]["chunk_id"] = "0" * 64
+open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")
+PY
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "is not what the archive gives now; its rows are left to transcripts messages"; lacks "$(printf '%s\n' "$out" | tail -1)" "owed"
+assert_eq "0" "$(owed)"; assert_eq "1" "$(stored | wc -l | tr -d ' ')"
+it "a stream that starts again owes nothing from before: what it owed is dropped, and its rows go with its chunks"
+mk p9 --refuse messages; pushx > /dev/null; option --refuse
+python3 - "$ARX/sessions/$SID.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["sent"]["streams"]["main"]["archive_generation"] = 99
+[o for o in d["sent"]["owed"] if o["stream"] == "main"][0]["part"] = 9  # as a longer stream owed before it was rewritten
+open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")
+PY
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "0" "$(owed)"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
+lacks "$out" "left to transcripts messages"   # what it owed is dropped unread, not looked for in a part that is gone
+it "what is owed names its place: a part that is gone, a chunk or a request past the end, each is struck off with its reason and stops nothing"
+# owing NAME KEY VALUE: a store that refused every row, mended, and the main stream's owed request made to name KEY as VALUE
+owing() { mk "$1" --refuse messages; pushx > /dev/null; option --refuse
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+[o for o in d["sent"]["owed"] if o["stream"] == "main"][0][sys.argv[2]] = int(sys.argv[3])
+open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")' "$ARX/sessions/$SID.json" "$2" "$3"; }
+for place in part chunk request; do
+  owing "p11-$place" "$place" 9; out="$(pushx)"; rc=$?
+  assert_eq "0 0 1" "$rc $(owed) $(stored | wc -l | tr -d ' ')"; has "$out" "its rows are left to transcripts messages"
+done
+it "a request owed for a stream the archive no longer has is dropped, and the session is sent"
+mk p12 --refuse messages; pushx > /dev/null; option --refuse
+python3 - "$ARX/sessions/$SID.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["sent"]["owed"].append(dict(d["sent"]["owed"][0], stream="subagents/gone"))
+open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")
+PY
+out="$(pushx)"; rc=$?; assert_eq "0 0 4" "$rc $(owed) $(stored | wc -l | tr -d ' ')"
+it "requests owed across two parts and two chunks of a part are each cut again from their own place"
+standin p13 --refuse messages; SKIP=0; ARX="$TMPROOT/ar-p13"; SIDT=80000000-2222-3333-4444-555555555555
+long() { for i in $(seq "$1" "$2"); do line "2026-11-05T10:$(printf %02d "$i"):00.000Z" user "\"$(printf 'row %02d ' "$i")$(head -c 50000 /dev/zero | tr '\0' x)\""; done | sed "s/$SID/$SIDT/"; }
+long 1 45 > "$PROJ/$SIDT.jsonl"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDT.jsonl" < /dev/null > /dev/null 2>&1)
+long 46 50 >> "$PROJ/$SIDT.jsonl"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDT.jsonl" < /dev/null > /dev/null 2>&1)
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"; has "$out" "5 requests of rows are owed"
+assert_eq "1.0.0 1.0.1 1.0.2 1.1.0 2.0.0" "$(python3 -c 'import json,sys; print(" ".join("%d.%d.%d" % (o["part"], o["chunk"], o["request"]) for o in json.load(open(sys.argv[1]))["sent"]["owed"]))' "$ARX/sessions/$SIDT.json")"
+option --refuse; out="$(pushx)"; rc=$?
+assert_eq "0 0 50" "$rc $(owed "$SIDT") $(stored | wc -l | tr -d ' ')"; lacks "$out" "left to transcripts messages"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
+it "the push's time limit ends it in the middle of a request of rows as anywhere else, and the part it was in is sent again, rows and all"
+mk p14 --hang 3 --hang-table messages
+out="$(AGENT_TRANSCRIPTS_PUSH_LIMIT=1 pushx --background)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "push stopped: the push reached its time limit"; assert_eq "1 0" "$(sentn chunks) $(sentn sessions)"
+option --hang; out="$(pushx)"; rc=$?
+assert_eq "0 0 4" "$rc $(owed) $(stored | wc -l | tr -d ' ')"; assert_eq "4 1" "$(sentn chunks) $(sentn sessions)"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
+it "the background push says what is owed in its log too, and still exits 0"
+mk p10 --refuse messages
+out="$(pushx --background)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "2 requests of rows are owed"
 
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

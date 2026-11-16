@@ -356,10 +356,18 @@ longer than 3,000,000 bytes in a request is stored cut, and its last line says s
 `transcripts messages [--session ID]...`, run where the read key is, fills the table from the
 chunks the store holds and inserts only the rows that are missing; `transcripts messages
 --check` changes nothing and prints each row that is missing, that is there and is not its
-chunk's, that differs, or whose chunk the store does not hold, and exits 1 if there is one. Nothing else writes rows yet, so a
-session stored since the last run has none until the command is run again. If the table and
-the chunks ever disagree the chunks are right: they are what `materialize` and the graders
-read, and each is checked against its chain id.
+chunk's, that differs, or whose chunk the store does not hold, and exits 1 if there is one.
+
+`transcripts push` writes the rows too: after each chunk it sends that chunk's rows, in the same
+requests the command would. Rows never hold a transcript back. A request of rows the store
+refuses, or does not answer, is kept in the session's sent state as owed; the push's last line
+says how many are, its exit status is what it would have been, and the next push sends them
+again. Where the store has no `messages` table yet (the SQL not run), the chunks and the index
+row are stored as before and every request of rows is owed until it has. So rows can be
+missing for a while: until the owing machine's next push, or until `transcripts messages` is
+run where the read key is, which also fills what a push could not know was missing. If the
+table and the chunks ever disagree the chunks are right: they are what `materialize` and the
+graders read, and each is checked against its chain id.
 
 The hooks' key can insert into `messages` and nothing else, and `store/probe` checks that too.
 Its check that a request of several rows is stored whole or not at all needs the read key, so

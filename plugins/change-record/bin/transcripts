@@ -74,7 +74,10 @@ It only inserts: a 409 duplicate means already stored. A stream the archive rewr
 redaction version, starts a new generation from the chain's root. With AGENT_TRANSCRIPTS_URL set,
 the archive hook starts `push --background` detached, which stops after
 AGENT_TRANSCRIPTS_PUSH_LIMIT seconds (default 60) and writes to <archive>/push.log; what it did
-not send goes at the next stop.
+not send goes at the next stop. After each chunk it sends the chunk's rows for the readable table
+(`messages`, below), cut into requests of at most 1,000,000 bytes. Rows never hold back a chunk or
+the index row: a request of rows that is refused, or gets no answer, is kept in the session's sent
+state as owed, the last line says how many are, and the next push sends them again.
 
 materialize rebuilds from the store, with the read key in <config>/agent-transcripts/read-key
 (the owner's machine only), a folder in Claude Code's layout: projects/<repository>/<id>.jsonl
@@ -934,16 +937,69 @@ def update_sent(ar, sid, sent):
     raise Busy(f"the archive kept {sid} locked; its sent state is written at the next push")
 
 
-def push_session(ar, url, key, sid, sender):
-    """Send one session's unsent parts and, if it changed, its index entry; returns (chunks, rows)."""
+def part_pieces(data):
+    """A part's redacted lines cut into chunks: whole lines, CHUNK_BYTES at most unless one line is more."""
+    pieces, cur = [], b""
+    for x in data.splitlines(keepends=True):
+        if cur and len(cur) + len(x) > CHUNK_BYTES:
+            pieces.append(cur)
+            cur = b""
+        cur += x
+    return pieces + ([cur] if cur else [])
+
+
+def chunk_requests(sid, stream, cid, raw):
+    """The requests of rows for one chunk, the same whoever sends them: `push` after the chunk, and
+    `transcripts messages` for what the store holds."""
+    return row_requests([dict({"session_id": sid, "stream": stream, "chunk_id": cid}, **r) for r in message_rows(raw)])
+
+
+def push_session(ar, url, key, sid, sender, no_table=None, retry=True):
+    """Send one session's unsent parts with each chunk's rows, the requests of rows it owes from before,
+    and, if it changed, its index entry; returns (chunks, index rows, requests of rows still owed).
+    Rows never hold back a chunk, a part or the index row: a request of rows that is refused or gets
+    no answer is kept in the sent state as owed, and sent again by the next push."""
     entry = json.load(open(os.path.join(ar, "sessions", sid + ".json")))
     sent = json.loads(json.dumps(entry.get("sent") or {}))
     sent.setdefault("streams", {})
+    owed = [o for o in sent.get("owed") or [] if o.get("stream") in entry["streams"]]
+    # no_table: the caller's list for the run; it holds the store's answer once the store has said it has no
+    # such table, and from then on no more rows go to it, for this session or the next
+    no_table = [] if no_table is None else no_table
+
     def restart(name, st):
         s = sent["streams"].get(name)
         sent["streams"][name] = {"archive_generation": st["generation"], "parts": 0, "generation": (s["generation"] + 1 if s else 1),
                                  "chunks": 0, "lines": 0, "bytes": 0, "tip": chain_root(sid, name)}
+        owed[:] = [o for o in owed if o["stream"] != name]  # its parts are all sent again, rows and all
         return sent["streams"][name]
+
+    def save():
+        sent["owed"] = list(owed)
+        if not owed:
+            del sent["owed"]
+        update_sent(ar, sid, sent)
+
+    def redacted(name, st, n):
+        data = open(os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], n)), "rb").read()
+        learn_ids(data)
+        return b"".join(redact_line(x) for x in data.splitlines(keepends=True))
+
+    def send_rows(req, unstored):
+        """One request of rows: True when it is there afterwards, False when it is owed. `unstored`: this
+        sender knows it has not stored the request (a chunk it has just stored, or a request it owes), so a
+        refusal as a duplicate means another hand wrote some of it, and its rows go one at a time."""
+        if no_table:
+            return False
+        try:
+            if not insert(url, key, "messages", req) and unstored:
+                for r in req:
+                    insert(url, key, "messages", [r])  # a duplicate here is a row that is there
+            return True
+        except StoreError as e:
+            if e.status == 404:
+                no_table.append(e)
+            return False
 
     if sent.get("redaction") != REDACTION:
         # a new redaction version (or a first push): every stream is owed. All of them restart before
@@ -961,31 +1017,39 @@ def push_session(ar, url, key, sid, sender):
         s = sent["streams"].get(name)
         if s is None or s["archive_generation"] != st["generation"]:
             s = restart(name, st)
+        cut = {}  # the pieces of each part that owes, cut from the archive as they first were
+        for o in [o for o in owed if retry and o["stream"] == name]:  # retry: not for a session already sent in this run
+            if o["part"] not in cut:
+                try:
+                    cut[o["part"]] = part_pieces(redacted(name, st, o["part"]))
+                except OSError:  # the part is not in the archive any more
+                    cut[o["part"]] = []
+            raw = cut[o["part"]][o["chunk"]] if o["chunk"] < len(cut[o["part"]]) else None
+            reqs = chunk_requests(sid, name, o["chunk_id"], raw) if raw is not None and chunk_id(o["start_id"], raw) == o["chunk_id"] else []
+            if o["request"] >= len(reqs):
+                say(f"{sid} {name}: chunk {o['chunk_id'][:12]} is not what the archive gives now; its rows are left to transcripts messages")
+                owed.remove(o)
+            elif send_rows(reqs[o["request"]], True):
+                owed.remove(o)
         for n in range(s["parts"] + 1, st["parts"] + 1):
-            p = os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], n))
-            data = open(p, "rb").read()
-            learn_ids(data)
-            data = b"".join(redact_line(x) for x in data.splitlines(keepends=True))
-            pieces, cur = [], b""
-            for x in data.splitlines(keepends=True):
-                if cur and len(cur) + len(x) > CHUNK_BYTES:
-                    pieces.append(cur)
-                    cur = b""
-                cur += x
-            pieces += [cur] if cur else []
-            for raw in pieces:
-                cid = chunk_id(s["tip"], raw)
-                chunks += insert(url, key, "chunks", {
-                    "session_id": sid, "stream": name, "chunk_id": cid, "start_id": s["tip"], "sender": sender,
+            for k, raw in enumerate(part_pieces(redacted(name, st, n))):
+                start, cid = s["tip"], chunk_id(s["tip"], raw)
+                new = insert(url, key, "chunks", {
+                    "session_id": sid, "stream": name, "chunk_id": cid, "start_id": start, "sender": sender,
                     "generation": s["generation"], "number": s["chunks"] + 1, "lines": raw.count(b"\n"),
                     "bytes": len(raw), "redaction": REDACTION,
                     "data": base64.b64encode(gzip.compress(raw, mtime=0)).decode()})
+                chunks += new
                 s.update(tip=cid, chunks=s["chunks"] + 1, lines=s["lines"] + raw.count(b"\n"), bytes=s["bytes"] + len(raw))
+                for i, req in enumerate(chunk_requests(sid, name, cid, raw)):  # every request, whether or not the chunk was new
+                    if not send_rows(req, new):
+                        owed.append({"stream": name, "part": n, "chunk": k, "request": i, "chunk_id": cid, "start_id": start})
             s["parts"] = n
             sent["row_pending"] = True  # the index row must follow, even if the push stops here
-            update_sent(ar, sid, sent)  # each whole part, so a stopped push resumes after it
+            save()  # each whole part, so a stopped push resumes after it
     if sent.get("version") and not sent.get("row_pending"):
-        return chunks, 0
+        save()  # it was called for what it owed: what was struck off is written down
+        return chunks, 0, len(owed)
     row_entry = dict(entry, sent={"redaction": REDACTION, "streams": sent["streams"]}, redaction_version=REDACTION)
     row_entry = redact_obj(row_entry)
     version = sent.get("version", 0) + 1
@@ -994,17 +1058,18 @@ def push_session(ar, url, key, sid, sender):
     insert(url, key, "sessions", {"session_id": sid, "row_id": row_id, "sender": sender, "version": version,
                                   "entry": row_entry})
     sent.update(version=version, row_pending=False)
-    update_sent(ar, sid, sent)
-    return chunks, 1
+    save()
+    return chunks, 1, len(owed)
 
 
-def unsent(ar, sid):
+def unsent(ar, sid, rows=True):
+    """Whether a session has anything to send. `rows`: requests of rows it owes count too."""
     try:
         e = json.load(open(os.path.join(ar, "sessions", sid + ".json")))
     except (OSError, ValueError):
         return False
     s = e.get("sent") or {}
-    if s.get("redaction") != REDACTION or not s.get("version") or s.get("row_pending"):
+    if s.get("redaction") != REDACTION or not s.get("version") or s.get("row_pending") or (rows and s.get("owed")):
         return True
     for name, st in e.get("streams", {}).items():
         x = s.get("streams", {}).get(name)
@@ -1046,19 +1111,25 @@ def cmd_push(args):
         signal.signal(signal.SIGALRM, _time_limit)
         signal.alarm(max(1, limit))
     chunks = rows = sessions = 0
+    owed = {}  # by session: the requests of rows each still owes after this push
+    no_table = []  # for the whole run: see push_session
+    tried = set()  # the sessions whose owed rows this run has tried: once a run, however often a session is sent in it
     passed_over = {}  # sessions whose own data could not be sent: the others still go, and these are tried again next time
     try:
         key = key_file("insert-key", required=False)
         sender = sender_id()
         with Lock(os.path.join(ar, "locks", "push")):
-            for _ in range(3):  # lines archived while this push ran go in the next pass
+            for again in range(3):  # lines archived while this push ran go in the next pass
                 todo = [os.path.basename(p)[:-5] for p in sorted(glob.glob(os.path.join(ar, "sessions", "*.json")))]
-                todo = [x for x in todo if (not only or x in only) and x not in passed_over and unsent(ar, x)]
+                # what a session owes in rows is tried once a run: the store that refused them a moment ago would again
+                todo = [x for x in todo if (not only or x in only) and x not in passed_over and unsent(ar, x, rows=not again)]
                 if not todo:
                     break
                 for sid in todo:
                     try:
-                        c, r = push_session(ar, url, key, sid, sender)
+                        first = sid not in tried
+                        tried.add(sid)
+                        c, r, owed[sid] = push_session(ar, url, key, sid, sender, no_table, retry=first)
                     except (OSError, ValueError, KeyError) as e:  # its archived files cannot be read
                         passed_over[sid] = e
                         continue
@@ -1076,7 +1147,9 @@ def cmd_push(args):
             signal.alarm(0)
     for sid, e in sorted(passed_over.items()):
         tell(f"{sid[:8]} ({sid}) could not be sent: {e}")
+    owe = sum(owed.values())
     tell(f"pushed {chunks} new chunks and {rows} index rows for {sessions} sessions to {url}"
+         + (f"; {so_many(owe, 'request')} of rows {'is' if owe == 1 else 'are'} owed and will be sent again at the next push" if owe else "")
          + (f"; {len(passed_over)} session{'s' if len(passed_over) > 1 else ''} could not be sent and will be tried again at the next push"
             if passed_over else ""))
     return 1 if passed_over and not background else 0
@@ -1417,8 +1490,8 @@ def cmd_messages(args):
                 say(f"{sid} {stream}: chunk {cid[:12]} does not match its chain id; left out")
                 left_out += 1
                 continue
-            rows = [dict({"session_id": sid, "stream": stream, "chunk_id": cid}, **r) for r in message_rows(raw)]
-            want = {(r["line"], r["block"]): r for r in rows}
+            reqs = chunk_requests(sid, stream, cid, raw)
+            want = {(r["line"], r["block"]): r for req in reqs for r in req}
             there = {(r["line"], r["block"]): r for r in read_rows(
                 url, key, f"/rest/v1/messages?select=line,block{',' + ','.join(ROW_FIELDS) if check else ''}"
                           f"&{where}&shape=eq.{SHAPE}&order=line,block")}
@@ -1434,7 +1507,7 @@ def cmd_messages(args):
                 continue
             added, failed = 0, None
             try:
-                for req in row_requests(rows):
+                for req in reqs:
                     missing = [r for r in req if (r["line"], r["block"]) not in there]
                     if len(missing) == len(req) and insert(url, key, "messages", req):
                         added += len(req)  # none of it was there: the request goes whole
