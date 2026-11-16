@@ -598,4 +598,101 @@ end $$;
 
 ## Outcome
 
-Nothing is built yet. This record is the plan.
+### Task 1: the table, the view and the gate
+
+Built test first, a suite at a time, each committed red before its code:
+`store/schema.test.sh`, 34 assertions failing with no table in `schema.sql`; the probe's
+new checks in `bin/transcripts-store.test.sh`, 17; the CI step in
+`bin/ci-workflow.test.sh`, 4; the probe against a store that is not all or none, 3. Then
+`schema.sql` (Appendix A), `SHAPE` in `bin/transcripts`, the checks in `store/probe`, the
+stand-in's `messages`, `transcript` and `--loose`, and the two CI steps. Suites after:
+store schema 51, transcripts-store 182, ci-workflow 21, transcripts-judge 422,
+transcripts-grade 212, transcripts 364, record-check 117, none failing.
+
+The schema suite starts a PostgreSQL of its own. It gives the three roles what Supabase
+grants on a new table or view by default, so that the file's revokes are what refuse
+`anon`; it stops any statement at 20 seconds, so that a view that never ends fails its
+test; and it inserts the made-up rows of `messages` backwards, so that no order of
+insertion can pass for the view's.
+
+Guards, each broken by hand in a clone of the repository, with the suite named for it: 38
+breaks, 32 caught at the first run. Two of the six that survived were code no input can
+reach, and are taken out: in the view, `not named` beside `not whole`, since only a
+stream named as a transcript is ever whole (Appendix A is changed to match; the view's
+rows are the same); and in the probe, a count of the bytes of a row whose size is the
+probe's own constant, which the suite reads from the request instead. The other four were
+gaps in the tests: the rank by version, whose two rows did not tie the other way; the
+order of lines in a chunk, which the order of insertion gave; a store that takes U+0000,
+which no stand-in was; and the first request of rows, which could have held one. Each got
+an assertion and was broken again. The 36 guards that stand, by the assertion that failed
+first for each:
+
+- Caught first by "R1: each check of the table refuses what it is there for": table:
+  anyone as who; table: line 0; table: a block below 0; table: shape 0; table: a chunk id
+  that is no hash; table: a tool's name of any length; table: a call id of any length.
+- Caught first by "R2: the index row is chosen as materialize chooses it: by redaction
+  version, then the later, then the larger, then the higher version": view: the redaction
+  version does not rank; view: the last timestamp does not rank; view: the bytes sent do
+  not rank; view: the version does not rank (survived the first run).
+- Caught first by "R2: a session's rows come in the order of the chain, numbered from 1,
+  whatever numbers the sender gave its chunks": view: a chain that comes back on itself is
+  walked on; view: the rows come in the order from the tip; the tool's shape and the
+  view's differ.
+- Caught first by "R1: a row the table's checks refuse: a kind that is none of the three,
+  a text with no end to it": table: any kind; table: a text of any length.
+- Caught first by "R1: row security is on for the table, and the view is granted to the
+  read key alone": table: row security is not turned on; view: what Supabase grants by
+  default is not revoked.
+- Caught first by "R1: the hooks' key (anon) may insert a row, once": table: the hooks'
+  key is not granted insert; table: no policy lets the hooks' key insert.
+- Caught first by "R1: and nothing else: no select, update or delete of the table, and no
+  select of the view": table: what Supabase grants by default is not revoked.
+- Caught first by "R1: the view reads as the one who asks where the server can (PostgreSQL
+  15 and later)": view: it does not read as the one who asks.
+- Caught first by "R2: a session whose only index row cannot be read shows nothing, and
+  stops nothing": view: a row that cannot be read keeps its streams.
+- Caught first by "R2: a stream with no chunk has no row and hides nothing": view: a
+  stream with no chunk is not whole.
+- Caught first by "R2: no row of a session one of whose streams is no transcript's": view:
+  every stream name is taken for a transcript's.
+- Caught first by "R2: no row of a session whose chain does not reach its root": view: a
+  chain need not reach its root.
+- Caught first by "R2: no row of a session whose id begins with a dot": view: a session
+  whose id begins with a dot is shown.
+- Caught first by "R2: rows of another shape are not shown": view: rows of every shape are
+  shown.
+- Caught first by "R2: the same with a text for a version and streams of its own, beside a
+  good row that has no version": view: a row that cannot be read is ranked with the
+  others.
+- Caught first by "R2: two index rows that tie are settled as materialize settles them:
+  the first by row_id": view: a tie goes to the last row_id.
+- Caught first by "R2: within a chunk the rows go by line and then by block": view: the
+  lines of a chunk come in no order (survived the first run).
+- Caught first by "against a store that keeps the new row of a refused request and takes a
+  text PostgreSQL would not, the probe fails on each and exits 1": probe: an accepted
+  U+0000 passes (survived the first run).
+- Caught first by "against a store that keeps the new row of a refused request, the probe
+  fails on the read-back and exits 1": probe: what the read key reads is not looked at.
+- Caught first by "the rows went as the probe says: the first request holds two, and one
+  request is at least 3,100,000 bytes": probe: the several rows are sent one by one
+  (survived the first run).
+- Caught first by "with both keys every check of the probe passes against the stand-in":
+  probe: the big row is small.
+- Caught first by "without the read key the probe says the read-back was not made, and
+  exits 1": probe: without the read key it exits 0.
+
+Run on the copy of the real rows (mock only, as in Probed facts): the final `schema.sql`
+runs with no error; the view returns 5,959 rows for the 17 sessions, the same rows in the
+same order as the plan's probe; `anon` is refused the view and `service_role` reads it.
+
+Not done, and it is this task's real use: the gate of R3. The owner runs `schema.sql` in
+the project's SQL editor, opens `transcript` in the table editor, and runs `store/probe`
+where both keys are; the probe's output goes here, and tasks 2 and 3 are not merged
+before it passes. Nothing here has been sent to the real store: from the cloud session
+every request carries the read key, so the probe's checks of what the hooks' key may not
+do cannot be made from it. Not verified: the suite on a Mac, where it runs only if a
+PostgreSQL is installed; and the CI step, which this pull request's own run shows.
+
+Changed after approval, each from a review and each run in the probe's PostgreSQL: an
+index row that cannot be read ranks last and has no stream (the review of the approval
+pull request, pushed after its merge); and the unreachable clause above.
