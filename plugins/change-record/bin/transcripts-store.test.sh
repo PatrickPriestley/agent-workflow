@@ -953,6 +953,13 @@ out="$(pushx)"; rc=$?
 assert_eq 0 "$rc"; assert_eq "4 2" "$(sentn chunks) $(sentn sessions)"; assert_eq "1" "$(posts | wc -l | tr -d ' ')"
 has "$out" "3 requests of rows are owed"; assert_eq "1 2" "$(owed "$SIDM") $(owed)"
 option --without; out="$(pushx)"; lacks "$out" "owed"; assert_eq "0 0 5" "$(owed "$SIDM") $(owed) $(stored | wc -l | tr -d ' ')"
+it "once a run holds when a session is sent again in the same run for lines archived meanwhile: what it owes is not tried again"
+mk p3c --refuse-line 1 --hang 2 --hang-table chunks
+pushx > "$TMPROOT/p3c.out" 2>&1 & pushpid=$!
+sleep 1; part2 >> "$TR"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1)
+wait "$pushpid"; out="$(cat "$TMPROOT/p3c.out")"
+assert_eq "4 2" "$(sentn chunks) $(sentn sessions)"   # the second part went in the same run: the session was sent twice
+assert_eq "3" "$(posts | wc -l | tr -d ' ')"; assert_eq "3" "$(owed)"; has "$out" "3 requests of rows are owed"
 it "every request of rows refused (503): nothing is held back, each is tried, each is owed, and the next push tries them again"
 mk p4 --refuse messages
 out="$(pushx)"; rc=$?
