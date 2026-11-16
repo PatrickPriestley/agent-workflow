@@ -39,6 +39,10 @@ assert_eq 2 "$(printf '%s\n' "$w" | grep -c "if: github.event_name == 'pull_requ
 it "the Linux runner is given a box before the suites, so the review's boxed tests run there (record 2026-11-15-checkable-judges)"
 box="$(printf '%s\n' "$w" | sed -n "/name: A box for the review's scripts (Linux)/,/name: red-check/p")"
 has "$box" "if: \${{ runner.os == 'Linux' }}"; has "$box" "bubblewrap"; has "$box" "bwrap --unshare-all --ro-bind / / true"; has "$box" "::warning::"
+it "the Linux runner is given a PostgreSQL before the store's schema suite, which must then run there; elsewhere the suite may say it cannot (record 2026-11-15-readable-store)"
+pg="$(printf '%s\n' "$w" | sed -n "/name: A PostgreSQL for the store's schema (Linux)/,/name: red-check/p")"
+has "$pg" "if: \${{ runner.os == 'Linux' }}"; has "$pg" "apt-get install -y -q postgresql"; has "$pg" 'echo "SCHEMA_TEST_REQUIRED=1" >> "$GITHUB_ENV"'
+has "$w" "run: bash plugins/change-record/store/schema.test.sh"
 it "this test runs in CI"
 has "$w" "run: bash bin/ci-workflow.test.sh"
 
