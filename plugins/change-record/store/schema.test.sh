@@ -83,6 +83,9 @@ it "R1: running the file a third time leaves the row and the grants as they were
 sql_file "$here/schema.sql" >/dev/null
 assert_eq "1" "$(sql "select count(*) from public.messages")"
 has "$(as_role anon "select count(*) from public.messages")" "permission denied for table messages"
+it "R1: row security is on for the table, and the view is granted to the read key alone"
+assert_eq "t" "$(sql "select relrowsecurity from pg_class where relname = 'messages'")"
+assert_eq "f f f t" "$(sql "select concat_ws(' ', has_table_privilege('anon', 'public.transcript', 'select'), has_table_privilege('authenticated', 'public.transcript', 'select'), has_table_privilege('someone', 'public.transcript', 'select'), has_table_privilege('service_role', 'public.transcript', 'select'))")"
 it "R1: the view reads as the one who asks where the server can (PostgreSQL 15 and later)"
 if [ "$(sql "select current_setting('server_version_num')::int >= 150000")" = t ]; then
   assert_eq "{security_invoker=true}" "$(sql "select reloptions from pg_class where relname = 'transcript'")"
@@ -145,6 +148,17 @@ tip = chain("good", numbers=[2, 1]); msg("good", tip, 2, 1, "good-5"); index("go
 a, b = chain("tie", 1, texts=["tie-first", "tie-first-2"]), h("tie/other")
 chunk("tie", b, root("tie"), 1); msg("tie", b, 1, 0, "tie-second")
 index("tie", entry({"main": a}), row_id="1" * 64); index("tie", entry({"main": b}), row_id="2" * 64)
+# the ranking, a key at a time: the newer redaction though it is the earlier row; then the later; then the larger; then the higher version
+def pair(sid, first, second):
+    """Two index rows for one session, each with a chunk of its own; the text says which should be shown."""
+    for name, (red, when, size, version) in (("shown", first), ("hidden", second)):
+        cid = h(f"{sid}/{name}"); chunk(sid, cid, root(sid), 1); msg(sid, cid, 1, 0, f"{sid}-{name}")
+        e = entry({"main": cid}, redaction=red, when=when); e["sent"]["streams"]["main"]["bytes"] = size
+        index(sid, e, version=version)
+pair("redact", (2, "2026-11-01T00:00:00Z", 10, 1), (1, "2026-11-15T00:00:00Z", 99, 9))
+pair("late", (2, "2026-11-15T00:00:00Z", 10, 1), (2, "2026-11-01T00:00:00Z", 99, 9))
+pair("large", (2, "2026-11-15T00:00:00Z", 99, 1), (2, "2026-11-15T00:00:00Z", 10, 9))
+pair("version", (2, "2026-11-15T00:00:00Z", 10, 9), (2, "2026-11-15T00:00:00Z", 10, 1))
 # a stream with no chunk yet: its tip is its root
 tip = chain("empty"); index("empty", entry({"main": tip, "subagents/agent-a": root("empty", "subagents/agent-a")}))
 # what materialize refuses: an id that begins with a dot, a stream that is no transcript's, a chunk missing, a chain in a ring
@@ -173,6 +187,8 @@ it "R2: a session's rows come in the order of the chain, numbered from 1, whatev
 assert_eq "1:good-1 2:good-2 3:good-3 4:good-4 5:good-5" "$(shown good)"
 it "R2: two index rows that tie are settled as materialize settles them: the first by row_id"
 assert_eq "1:tie-first 2:tie-first-2" "$(shown tie)"
+it "R2: the index row is chosen as materialize chooses it: by redaction version, then the later, then the larger, then the higher version"
+assert_eq "1:redact-shown 1:late-shown 1:large-shown 1:version-shown" "$(shown redact) $(shown late) $(shown large) $(shown version)"
 it "R2: a stream with no chunk has no row and hides nothing"
 assert_eq "1:empty-1 2:empty-2 3:empty-3 4:empty-4 | nothing" "$(shown empty) | $(shown empty subagents/agent-a)"
 it "R2: no row of a session whose id begins with a dot"
@@ -196,12 +212,12 @@ assert_eq "nothing" "$(shown only)"
 it "R2: rows of another shape are not shown"
 assert_eq "1:shape-1 2:shape-2" "$(shown shape)"
 it "R2: the sessions shown are the ones that should be, and no other"
-assert_eq "bad1 bad2 bad3 empty good shape tie" "$(sql "select string_agg(distinct session_id, ' ' order by session_id) from public.transcript")"
+assert_eq "bad1 bad2 bad3 empty good large late redact shape tie version" "$(sql "select string_agg(distinct session_id, ' ' order by session_id) from public.transcript")"
 it "R2: the shape the view reads is the tool's"
 tool="$(sed -n 's/^SHAPE = \([0-9][0-9]*\).*/\1/p' "$here/../bin/transcripts")"; view="$(sed -n 's/^where m\.shape = \([0-9][0-9]*\);.*/\1/p' "$here/schema.sql")"
 assert_eq "${tool:-no SHAPE in the tool}" "${view:-no shape in the view}"
 it "R1: the read key sees the view as the suite's owner does"
-assert_eq "25 25" "$(sql "select count(*) from public.transcript") $(as_role service_role "select count(*) from public.transcript")"
+assert_eq "29 29" "$(sql "select count(*) from public.transcript") $(as_role service_role "select count(*) from public.transcript")"
 
 echo
 echo "store schema: passed=$pass failed=$fail"
