@@ -16,8 +16,17 @@ checks that:
   4. select, select through an insert's `return=representation`, update and delete are all
      refused, and so is any access to `scores`.
 
+  5. for `messages` (record docs/changes/2026-11-15-readable-store.md, R3): two rows in one
+     request are stored; the same request again, and a request of one new row and one stored
+     row, are refused as duplicates; select, update and delete are refused, and so is select
+     of the view `transcript`; one row in a request of at least 3,100,000 bytes is stored; a
+     text holding U+0000, and one holding a lone surrogate, are refused.
+
 With a read key in ${XDG_CONFIG_HOME:-~/.config}/agent-transcripts/read-key (the owner's
-machine only) it also reads the probe chunk back and checks it still holds the first bytes.
+machine only) it also reads the probe chunk back and checks it still holds the first bytes,
+and reads that the new row of the refused request of rows is not there: a request of several
+rows must store all of them or none, and only reading shows it. Without the read key that
+check is not made, the probe says so, and its exit status is 1.
 The probe rows stay in the store (this key cannot delete them); their session ids start with
 `probe-`. Exit 0 when every check passes, 1 otherwise.
 """
@@ -94,12 +103,39 @@ def main():
                                           "verdict": "pass"}, "return=minimal", ins)),
         ("select scores: refused", lambda s: s in (401, 403), call("GET", "/rest/v1/scores?select=*", k=ins)),
     ]
+    def message(line, text):
+        return {"session_id": sid, "stream": "main", "chunk_id": chunk["chunk_id"], "shape": 1, "line": line, "block": 0,
+                "who": "user", "kind": "text", "text": text}
+    big = message(4, '"' * 1_550_000)  # each is two bytes of the body
+    refused = lambda s: s in (401, 403)  # noqa: E731
+    checks += [
+        ("two rows in one request: stored", lambda s: s == 201,
+         call("POST", "/rest/v1/messages", [message(1, "one"), message(2, "two")], "return=minimal", ins)),
+        ("the same request again: refused as a duplicate", lambda s: s == 409,
+         call("POST", "/rest/v1/messages", [message(1, "one"), message(2, "two")], "return=minimal", ins)),
+        ("one new row and one stored row: refused as a duplicate", lambda s: s == 409,
+         call("POST", "/rest/v1/messages", [message(3, "three"), message(1, "one")], "return=minimal", ins)),
+        ("select messages: refused", refused, call("GET", "/rest/v1/messages" + q + "&select=text", k=ins)),
+        ("update a message: refused", refused, call("PATCH", "/rest/v1/messages" + q, {"text": "changed"}, "return=minimal", ins)),
+        ("delete a message: refused", refused, call("DELETE", "/rest/v1/messages" + q, k=ins)),
+        ("select the transcript view: refused", refused, call("GET", "/rest/v1/transcript" + q + "&select=text", k=ins)),
+        ("one row in a request of at least 3,100,000 bytes: stored", lambda s: s == 201,
+         call("POST", "/rest/v1/messages", big, "return=minimal", ins)),
+        ("a text holding U+0000: refused", lambda s: 400 <= s < 500,
+         call("POST", "/rest/v1/messages", message(5, "a\x00b"), "return=minimal", ins)),
+        ("a text holding a lone surrogate: refused", lambda s: 400 <= s < 500,
+         call("POST", "/rest/v1/messages", message(6, "a\ud800b"), "return=minimal", ins)),
+    ]
+    expect = {}
     if read:
         checks.append(("read key: the probe chunk still holds its first bytes",
                        lambda s: s == 200, call("GET", "/rest/v1/chunks" + q + "&select=data", k=read)))
+        checks.append(("read key: the new row of the refused request is not there",
+                       lambda s: s == 200, call("GET", "/rest/v1/messages" + q + "&line=eq.3&select=line", k=read)))
+        expect = {checks[-2][0]: [{"data": "first"}], checks[-1][0]: []}
     failed = 0
     for name, good, (status, body) in checks:
-        if name.startswith("read key") and status == 200 and json.loads(body) != [{"data": "first"}]:
+        if name in expect and status == 200 and json.loads(body) != expect[name]:
             status = f"200 but {body}"
             good = lambda s: False  # noqa: E731
         verdict = "ok  " if good(status) else "FAIL"
@@ -107,8 +143,9 @@ def main():
         print(f"{verdict} {name}: HTTP {status} {body[:160].strip()}")
     if not read:
         print("note: no read key here, so the probe chunk was not read back")
+        print("the check that a request of several rows stores all or none was not made: no read key here")
     print(f"probe session {sid}: {len(checks) - failed} passed, {failed} failed")
-    return 1 if failed else 0
+    return 1 if failed or not read else 0
 
 
 if __name__ == "__main__":

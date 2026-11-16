@@ -2,7 +2,7 @@
 """A stand-in for the store's HTTPS interface (PostgREST on Supabase), for the tests only.
 
   stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE [--refuse-status N]]
-              [--refuse-after N] [--refuse-session ID]
+              [--refuse-after N] [--refuse-session ID] [--loose TABLE]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -17,6 +17,14 @@ to every insert into TABLE, as a store that fails part way would; --refuse-after
 inserts into chunks and answers 503 to every later one, as a store that fails part way
 through a session would; --refuse-session ID answers 400 to any insert of that session's
 rows, as a store that will not take one session's data would.
+
+`messages` and the view `transcript` (record docs/changes/2026-11-15-readable-store.md) answer
+as PostgreSQL answered that record's probe: several rows in one request are stored together
+or, if one is a duplicate, not at all; a text holding U+0000 or a lone surrogate is 400; the
+hooks' key reads neither. The view is the table's rows here: this stand-in runs no SQL, and
+the view's own rules are tested in store/schema.test.sh. --loose TABLE makes that table keep the
+new rows of a request it answers 409 to, and take a text PostgreSQL would refuse, as a store that
+is not what the plan needs would: the probe must fail against it.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -34,13 +42,29 @@ REFUSE = OPTS.get("--refuse")
 REFUSE_AFTER = int(OPTS["--refuse-after"]) if "--refuse-after" in OPTS else None
 REFUSE_SESSION = OPTS.get("--refuse-session")
 REFUSE_STATUS = int(OPTS.get("--refuse-status", 503))
+LOOSE = OPTS.get("--loose")
 ACCEPTED = {"chunks": 0}
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
         "scores": ("session_id", "step", "grader", "graded_at"),
-        "judge_votes": ("session_id", "question", "judge", "vote", "judged_at")}
-TABLES = {"chunks": [], "sessions": [], "scores": [], "judge_votes": []}
+        "judge_votes": ("session_id", "question", "judge", "vote", "judged_at"),
+        "messages": ("session_id", "stream", "chunk_id", "shape", "line", "block")}
+TABLES = {"chunks": [], "sessions": [], "scores": [], "judge_votes": [], "messages": []}
+VIEWS = {"transcript": "messages"}
 LOCK = threading.Lock()
 DENIED = {"code": "42501", "details": None, "hint": None, "message": "permission denied"}
+
+
+def unstorable(row):
+    """Whether a row holds a text PostgreSQL will not take: U+0000, or half of a surrogate pair."""
+    for v in row.values() if isinstance(row, dict) else []:
+        if isinstance(v, str):
+            try:
+                v.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+            if "\x00" in v:
+                return True
+    return False
 
 
 class H(BaseHTTPRequestHandler):
@@ -74,6 +98,12 @@ class H(BaseHTTPRequestHandler):
                         r["data"] = "H4sIAAAAAAAAA8tIzcnJBwCGphA2BQAAAA=="  # gzip of "hello"
             return self.answer(204)
         table = u.path[len("/rest/v1/"):] if u.path.startswith("/rest/v1/") else None
+        if table in VIEWS:  # a view is read, by the read key alone
+            if key != READKEY:
+                return self.answer(401, DENIED)
+            if self.command != "GET":
+                return self.answer(405, {"message": "the stand-in only reads a view"})
+            table = VIEWS[table]
         if table not in TABLES:
             return self.answer(404, {"code": "PGRST205", "message": f"Could not find the table 'public.{table}'"})
         reader = key == READKEY
@@ -96,11 +126,15 @@ class H(BaseHTTPRequestHandler):
             rows = rows if isinstance(rows, list) else [rows]
             if REFUSE_SESSION and any(r.get("session_id") == REFUSE_SESSION for r in rows):
                 return self.answer(400, {"code": "23514", "message": "new row violates a check constraint (the stand-in refuses this session)"})
+            if table == "messages" and table != LOOSE and any(unstorable(r) for r in rows):
+                return self.answer(400, {"code": "22P05", "message": "unsupported Unicode escape sequence"})
             with LOCK:
                 have = {tuple(r.get(c) for c in KEYS.get(table, ())) for r in TABLES[table]}
-                for r in rows:
-                    if table in KEYS and tuple(r.get(c) for c in KEYS[table]) in have:
-                        return self.answer(409, {"code": "23505", "message": f"duplicate key value violates unique constraint \"{table}_pkey\""})
+                dup = [r for r in rows if table in KEYS and tuple(r.get(c) for c in KEYS[table]) in have]
+                if dup and table == LOOSE:
+                    TABLES[table].extend(dict(r, created_at=time.time()) for r in rows if r not in dup)
+                if dup:
+                    return self.answer(409, {"code": "23505", "message": f"duplicate key value violates unique constraint \"{table}_pkey\""})
                 TABLES[table].extend(dict(r, created_at=time.time()) for r in rows)
             return self.answer(201)
         if not reader:

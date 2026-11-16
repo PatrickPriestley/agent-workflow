@@ -538,4 +538,44 @@ print(len(files), bad)
 PY
 )"
 
+echo "readable-store R3: store/probe checks the messages table with the hooks' key (record 2026-11-15-readable-store)"
+PROBE="$here/../store/probe"
+for c in P Q; do mkdir -p "$TMPROOT/config$c/agent-transcripts"; printf 'insert-key-made-up\n' > "$TMPROOT/config$c/agent-transcripts/insert-key"; done
+printf '%s\n' "$READKEY" > "$TMPROOT/configP/agent-transcripts/read-key"; chmod 600 "$TMPROOT"/config[PQ]/agent-transcripts/*-key
+standin probe
+out="$(XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$PROBE" 2>&1)"; rc=$?
+it "with both keys every check of the probe passes against the stand-in"
+assert_eq 0 "$rc"; has "$out" " passed, 0 failed"
+it "the checks of the new table are among them, each by name"
+for c in "two rows in one request: stored" "the same request again: refused as a duplicate" "one new row and one stored row: refused as a duplicate" \
+         "select messages: refused" "update a message: refused" "delete a message: refused" "select the transcript view: refused" \
+         "one row in a request of at least 3,100,000 bytes: stored" "a text holding U+0000: refused" "a text holding a lone surrogate: refused" \
+         "read key: the new row of the refused request is not there"; do has "$out" "ok   $c: HTTP"; done
+it "the rows went as the probe says: the first request holds two, and one request is at least 3,100,000 bytes"
+assert_eq "True True" "$(python3 - "$LOG" <<'PY2'
+import json, sys
+posts = [json.loads(l) for l in open(sys.argv[1])]
+posts = [p["body"] for p in posts if p["method"] == "POST" and p["path"] == "/rest/v1/messages"]
+print(isinstance(json.loads(posts[0]), list) and len(json.loads(posts[0])) == 2, max(len(b.encode()) for b in posts) >= 3100000)
+PY2
+)"
+it "without the read key the probe says the read-back was not made, and exits 1"
+out="$(XDG_CONFIG_HOME="$TMPROOT/configQ" AGENT_TRANSCRIPTS_URL="$URL" python3 "$PROBE" 2>&1)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "not made: no read key here"; lacks "$out" "FAIL"
+it "against a store that keeps the new row of a refused request and takes a text PostgreSQL would not, the probe fails on each and exits 1"
+standin loose --loose messages
+out="$(XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$PROBE" 2>&1)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "FAIL read key: the new row of the refused request is not there: HTTP 200 but"
+has "$out" "FAIL a text holding U+0000: refused: HTTP 201"; has "$out" "FAIL a text holding a lone surrogate: refused: HTTP 201"; has "$out" " 3 failed"
+standin probe2
+it "the stand-in answers for the new table as PostgreSQL answered the probe of the record: a duplicate among several rows stores none of them"
+row() { printf '{"session_id":"standin-m","stream":"main","chunk_id":"%064d","shape":1,"line":%s,"block":0,"who":"user","kind":"text","text":"%s"}' 0 "$1" "$2"; }
+post() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "apikey: ${2:-insert-key-made-up}" --data-binary "$1" "$URL/rest/v1/messages"; }
+get() { curl -s -H "apikey: $READKEY" "$URL/rest/v1/$1"; }
+assert_eq "201 409 409" "$(post "[$(row 1 a),$(row 2 b)]") $(post "[$(row 1 a),$(row 2 b)]") $(post "[$(row 3 c),$(row 1 a)]")"
+assert_eq "[1, 2]" "$(get 'messages?session_id=eq.standin-m&select=line&order=line' | python3 -c 'import json,sys; print([r["line"] for r in json.load(sys.stdin)])')"
+it "and it refuses a text PostgreSQL cannot hold, and any reading with the hooks' key, of the table or of the view"
+assert_eq "400 400 401 401" "$(post "$(row 4 'a\u0000b')") $(post "$(row 5 'a\ud800b')") $(curl -s -o /dev/null -w '%{http_code}' -H 'apikey: insert-key-made-up' "$URL/rest/v1/messages?select=line") $(curl -s -o /dev/null -w '%{http_code}' -H 'apikey: insert-key-made-up' "$URL/rest/v1/transcript?select=n")"
+assert_eq "2" "$(get 'transcript?session_id=eq.standin-m&select=line' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

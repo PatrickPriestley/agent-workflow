@@ -720,6 +720,7 @@ def cmd_scope(args):
 
 REDACTION = 2  # bump when the patterns change: every stream is then sent again as a new generation
 CHUNK_BYTES = 2_000_000  # redacted bytes per chunk before gzip; the real project took a 4 MB body
+SHAPE = 1  # the version of the rule that reads a chunk's rows for `messages`; store/schema.sql's view names the same
 PUSH_LIMIT = 60  # seconds a background push may run
 
 _R = lambda p, f=0: re.compile(p, f)  # noqa: E731
