@@ -1391,16 +1391,17 @@ def cmd_messages(args):
         return 2
     sessions, chunks, inserted, none, left_out, unfilled, compared, probes = set(), 0, 0, 0, 0, 0, 0, 0
     found = {"missing": 0, "not the chunk's": 0, "differs": 0}
+    held, orphans = set(), {}  # the chunks the store holds, and the rows of each chunk it does not
     try:
         if request(url, key, "GET", "/rest/v1/messages?select=line&limit=1")[0] == 404:
             say("the store has no table `messages` yet: run plugins/change-record/store/schema.sql in the project's SQL editor, "
                 "then this again")
             return 1
         q = "/rest/v1/chunks?select=session_id,stream,chunk_id,sender,start_id&order=session_id,stream,chunk_id"
-        if only:
-            q += "&session_id=in.(" + ",".join(quote(x, safe="") for x in only) + ")"
-        for c in read_rows(url, key, q):
+        scope = "&session_id=in.(" + ",".join(quote(x, safe="") for x in only) + ")" if only else ""
+        for c in read_rows(url, key, q + scope):
             sid, stream, cid = c["session_id"], c["stream"], c["chunk_id"]
+            held.add((sid, stream, cid))
             if sid.startswith("probe-") and c.get("sender") == "probe" and c.get("start_id") == "0" * 64:
                 probes += 1  # what store/probe leaves behind: no transcript's chunk, and no chain the view shows can hold it
                 continue
@@ -1447,16 +1448,25 @@ def cmd_messages(args):
                 unfilled += 1
             elif not added:
                 none += 1
+        if check:  # a row is its chunk's: one whose chunk the store does not hold, under any shape, has nothing behind it
+            for r in read_rows(url, key, "/rest/v1/messages?select=session_id,stream,chunk_id"
+                                         "&order=session_id,stream,chunk_id,shape,line,block" + scope):
+                k = (r["session_id"], r["stream"], r["chunk_id"])
+                if k not in held:
+                    orphans[k] = orphans.get(k, 0) + 1
+            for (sid, stream, cid), n in sorted(orphans.items()):
+                print(f"no such chunk: {sid} {stream} chunk {cid[:12]}: {so_many(n, 'row')}")
     except StoreError as e:
         say(str(e))
         return 1
     tail = ((f", {so_many(left_out, 'chunk')} left out" if left_out else "")
             + (f", {so_many(probes, 'chunk')} of store/probe's passed over" if probes else ""))
     if check:
-        m, x, d = found["missing"], found["not the chunk's"], found["differs"]
+        m, x, d, o = found["missing"], found["not the chunk's"], found["differs"], sum(orphans.values())
         bad = [s for n, s in ((m, f"{so_many(m, 'row')} missing"),
                               (x, f"{so_many(x, 'row')} that {'is' if x == 1 else 'are'} not its chunk's"),
-                              (d, f"{so_many(d, 'row')} that differ{'s' if d == 1 else ''}")) if n]
+                              (d, f"{so_many(d, 'row')} that differ{'s' if d == 1 else ''}"),
+                              (o, f"{so_many(o, 'row')} whose chunk the store does not hold")) if n]
         print(f"transcripts: messages --check: {so_many(chunks, 'chunk')}"
               + (f"; {', '.join(bad)}" if bad else f", {so_many(compared, 'row')}, each as its chunk gives it") + tail)
         return 1 if bad or left_out else 0

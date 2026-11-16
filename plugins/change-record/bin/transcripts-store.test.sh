@@ -857,6 +857,8 @@ plant "$ghost" 1 "a row with no chunk behind it" > /dev/null; plant "$ghost" 2 "
 : > "$LOG"; out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "no such chunk: $SID main chunk ${ghost:0:12}: 3 rows"
 has "$out" "messages --check: 4 chunks; 3 rows whose chunk the store does not hold"; assert_eq "GET" "$(methods)"
+out="$(messages)"; rc=$?   # the fill has nothing to say of them: it cannot take a row out
+assert_eq 0 "$rc"; lacks "$out" "no such chunk"
 it "with --session only that session's rows are looked at, and a store with rows and no chunk at all is not clean"
 out="$(messages --check --session "no-such-session")"; rc=$?
 assert_eq 0 "$rc"; lacks "$out" "no such chunk"
