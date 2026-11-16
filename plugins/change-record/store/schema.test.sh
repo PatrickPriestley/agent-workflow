@@ -144,6 +144,8 @@ def chain(sid, n=2, stream="main", texts=None, numbers=None):
 
 # in order, though the sender numbered its chunks backwards and a line holds two blocks
 tip = chain("good", numbers=[2, 1]); msg("good", tip, 2, 1, "good-5"); index("good", entry({"main": tip}))
+# a line's blocks come before the next line's: the second block of line 1 before the first of line 2
+tip = chain("lines", 1); msg("lines", tip, 1, 1, "lines-1b"); index("lines", entry({"main": tip}))
 # two index rows that tie in everything: the first by row_id is the one
 a, b = chain("tie", 1, texts=["tie-first", "tie-first-2"]), h("tie/other")
 chunk("tie", b, root("tie"), 1); msg("tie", b, 1, 0, "tie-second")
@@ -186,6 +188,8 @@ shown() { sql "select coalesce(string_agg(n || ':' || text, ' ' order by n), 'no
 
 it "R2: a session's rows come in the order of the chain, numbered from 1, whatever numbers the sender gave its chunks"
 assert_eq "1:good-1 2:good-2 3:good-3 4:good-4 5:good-5" "$(shown good)"
+it "R2: within a chunk the rows go by line and then by block"
+assert_eq "1:lines-1 2:lines-1b 3:lines-2" "$(shown lines)"
 it "R2: two index rows that tie are settled as materialize settles them: the first by row_id"
 assert_eq "1:tie-first 2:tie-first-2" "$(shown tie)"
 it "R2: the index row is chosen as materialize chooses it: by redaction version, then the later, then the larger, then the higher version"
@@ -213,12 +217,12 @@ assert_eq "nothing" "$(shown only)"
 it "R2: rows of another shape are not shown"
 assert_eq "1:shape-1 2:shape-2" "$(shown shape)"
 it "R2: the sessions shown are the ones that should be, and no other"
-assert_eq "bad1 bad2 bad3 empty good large late redact shape tie version" "$(sql "select string_agg(distinct session_id, ' ' order by session_id) from public.transcript")"
+assert_eq "bad1 bad2 bad3 empty good large late lines redact shape tie version" "$(sql "select string_agg(distinct session_id, ' ' order by session_id) from public.transcript")"
 it "R2: the shape the view reads is the tool's"
 tool="$(sed -n 's/^SHAPE = \([0-9][0-9]*\).*/\1/p' "$here/../bin/transcripts")"; view="$(sed -n 's/^where m\.shape = \([0-9][0-9]*\);.*/\1/p' "$here/schema.sql")"
 assert_eq "${tool:-no SHAPE in the tool}" "${view:-no shape in the view}"
 it "R1: the read key sees the view as the suite's owner does"
-assert_eq "29 29" "$(sql "select count(*) from public.transcript") $(as_role service_role "select count(*) from public.transcript")"
+assert_eq "32 32" "$(sql "select count(*) from public.transcript") $(as_role service_role "select count(*) from public.transcript")"
 
 echo
 echo "store schema: passed=$pass failed=$fail"
