@@ -646,10 +646,11 @@ ok = ["2026-11-15T10:00:00Z", "2026-11-15T10:00:00.5-08:00", "2026-11-15T23:59:5
 no = ["2026-11-15T10:00:00", "2026-11-15 10:00:00Z", "2026-02-30T10:00:00Z", "2026-11-15T24:00:00Z", "2026-11-15T10:00:00+16:00",
       "2026-11-15T10:00:00+01:60", "0000-01-01T00:00:00Z"]
 print(" ".join(str(tr.instant(s) is not None) for s in ok + no))')"
-it "R6: two times are one moment whatever the offset or the fraction they are written with, and an hour apart they are not"
-assert_eq "True True False False True" "$(tool '
+it "R6: two times are one moment whatever the offset or the fraction they are written with; an hour apart, or half a second, they are not"
+assert_eq "True True False False True False" "$(tool '
 print(tr.same_field("at", "2026-11-15T10:00:00.250Z", "2026-11-15T11:00:00.25+01:00"), tr.same_field("at", "2026-11-15T10:00:00.123456789Z", "2026-11-15T10:00:00.123457+00:00"),
-      tr.same_field("at", "2026-11-15T10:00:00Z", "2026-11-15T10:00:00+01:00"), tr.same_field("at", None, "2026-11-15T10:00:00Z"), tr.same_field("at", None, None))')"
+      tr.same_field("at", "2026-11-15T10:00:00Z", "2026-11-15T10:00:00+01:00"), tr.same_field("at", None, "2026-11-15T10:00:00Z"), tr.same_field("at", None, None),
+      tr.same_field("at", "2026-11-15T10:00:00.250Z", "2026-11-15T10:00:00.750Z"))')"
 it "R4: a line nested deeper than the reader goes gives no row and stops nothing: the next line's row is there"
 assert_eq "2 the line after" "$(tool '
 deep = b"[" * 200000 + b"]" * 200000
