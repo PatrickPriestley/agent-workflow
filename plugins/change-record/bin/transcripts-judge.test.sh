@@ -1587,6 +1587,28 @@ print(" ".join(sorted(propose.EVALS.values())), "|", all(os.path.isdir(os.path.j
       len(p) < 70000 and "THE END OF THE SESSION" in p, "|", propose.some([3]), "|", propose.some([1, 2, 9]), "|", propose.some([]))
 PY
 )"
+it "the call itself: output that is no object, no output at all, a run that does not end, and no claude to run each give an error with its reason, never a traceback"
+assert_eq "error: not claude -p JSON | error: not claude -p JSON | error: not claude -p JSON | error: no answer in 1 s | error: claude did not start" "$(py - "$here/.." "$PW" <<'PY'
+import os, stat, sys
+sys.path.insert(0, sys.argv[1] + "/grade")
+import propose
+bindir = sys.argv[2] + "/askbin"; os.makedirs(bindir, exist_ok=True)
+def claude(script):
+    path = bindir + "/claude"
+    open(path, "w").write("#!/bin/sh\n" + script + "\n"); os.chmod(path, 0o755)
+os.environ["PATH"] = bindir + ":/usr/bin:/bin"
+propose.TIMEOUT = 1
+out = []
+for script in ("echo '[]'", "echo 'this is not JSON'", "true", "sleep 5"):
+    claude(script)
+    got = propose.ask("a prompt")
+    out.append(got["status"] + ": " + ("not claude -p JSON" if "not claude -p JSON" in (got["detail"] or "") else got["detail"] or ""))
+os.remove(bindir + "/claude")
+got = propose.ask("a prompt")
+out.append(got["status"] + ": " + (got["detail"] or "").split(" (")[0])
+print(" | ".join(out))
+PY
+)"
 it "the rule a proposal states for each of the seven steps is in the README's row for that step"
 assert_eq "7 steps, each rule in its row" "$(py - "$here/../README.md" <<'PY'
 import re, sys
