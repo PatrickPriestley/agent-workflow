@@ -1549,6 +1549,8 @@ rm -f "$COUNTER"; out="$(FAKE_SCRIPT=refused propose --session $P2 --step red-fi
 [ ! -e "$PAR/proposals/$P2/red-first" ] && ok || bad "a proposal was left"
 it "usage: a session and a step are both needed, the step is one of the seven, and the folder is outside every working tree"
 out="$(propose --session $P1)"; assert_eq 2 "$?"; has "$out" "usage: transcripts propose"
+out="$(propose --step red-first)"; assert_eq 2 "$?"; has "$out" "usage: transcripts propose"
+out="$(propose --session $P1 --step red-first --frobnicate)"; assert_eq 2 "$?"; has "$out" "usage: transcripts propose"
 out="$(propose --session $P1 --step tidy-code)"; assert_eq 2 "$?"; has "$out" "tier-declared"
 out="$(cd "$PREPO" && "$T" propose "$PREPO/inside" --session $P1 --step red-first 2>&1)"; assert_eq 2 "$?"; has "$out" "inside the working tree"
 out="$(propose --session 99999999-2222-3333-4444-555555555555 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"
@@ -1572,6 +1574,9 @@ P3=93000000-2222-3333-4444-555555555555
 (cd "$PREPO" && AGENT_TRANSCRIPTS="$PAR" "$T" archive --transcript "$PW/$P3.jsonl" < /dev/null > /dev/null 2>&1; "$T" sheet "$PAR" --labels "$PLAB" > /dev/null 2>&1)
 plabel $P3 red-first fail "no test before greet.py"; : > "$FAKELOG"
 out="$(propose --session $P3 --step red-first)"; assert_eq 1 "$?"; has "$out" "did not load"; assert_eq "0" "$(asked)"
+it "a session whose index entry is gone from a damaged folder is said to be no session there, with no traceback"
+rm -f "$PAR/sessions/$P3.json"
+out="$(propose --session $P3 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"; lacks "$out" "Traceback"
 it "each eval case a proposal can name is a case the plugin has, a long session is cut to its end, and the calls are said as a person would"
 assert_eq "record-before-code red-first | True True | call 3 | calls 1, 2 and 9 | no call was named" "$(py - "$here/.." <<'PY'
 import os, sys
@@ -1595,6 +1600,9 @@ PY
 it "the report lists the proposals a folder holds, each with its step and its eval case, and has no such section when there are none"
 rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
 has "$rep" "## Proposed edits"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"; has "$rep" "| $P2 | probe-before-record | none |"
+(cd "$PREPO" && "$T" grade "$PAR" > /dev/null 2>&1)   # a folder with score rows takes the report's other path
+rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
+has "$rep" "Score rows from"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"
 rm -rf "$PAR/proposals"; rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"; lacks "$rep" "Proposed edits"
 
 echo
