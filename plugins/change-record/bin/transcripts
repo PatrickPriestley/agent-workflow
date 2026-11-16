@@ -1019,7 +1019,10 @@ def push_session(ar, url, key, sid, sender):
         cut = {}  # the pieces of each part that owes, cut from the archive as they first were
         for o in [o for o in owed if o["stream"] == name]:
             if o["part"] not in cut:
-                cut[o["part"]] = part_pieces(redacted(name, st, o["part"]))
+                try:
+                    cut[o["part"]] = part_pieces(redacted(name, st, o["part"]))
+                except OSError:  # the part is not in the archive any more
+                    cut[o["part"]] = []
             raw = cut[o["part"]][o["chunk"]] if o["chunk"] < len(cut[o["part"]]) else None
             reqs = chunk_requests(sid, name, o["chunk_id"], raw) if raw is not None and chunk_id(o["start_id"], raw) == o["chunk_id"] else []
             if o["request"] >= len(reqs):
