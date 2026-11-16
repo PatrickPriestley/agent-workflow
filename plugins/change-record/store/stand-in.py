@@ -2,7 +2,7 @@
 """A stand-in for the store's HTTPS interface (PostgREST on Supabase), for the tests only.
 
   stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE [--refuse-status N]]
-              [--refuse-after N] [--refuse-session ID]
+              [--refuse-after N] [--refuse-session ID] [--loose TABLE]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -22,7 +22,9 @@ rows, as a store that will not take one session's data would.
 as PostgreSQL answered that record's probe: several rows in one request are stored together
 or, if one is a duplicate, not at all; a text holding U+0000 or a lone surrogate is 400; the
 hooks' key reads neither. The view is the table's rows here: this stand-in runs no SQL, and
-the view's own rules are tested in store/schema.test.sh.
+the view's own rules are tested in store/schema.test.sh. --loose TABLE makes that table keep the
+new rows of a request it answers 409 to, as a store that is not all or none would: the probe
+must fail against it.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -40,6 +42,7 @@ REFUSE = OPTS.get("--refuse")
 REFUSE_AFTER = int(OPTS["--refuse-after"]) if "--refuse-after" in OPTS else None
 REFUSE_SESSION = OPTS.get("--refuse-session")
 REFUSE_STATUS = int(OPTS.get("--refuse-status", 503))
+LOOSE = OPTS.get("--loose")
 ACCEPTED = {"chunks": 0}
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
         "scores": ("session_id", "step", "grader", "graded_at"),
@@ -127,9 +130,11 @@ class H(BaseHTTPRequestHandler):
                 return self.answer(400, {"code": "22P05", "message": "unsupported Unicode escape sequence"})
             with LOCK:
                 have = {tuple(r.get(c) for c in KEYS.get(table, ())) for r in TABLES[table]}
-                for r in rows:
-                    if table in KEYS and tuple(r.get(c) for c in KEYS[table]) in have:
-                        return self.answer(409, {"code": "23505", "message": f"duplicate key value violates unique constraint \"{table}_pkey\""})
+                dup = [r for r in rows if table in KEYS and tuple(r.get(c) for c in KEYS[table]) in have]
+                if dup and table == LOOSE:
+                    TABLES[table].extend(dict(r, created_at=time.time()) for r in rows if r not in dup)
+                if dup:
+                    return self.answer(409, {"code": "23505", "message": f"duplicate key value violates unique constraint \"{table}_pkey\""})
                 TABLES[table].extend(dict(r, created_at=time.time()) for r in rows)
             return self.answer(201)
         if not reader:
