@@ -770,6 +770,71 @@ Changed after approval, each from a review and each run in the probe's PostgreSQ
 index row that cannot be read ranks last and has no stream (the review of the approval
 pull request, pushed after its merge); and the unreachable clause above.
 
+#### The gate: the probe on the real store, 2026-11-16
+
+The owner merged task 1, ran `schema.sql` in the project's SQL editor, and ran the probe
+on a laptop that holds the hooks' key and not the read key. Verified against the real
+system; each answer is cut here after its code:
+
+```
+$ AGENT_TRANSCRIPTS_URL=https://<project>.supabase.co plugins/change-record/store/probe
+ok   insert a chunk: HTTP 201
+ok   insert an index row: HTTP 201
+ok   a duplicate chunk, other bytes: refused as a duplicate: HTTP 409 {"code":"23505"
+ok   a duplicate index row: refused as a duplicate: HTTP 409 {"code":"23505"
+ok   ignore-duplicates: refused, since ON CONFLICT needs SELECT: HTTP 401 {"code":"42501"
+ok   select chunks: refused: HTTP 401 {"code":"42501"
+ok   select sessions: refused: HTTP 401 {"code":"42501"
+ok   insert with return=representation: refused: HTTP 401 {"code":"42501"
+ok   update a chunk: refused: HTTP 401 {"code":"42501"
+ok   delete a chunk: refused: HTTP 401 {"code":"42501"
+ok   update an index row: refused: HTTP 401 {"code":"42501"
+ok   delete an index row: refused: HTTP 401 {"code":"42501"
+ok   insert a score: refused: HTTP 401 {"code":"42501"
+ok   select scores: refused: HTTP 401 {"code":"42501"
+ok   two rows in one request: stored: HTTP 201
+ok   the same request again: refused as a duplicate: HTTP 409 {"code":"23505" [...] "messages_pkey\""}
+ok   one new row and one stored row: refused as a duplicate: HTTP 409 {"code":"23505" [...] "messages_pkey\""}
+ok   select messages: refused: HTTP 401 {"code":"42501"
+ok   update a message: refused: HTTP 401 {"code":"42501"
+ok   delete a message: refused: HTTP 401 {"code":"42501"
+ok   select the transcript view: refused: HTTP 401 {"code":"42501" [...] "permission denied for view transcript"}
+ok   one row in a request of at least 3,100,000 bytes: stored: HTTP 201
+ok   a text holding U+0000: refused: HTTP 400 {"code":"22P05","details":"\\u0000 cannot be converted to text." [...]
+ok   a text holding a lone surrogate: refused: HTTP 400 {"code":"PGRST102","details":null,"hint":null,"message":"Empty or invalid json"}
+note: no read key here, so the probe chunk was not read back
+the check that a request of several rows stores all or none was not made: no read key here
+probe session probe-13cf8033e629eddb: 24 passed, 0 failed
+```
+
+Its last two checks need the read key, which that laptop does not hold, so the probe's
+exit status there was 1. They were made for that probe session from the cloud session,
+whose every request carries the read key, by the probe's own two requests:
+
+```
+GET /rest/v1/chunks?session_id=eq.probe-13cf8033e629eddb&select=data
+[{"data":"first"}] HTTP 200          the duplicate with other bytes changed nothing
+GET /rest/v1/messages?session_id=eq.probe-13cf8033e629eddb&line=eq.3&select=line
+[] HTTP 200                          the new row of the refused request is not there
+GET /rest/v1/messages?session_id=eq.probe-13cf8033e629eddb&select=line&order=line
+lines 1, 2 and 4, and line 4's text is its 1,550,000 double quotes
+GET /rest/v1/transcript?session_id=eq.probe-13cf8033e629eddb&select=n
+[] HTTP 200                          the view shows nothing of the probe
+```
+
+So every check of the probe has passed on the real store, in two parts on two machines
+and not in one run where both keys are, which is what R3's words ask; the reviewer may
+hold that against it. What Probed facts had as assumed is now verified against the real
+system: a request of several rows stores all of them or none, and a duplicate among
+them is 409 with none stored; a body of 3,100,000 bytes of rows is accepted; a text
+holding U+0000 is refused, 400 with PostgreSQL's 22P05; the hooks' key reads neither the
+table nor the view. One answer was not what the stand-in gave: half of a surrogate pair
+is refused by the interface before PostgreSQL sees it, 400 with `PGRST102`, "Empty or
+invalid json"; the stand-in now answers the same. And before the owner ran the file the
+store answered a request for `messages` 404 with `PGRST205`, as the stand-in's
+`--without` does. Not yet confirmed here: that the owner has opened `transcript` in the
+dashboard's table editor.
+
 ### Task 2: filling in and checking
 
 Built test first, each step committed red before its code: the fixture, the rule, the
@@ -779,7 +844,7 @@ the README's two queries in `store/schema.test.sh`, 3 failing with no query in t
 and a store with no such table yet, 3 failing, then the message for it. Two expectations
 of the first tests were wrong and were corrected with the code, each said in its commit:
 the order of two rows in a sorted list, and the number of rows in a chunk's request.
-Suites after: transcripts-store 307, store schema 58, transcripts 364, transcripts-grade
+Suites after: transcripts-store 317, store schema 58, transcripts 364, transcripts-grade
 212, transcripts-judge 422, ci-workflow 21, none failing.
 
 The fixture is `store/fixtures/shape-1.jsonl`, 21 made-up lines with one for each clause
@@ -813,12 +878,12 @@ the ones `push` sends. `push` sends none until task 3, which adds it; here the c
 rule is tested by itself. The stand-in gained three things for these tests:
 `/__admin/forget`, `/__admin/after-read` and `--without TABLE`.
 
-Guards, each broken by hand in a clone of the repository: 83 breaks, 79 caught at the
+Guards, each broken by hand in a clone of the repository: 87 breaks, 83 caught at the
 first run. Of the four that survived, three were gaps in the tests, each closed and
 broken again: the fraction of a second, the microsecond the check allows, and a chunk
 left out that was read as an empty one. The fourth was a guard that did less than it
 cost and is taken out: it ended the whole fill when one insert got no answer, and a
-store that cannot be reached still ends the run at the next reading. The 82 guards that
+store that cannot be reached still ends the run at the next reading. The 86 guards that
 stand, by the assertion that failed first for each:
 
 - Caught first by "the fixture named for the tool's shape gives its rows, compared whole":
@@ -860,6 +925,11 @@ stand, by the assertion that failed first for each:
   the longest beginning that is not, and its last line says how many characters are left
   in the chunk": rows: no text is ever cut; rows: the cut is not the longest; rows: the
   cut is counted in characters.
+- Caught first by "only the probe's own chunk is passed over: another chunk in a session
+  named like the probe's is read, and left out if it is not what its id says": command: a
+  chunk like the probe's is passed over in any session; command: any sender's chunk is
+  passed over in a probe's session; command: a chunk that starts anywhere is passed over
+  in a probe's session.
 - Caught first by "R6: two times are one moment whatever the offset or the fraction they
   are written with, and an hour apart they are not": rows: an offset is added the wrong
   way; check: two times an hour apart are one.
@@ -907,6 +977,9 @@ stand, by the assertion that failed first for each:
 - Caught first by "the rows are each line's texts, calls and results, in the chunk they
   were read from, under the tool's shape": command: a row with no text of the session is
   keyed to another chunk.
+- Caught first by "the rows store/probe leaves behind are passed over and said: its chunk
+  is no transcript's, and it fails neither the fill nor the check": command: the probe's
+  chunk is read like any other.
 - Caught first by "where the store has no such table yet it says to run schema.sql, sends
   nothing, and exits 1": command: a store with no table is not said.
 - Caught first by "with --session only that session's chunks are read": command: --session
@@ -954,9 +1027,39 @@ transcripts: messages --check: 271 chunks; 11 rows missing, 1 chunk left out
 exit 1
 ```
 
-Not done, and it is this task's real use: the 17 sessions filled in the real store
-through `agent-workflow-admin`, `--check` clean there, the view's rows against the files
-`materialize` rebuilds, and the owner reading a session in the dashboard. It waits for
-task 1's gate: the table is not in the project yet. Not verified: what the real
-interface answers to these requests, which is the probe's to show; and the command's
-time against the real store, where each of its roughly 800 requests crosses the network.
+The real use, on the real store through `agent-workflow-admin`, once the gate had
+passed (verified against the real system, 2026-11-16, with this task's code before its
+merge):
+
+```
+$ transcripts messages --check
+[6,199 lines, each a row that is missing]
+transcripts: messages --check: 271 chunks; 6199 rows missing, 1 chunk of store/probe's passed over
+exit 1, in 71 seconds
+$ transcripts messages
+transcripts: messages: read 271 chunks of 17 sessions, inserted 6199 rows, 42 chunks needed none, 1 chunk of store/probe's passed over
+exit 0, in 79 seconds
+$ transcripts messages --check
+transcripts: messages --check: 271 chunks, 6199 rows, each as its chunk gives it, 1 chunk of store/probe's passed over
+exit 0, in 55 seconds
+$ transcripts messages
+transcripts: messages: read 271 chunks of 17 sessions, inserted 0 rows, 271 chunks needed none, 1 chunk of store/probe's passed over
+exit 0, in 55 seconds
+```
+
+Then `materialize` rebuilt the store's sessions, and for each of its 37 streams the rows
+of the view `transcript`, read from the real store in order of `n`, were compared with
+the rows `message_rows` reads from the rebuilt file: 5,959 rows in the view, 37 streams
+the same row for row and in order, none that differs.
+
+Found in that use, and changed after approval: the chunk `store/probe` leaves behind is
+no transcript's (its data is the word `first`), so the command named it as left out and
+would have exited 1 at every run from the gate on. R5 has the command read every chunk;
+it now passes over the probe's own chunk and says how many: one in a session whose id
+begins `probe-`, sent by `probe`, whose start is 64 zeros, which no chain the view shows
+can hold. A chunk that is like it in two of the three is still read, and left out.
+Tested first, 7 assertions failing, and its four guards are among those above.
+
+Not done: the owner reading a session in the dashboard, with the README's query. Not
+verified: the command where the hooks' key is the only key (it refuses, by the suite);
+and a fill of a session pushed after this one, which waits for one to be pushed.

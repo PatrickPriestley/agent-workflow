@@ -363,7 +363,11 @@ read, and each is checked against its chain id.
 
 The hooks' key can insert into `messages` and nothing else, and `store/probe` checks that too.
 Its check that a request of several rows is stored whole or not at all needs the read key, so
-it exits 1 where there is none: run it where both keys are. `store/schema.test.sh` runs the
+it exits 1 where there is none: run it where both keys are. The probe's rows stay in the
+store under a session id that begins `probe-`, one of them 3 MB; `transcripts messages` passes
+over its chunk and says so, and the view shows nothing of it. To clear them, in the SQL
+editor: `delete from messages where session_id like 'probe-%'`, and the same for `chunks` and
+`sessions`. `store/schema.test.sh` runs the
 file in a PostgreSQL of its own and tests the grants, each rule of the view, the rows of the
 tool's fixture through the real table, and the two queries above as they are printed here; it
 says so and passes nothing off where none is installed.
