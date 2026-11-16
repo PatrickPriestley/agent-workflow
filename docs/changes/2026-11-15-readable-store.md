@@ -1078,3 +1078,129 @@ line (`--refuse-line`, new in the stand-in), and broken by hand.
 Not done: the owner reading a session in the dashboard, with the README's query. Not
 verified: the command where the hooks' key is the only key (it refuses, by the suite);
 and a fill of a session pushed after this one, which waits for one to be pushed.
+
+### Task 3: the push
+
+Built test first: 16 tests of the push in `bin/transcripts-store.test.sh`, 35 assertions
+failing while a push stored no row; then the code in `push_session`, `unsent` and
+`cmd_push`. Two of the 16 passed before the code and are there to hold what must not
+change: the push still only inserts, and `materialize` rebuilds a session whose rows are
+owed. The tests of `transcripts messages` now take out the rows a push left, so that
+they stay tests of a store with chunks and no rows. Suites after: transcripts-store 429,
+store schema 58, transcripts 364, transcripts-grade 212, transcripts-judge 422,
+ci-workflow 21, record-check 117, none failing.
+
+What the tests found in the first version of the code, each fixed before it was pushed:
+
+- What a session owed was tried three times in one run, since a run passes over the
+  sessions up to three times for lines archived meanwhile and a session that owes stays
+  unsent. It is now tried once a run.
+- An owed request whose part was gone from the archive raised, and its session could
+  then never be sent. It is struck off, with its reason, and left to `transcripts
+  messages`.
+- Two counts in the new tests had counted reads as inserts (those of `materialize`, and
+  of the test's own helper). They count inserts only.
+
+Where R7 left a choice, what was built:
+
+- What is owed is kept as the record says, with two things more: the chunk's id and the
+  id it starts from. A later push cuts the part again and sends the request only if the
+  chunk it gets is that chunk; if not (a redaction that came out otherwise, a part that
+  is gone, a place past the end) it strikes the request off, says so, and leaves the rows
+  to `transcripts messages`, which reads the chunk the store holds.
+- After the store has answered 404 for the table, no more rows are sent in that run:
+  each later request is owed without being uploaded. Any other refusal is one request's,
+  and the next is still tried, as R7 has it.
+- A stream that starts again (a new redaction, or the archive rewrote it) drops what it
+  owed: its parts are all sent again, rows and all.
+- R5's last check is here: the requests the command sends for a chunk are, body for
+  body, the ones `push` sent for it. Both cut by `chunk_requests`.
+- The stand-in gained `/__admin/option`, which sets `--without`, `--refuse`,
+  `--refuse-line` and `--hang` while it runs, and `--hang-table`.
+
+Guards, each broken by hand in a clone of the repository: 28 breaks, 26 caught at the
+first run. One survivor was a gap in a test, closed and broken again: a stream that
+starts again went looking for what it owed. The other was a guard with no effect and is
+taken out: writing the state only when what is owed had changed, on a path reached only
+for a session pushed for what it owes. The 27 guards that stand, by the assertion that
+failed first for each:
+
+- Caught first by "a session that owes rows counts as unsent: the next push, once the
+  table is there, stores them and strikes them off": push: an owed request that was stored
+  stays owed; push: what is owed forgets where its chunk starts; push: what was struck off
+  is not saved when nothing else was sent; push: a session that owes rows is not unsent.
+- Caught first by "after the first 404 no more rows are sent in that run: what the table
+  would have taken is owed, not uploaded": push: what is owed is tried at every pass of a
+  run; push: a 404 does not end the sending of rows for the run; push: rows go on being
+  sent after the store has said it has no table.
+- Caught first by "a part sent again, its chunk already there and one row of its request
+  with it: the push takes the refusal for the request being there, the check names what is
+  missing and the command fills it": push: every refusal as a duplicate is followed by the
+  rows one at a time; push: a chunk the store had is taken for one just stored.
+- Caught first by "an owed request whose part no longer gives its chunk is struck off and
+  left to transcripts messages, and the others are sent": push: an owed chunk is not
+  checked against what the archive gives; push: a request past the end of its chunk's is
+  sent.
+- Caught first by "one row of a new chunk's request there before the push: the request is
+  refused whole, its rows then go one at a time, and the others are there": push: a chunk
+  just stored is taken for one the store had; push: no refusal as a duplicate is followed
+  by the rows one at a time.
+- Caught first by "requests owed across two parts and two chunks of a part are each cut
+  again from their own place": push: what is owed forgets which chunk; push: what is owed
+  forgets which part.
+- Caught first by "what is owed names its place: a part that is gone, a chunk or a request
+  past the end, each is struck off with its reason and stops nothing": push: a part that
+  is gone stops the session; push: a chunk past the end of its part is read.
+- Caught first by "a request owed for a stream the archive no longer has is dropped, and
+  the session is sent": push: a request owed for a stream the archive no longer has is
+  kept.
+- Caught first by "a second push sends nothing and leaves the session's state file as it
+  was, with no word of rows owed in it": push: an empty list of what is owed is written
+  into the state.
+- Caught first by "a stream that starts again owes nothing from before: what it owed is
+  dropped, and its rows go with its chunks": push: a stream that starts again keeps what
+  it owed (survived the first run).
+- Caught first by "after a push the rows are there, each chunk's in a request after its
+  chunk, and the check is clean": push: a refused request of rows is not kept as owed.
+- Caught first by "each chunk's rows went in one request, a list, and a chunk with no row
+  sent none": command: its requests are cut apart from the push's.
+- Caught first by "every request of rows refused (503): nothing is held back, each is
+  tried, each is owed, and the next push tries them again": push: any refusal ends the
+  sending of rows for the run.
+- Caught first by "one request refused (503), the second of a chunk's two: only that one
+  is owed, and only it is sent again": push: what is owed forgets which request.
+- Caught first by "one row of an owed request stored by another hand before the retry: its
+  rows go one at a time, and it is struck off": push: an owed request refused as a
+  duplicate is taken as there.
+- Caught first by "the push says which session it could not send, and that the rest went":
+  push: the rows are sent before their chunk is counted.
+- Caught first by "where the store has no such table yet (404) the chunks and the index
+  row are stored all the same, the exit status is 0, and the last line says what is owed":
+  push: the last line does not say what is owed.
+
+The commands themselves, against the stand-in (mock only), with the longest session the
+store holds, rebuilt and archived again: 32.5 MB of transcript lines, 29 chunks. With
+rows and, for the time without them, against a stand-in that has no such table:
+
+```
+$ transcripts push
+transcripts: pushed 29 new chunks and 1 index rows for 1 sessions to <stand-in>
+7.9 seconds; 29 requests of chunks, 13,369,413 bytes; 30 requests of rows, 12,260,558 bytes
+$ transcripts push                 (a store where schema.sql has not been run)
+transcripts: pushed 29 new chunks and 1 index rows for 1 sessions to <stand-in>; 30 requests of rows are owed and will be sent again at the next push
+exit 0
+8.3 seconds; 29 requests of chunks, 13,369,413 bytes; 1 request of rows, refused
+```
+
+So on one machine the rows cost no time that can be told from the run's own spread, and
+they nearly double what is uploaded: 12.3 MB of rows beside 13.4 MB of chunks, since a
+row's text is not compressed. That is C6's cost, and over a network it is time. The
+second run is this task's error path: every chunk and the index row stored, the exit
+status 0, and what is owed said.
+
+Not done, and it is this task's real use: a push of a real session from a machine that
+holds the hooks' key, timed, and `--check` clean on it afterwards. The cloud session
+holds the read key and not the hooks' key, so it is the owner's laptop's to make: its
+first session after this is merged pushes with rows, and the check is then run from the
+cloud session. Not verified against the real store: the 404 path, which the real store
+can no longer show since it has the table; and the push's time with rows over a network.
