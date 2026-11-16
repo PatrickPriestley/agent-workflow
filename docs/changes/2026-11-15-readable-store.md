@@ -844,7 +844,7 @@ the README's two queries in `store/schema.test.sh`, 3 failing with no query in t
 and a store with no such table yet, 3 failing, then the message for it. Two expectations
 of the first tests were wrong and were corrected with the code, each said in its commit:
 the order of two rows in a sorted list, and the number of rows in a chunk's request.
-Suites after: transcripts-store 330, store schema 58, transcripts 364, transcripts-grade
+Suites after: transcripts-store 335, store schema 58, transcripts 364, transcripts-grade
 212, transcripts-judge 422, ci-workflow 21, none failing.
 
 The fixture is `store/fixtures/shape-1.jsonl`, 21 made-up lines with one for each clause
@@ -878,12 +878,12 @@ the ones `push` sends. `push` sends none until task 3, which adds it; here the c
 rule is tested by itself. The stand-in gained three things for these tests:
 `/__admin/forget`, `/__admin/after-read` and `--without TABLE`.
 
-Guards, each broken by hand in a clone of the repository: 92 breaks, 88 caught at the
+Guards, each broken by hand in a clone of the repository: 93 breaks, 89 caught at the
 first run. Of the four that survived, three were gaps in the tests, each closed and
 broken again: the fraction of a second, the microsecond the check allows, and a chunk
 left out that was read as an empty one. The fourth was a guard that did less than it
 cost and is taken out: it ended the whole fill when one insert got no answer, and a
-store that cannot be reached still ends the run at the next reading. The 91 guards that
+store that cannot be reached still ends the run at the next reading. The 92 guards that
 stand, by the assertion that failed first for each:
 
 - Caught first by "the fixture named for the tool's shape gives its rows, compared whole":
@@ -981,6 +981,9 @@ stand, by the assertion that failed first for each:
   check compares the text alone.
 - Caught first by "each chunk's rows went in one request, a list, and a chunk with no row
   sent none": command: every row goes alone.
+- Caught first by "rows that went in one at a time before the store refused the next are
+  counted: the summary says what is there": command: rows sent one at a time are counted
+  only when all went.
 - Caught first by "the rows are each line's texts, calls and results, in the chunk they
   were read from, under the tool's shape": command: a row with no text of the session is
   keyed to another chunk.
@@ -1066,7 +1069,11 @@ about, of any shape, and reports by chunk the rows whose chunk the store does no
 the rows the probe leaves are under its own chunk, which is held. Tested first, 8
 assertions failing, and its five guards are among those above. On the real store after
 it: `messages --check: 271 chunks, 6199 rows, each as its chunk gives it, 1 chunk of
-store/probe's passed over`, exit 0, in 73 seconds: it holds no such row.
+store/probe's passed over`, exit 0, in 73 seconds: it holds no such row. Its second
+pass found one more, right again: rows sent one at a time were counted only when all of
+a request's had gone, so a refusal part way left the rows already stored out of the
+summary. Each is now counted as it goes in; tested first, on a store that refuses one
+line (`--refuse-line`, new in the stand-in), and broken by hand.
 
 Not done: the owner reading a session in the dashboard, with the README's query. Not
 verified: the command where the hooks' key is the only key (it refuses, by the suite);
