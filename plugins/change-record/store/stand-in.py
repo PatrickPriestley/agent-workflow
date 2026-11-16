@@ -2,7 +2,8 @@
 """A stand-in for the store's HTTPS interface (PostgREST on Supabase), for the tests only.
 
   stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE [--refuse-status N]]
-              [--refuse-after N] [--refuse-session ID] [--loose TABLE]
+              [--refuse-after N] [--refuse-session ID] [--loose TABLE] [--without TABLE]
+              [--refuse-line N]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -12,7 +13,8 @@ judge_votes are
 401 42501. With READKEY, GET reads rows with `col=eq.value` filters, `select`, `order`,
 `limit` and `offset`. Every request is appended to LOGFILE as one JSON line: method, path,
 apikey, prefer and body. POST /__admin/tamper with {"chunk_id": ...} changes a stored chunk's
-data, to test that materialize checks it. --refuse TABLE answers 503 (or --refuse-status N)
+data, to test that materialize checks it; POST /__admin/forget with {"table": ..., "match":
+{column: value}} drops the rows that match, to test what finds a row missing. --refuse TABLE answers 503 (or --refuse-status N)
 to every insert into TABLE, as a store that fails part way would; --refuse-after N accepts N
 inserts into chunks and answers 503 to every later one, as a store that fails part way
 through a session would; --refuse-session ID answers 400 to any insert of that session's
@@ -24,7 +26,13 @@ or, if one is a duplicate, not at all; a text holding U+0000 or a lone surrogate
 hooks' key reads neither. The view is the table's rows here: this stand-in runs no SQL, and
 the view's own rules are tested in store/schema.test.sh. --loose TABLE makes that table keep the
 new rows of a request it answers 409 to, and take a text PostgreSQL would refuse, as a store that
-is not what the plan needs would: the probe must fail against it.
+is not what the plan needs would: the probe must fail against it. --refuse-line N answers 503 to an insert
+into `messages` that holds a row of line N, as a store that fails part way through a chunk's
+rows would. --without TABLE answers 404 to
+anything asked of that table, as a project where schema.sql has not been run since the table was
+added. POST /__admin/after-read with {"rows": [...]} puts those rows into `messages` just after
+the next reading of their chunk's rows, as another hand writing between a sender's reading and
+its insert would.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -43,6 +51,9 @@ REFUSE_AFTER = int(OPTS["--refuse-after"]) if "--refuse-after" in OPTS else None
 REFUSE_SESSION = OPTS.get("--refuse-session")
 REFUSE_STATUS = int(OPTS.get("--refuse-status", 503))
 LOOSE = OPTS.get("--loose")
+WITHOUT = OPTS.get("--without")
+REFUSE_LINE = int(OPTS["--refuse-line"]) if "--refuse-line" in OPTS else None
+AFTER_READ = []  # rows of messages to put in after its next reading
 ACCEPTED = {"chunks": 0}
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
         "scores": ("session_id", "step", "grader", "graded_at"),
@@ -55,16 +66,18 @@ DENIED = {"code": "42501", "details": None, "hint": None, "message": "permission
 
 
 def unstorable(row):
-    """Whether a row holds a text PostgreSQL will not take: U+0000, or half of a surrogate pair."""
+    """What the real store answers a row it will not take, or None: a text holding U+0000 is PostgreSQL's 22P05,
+    and half of a surrogate pair makes the whole body no JSON to the interface (PGRST102), as the real project
+    answered store/probe on 2026-11-16."""
     for v in row.values() if isinstance(row, dict) else []:
         if isinstance(v, str):
             try:
                 v.encode("utf-8")
             except UnicodeEncodeError:
-                return True
+                return {"code": "PGRST102", "message": "Empty or invalid json"}
             if "\x00" in v:
-                return True
-    return False
+                return {"code": "22P05", "details": "\\u0000 cannot be converted to text.", "message": "unsupported Unicode escape sequence"}
+    return None
 
 
 class H(BaseHTTPRequestHandler):
@@ -97,6 +110,16 @@ class H(BaseHTTPRequestHandler):
                     if r["chunk_id"] == cid:
                         r["data"] = "H4sIAAAAAAAAA8tIzcnJBwCGphA2BQAAAA=="  # gzip of "hello"
             return self.answer(204)
+        if u.path == "/__admin/forget":  # {"table": ..., "match": {column: value}}: the rows that match are gone
+            want = json.loads(raw)
+            with LOCK:
+                TABLES[want["table"]][:] = [r for r in TABLES[want["table"]]
+                                            if any(r.get(k) != v for k, v in want["match"].items())]
+            return self.answer(204)
+        if u.path == "/__admin/after-read":
+            with LOCK:
+                AFTER_READ.extend(json.loads(raw)["rows"])
+            return self.answer(204)
         table = u.path[len("/rest/v1/"):] if u.path.startswith("/rest/v1/") else None
         if table in VIEWS:  # a view is read, by the read key alone
             if key != READKEY:
@@ -104,7 +127,7 @@ class H(BaseHTTPRequestHandler):
             if self.command != "GET":
                 return self.answer(405, {"message": "the stand-in only reads a view"})
             table = VIEWS[table]
-        if table not in TABLES:
+        if table not in TABLES or table == WITHOUT:
             return self.answer(404, {"code": "PGRST205", "message": f"Could not find the table 'public.{table}'"})
         reader = key == READKEY
         if self.command == "POST" and table == REFUSE:
@@ -126,8 +149,11 @@ class H(BaseHTTPRequestHandler):
             rows = rows if isinstance(rows, list) else [rows]
             if REFUSE_SESSION and any(r.get("session_id") == REFUSE_SESSION for r in rows):
                 return self.answer(400, {"code": "23514", "message": "new row violates a check constraint (the stand-in refuses this session)"})
-            if table == "messages" and table != LOOSE and any(unstorable(r) for r in rows):
-                return self.answer(400, {"code": "22P05", "message": "unsupported Unicode escape sequence"})
+            if table == "messages" and REFUSE_LINE is not None and any(r.get("line") == REFUSE_LINE for r in rows):
+                return self.answer(503, {"message": f"the stand-in refuses a row of line {REFUSE_LINE}"})
+            refusal = next((unstorable(r) for r in rows if unstorable(r)), None)
+            if table == "messages" and table != LOOSE and refusal:
+                return self.answer(400, refusal)
             with LOCK:
                 have = {tuple(r.get(c) for c in KEYS.get(table, ())) for r in TABLES[table]}
                 dup = [r for r in rows if table in KEYS and tuple(r.get(c) for c in KEYS[table]) in have]
@@ -163,6 +189,11 @@ class H(BaseHTTPRequestHandler):
         rows = rows[offset:offset + limit if limit is not None else None]
         if cols:
             rows = [{c: r.get(c) for c in cols} for r in rows]
+        if table == "messages":
+            with LOCK:  # the rows waiting for this chunk's rows to be read
+                now = [r for r in AFTER_READ if ("chunk_id", "eq." + str(r.get("chunk_id"))) in q]
+                TABLES["messages"].extend(dict(r, created_at=time.time()) for r in now)
+                AFTER_READ[:] = [r for r in AFTER_READ if r not in now]
         return self.answer(200, rows)
 
     do_GET = do_POST = do_PATCH = do_DELETE = handle_any

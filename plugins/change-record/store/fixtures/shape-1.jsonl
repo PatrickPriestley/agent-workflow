@@ -1,0 +1,21 @@
+{"type": "user", "timestamp": "2026-11-15T10:00:00.250Z", "message": {"role": "user", "content": "Mail jane.doe@example.org about the plan."}}
+{"type": "assistant", "timestamp": "2026-11-15T10:00:05+01:00", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "not kept"}, {"type": "text", "text": "I will run it."}, {"type": "tool_use", "id": "call-1", "name": "Bash", "input": {"command": "echo caf\u00e9", "background": false}}, {"type": "image", "source": {"data": "AAAA"}}, "a bare string"]}}
+{"type": "user", "timestamp": "2026-11-15T10:00:06Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": "caf\u00e9"}]}}
+{"type": "user", "timestamp": "2026-11-15T10:00:07Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "call-2", "is_error": true, "content": [{"type": "text", "text": "one"}, {"type": "image", "source": {}}, {"type": "text", "text": "two"}, {"type": "text", "text": 5}, {"no": "type"}, 7]}]}}
+{"type": "user", "timestamp": "yesterday", "message": {"content": [{"type": "tool_result", "tool_use_id": "call-3", "is_error": "yes"}, {"type": "tool_result", "tool_use_id": 4, "content": {"b": [1, 2], "a": "\u00e9"}}, {"type": "tool_use", "id": "x", "name": "Bash", "input": {}}]}}
+{"type": "user", "isMeta": true, "timestamp": "2026-13-45T10:00:00Z", "message": {"content": [{"type": "text", "text": "a reminder from the harness"}]}}
+{"type": "user", "isCompactSummary": true, "timestamp": 1763200000, "message": {"content": "the summary of what came before"}}
+{"type": "assistant", "isSidechain": true, "message": {"content": [{"type": "text", "text": "a subagent's line"}, {"type": "tool_result", "tool_use_id": "call-9", "content": "not a result here"}]}}
+{"type": "assistant", "isSidechain": "yes", "isMeta": true, "timestamp": "2026-11-15T10:00:09.123456789-08:00", "message": {"content": [{"type": "text", "text": "   \n"}, {"type": "text", "text": 12}, {"type": "tool_use", "id": 17, "name": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN", "input": null}, {"type": "tool_use"}]}}
+{"type": "user", "timestamp": "2026-11-15T10:00:10Z", "message": {"content": "nul \u0000 and half \ud800 of a pair, and a whole one \ud83d\ude00"}}
+{"type": "assistant", "timestamp": "2026-11-15T10:00:11Z", "message": {"content": [{"type": "tool_use", "id": "id\u0000\udc00", "name": "T\u0000", "input": {"k": "\u0000\ud800"}}]}}
+not json at all, jane.doe@example.org
+
+["a", "list"]
+{"type": "system", "message": {"content": "a system line"}}
+{"type": "user", "message": "not an object"}
+{"type": "user", "message": {"content": 42}}
+{"type": "user", "message": {"content": "   "}}
+{"type": "summary", "summary": "x"}
+{"type": "user", "timestamp": "2026-11-15T10:00:20Z", "message": {"content": [{"type": "text", "text": "the last line, typed by the user"}]}}
+{"type": "user", "isMeta": "yes", "isCompactSummary": 1, "isSidechain": 1, "timestamp": "2026-11-15T10:00:21+16:00", "message": {"content": "typed by the user, whatever the flags say"}}

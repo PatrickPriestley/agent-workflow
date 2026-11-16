@@ -576,6 +576,309 @@ assert_eq "201 409 409" "$(post "[$(row 1 a),$(row 2 b)]") $(post "[$(row 1 a),$
 assert_eq "[1, 2]" "$(get 'messages?session_id=eq.standin-m&select=line&order=line' | python3 -c 'import json,sys; print([r["line"] for r in json.load(sys.stdin)])')"
 it "and it refuses a text PostgreSQL cannot hold, and any reading with the hooks' key, of the table or of the view"
 assert_eq "400 400 401 401" "$(post "$(row 4 'a\u0000b')") $(post "$(row 5 'a\ud800b')") $(curl -s -o /dev/null -w '%{http_code}' -H 'apikey: insert-key-made-up' "$URL/rest/v1/messages?select=line") $(curl -s -o /dev/null -w '%{http_code}' -H 'apikey: insert-key-made-up' "$URL/rest/v1/transcript?select=n")"
+it "each with the code the real store gave the probe: 22P05 for U+0000, PGRST102 for half of a pair"
+code() { curl -s -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary "$1" "$URL/rest/v1/messages" | python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])'; }
+assert_eq "22P05 PGRST102" "$(code "$(row 6 'a\u0000b')") $(code "$(row 7 'a\ud800b')")"
 assert_eq "2" "$(get 'transcript?session_id=eq.standin-m&select=line' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+
+echo "readable-store R4: the rows of a chunk are read from its redacted lines by one rule (record 2026-11-15-readable-store)"
+FIX="$here/../store/fixtures"
+cat > "$TMPROOT/tool.py" <<'PY'
+"""The tool's own functions, for a test: run CODE with `tr` bound to bin/transcripts loaded as a module."""
+import importlib.machinery, importlib.util, json, sys  # noqa: E401,F401
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("transcripts_tool", sys.argv[1])
+tr = importlib.util.module_from_spec(importlib.util.spec_from_loader("transcripts_tool", loader))
+loader.exec_module(tr)
+exec(sys.argv[2])
+PY
+tool() { python3 "$TMPROOT/tool.py" "$T" "$@" 2>&1 | tail -4; }
+it "the fixture named for the tool's shape gives its rows, compared whole"
+assert_eq "1" "$(tool 'print(tr.SHAPE)')"
+"$T" redact < "$FIX/shape-1.jsonl" > "$TMPROOT/shape-1.redacted" 2>/dev/null
+assert_eq "16 rows, the same" "$(tool '
+want = [json.loads(l) for l in open(sys.argv[3])]
+got = tr.message_rows(open(sys.argv[4], "rb").read())
+bad = [(w, g) for w, g in zip(want, got) if w != g]
+print(f"{len(got)} rows, the same" if got == want else f"{len(got)} rows; the first that differs: {bad[:1]}")' "$FIX/shape-1.rows.jsonl" "$TMPROOT/shape-1.redacted")"
+it "an address in a text is stored redacted: the rows are read after redaction"
+rows="$(tool 'print(json.dumps(tr.message_rows(open(sys.argv[3], "rb").read())))' "$TMPROOT/shape-1.redacted")"
+has "$rows" "Mail <redacted:email> about the plan."; lacks "$rows" "jane.doe@example.org"
+it "a text whose form in a request would be over 3,000,000 bytes is cut to the longest beginning that is not, and its last line says how many characters are left in the chunk"
+big() { tool '
+n, ch = int(sys.argv[3]), sys.argv[4]
+text = ch * n
+row = tr.message_rows(json.dumps({"type": "user", "message": {"content": text}}).encode() + b"\n")[0]
+got = row["text"]
+if got == text:
+    print("whole", len(json.dumps(got)))
+else:
+    head, _, note = got.rpartition("\n")
+    left = n - len(head)
+    longer = text[:len(head) + 1] + "\n" + note.replace(str(left), str(left - 1))
+    print("cut", text.startswith(head), str(left) in note, len(json.dumps(got)) <= 3000000, len(json.dumps(longer)) > 3000000, len(head) > 0)' "$@"; }
+assert_eq "cut True True True True True" "$(big 1600000 '"')"
+it "the limit is in the bytes of the request and not in characters: 600,000 characters of 6 bytes each are cut, and 2,999,998 of one byte are not"
+assert_eq "cut True True True True True" "$(big 600000 'é')"
+assert_eq "whole 3000000" "$(big 2999998 a)"
+assert_eq "cut True True True True True" "$(big 2999999 a)"
+it "R5: a chunk's rows are cut into requests in order, each body at most 1,000,000 bytes, and a row that is more goes alone"
+assert_eq "2 1 1 2 in order, none over" "$(tool '
+rows = [{"line": i, "text": "x" * n} for i, n in enumerate([400000, 400000, 400000, 1200000, 10, 10], 1)]
+reqs = tr.row_requests(rows)
+size = lambda r: len(json.dumps(r, separators=(",", ":")).encode())
+print(" ".join(str(len(r)) for r in reqs), "in order," if [x for r in reqs for x in r] == rows else "out of order,",
+      "none over" if all(size(r) <= 1000000 or len(r) == 1 for r in reqs) else "one over")')"
+assert_eq "1 2: 1000000 bytes and then the rest" "$(tool '
+row = lambda n: {"t": "x" * n}
+size = lambda r: len(json.dumps(r, separators=(",", ":")).encode())
+a = row(1000000 - size([row(0)]))
+reqs = tr.row_requests([a, row(1), row(2)])
+print(" ".join(str(len(r)) for r in reqs) + ":", size(reqs[0]), "bytes and then the rest")')"
+assert_eq "0" "$(tool 'print(len(tr.row_requests([])))')"
+it "R5: two rows whose request is exactly 1,000,000 bytes go together, one byte more and they part, and a first row that is over gives no empty request"
+assert_eq "2 | 1 1 | 1 1" "$(tool '
+row = lambda n: {"t": "x" * n}
+size = lambda r: len(json.dumps(r, separators=(",", ":")).encode())
+fill = 1000000 - size([row(0), row(0)])
+shape = lambda rows: " ".join(str(len(r)) for r in tr.row_requests(rows))
+print(shape([row(fill - 5), row(5)]), "|", shape([row(fill - 5), row(6)]), "|", shape([row(1200000), row(1)]))')"
+it "R4: a time is kept only when it names a moment: the form, a real date, and an offset a clock can have"
+assert_eq "True True True True False False False False False False False" "$(tool '
+ok = ["2026-11-15T10:00:00Z", "2026-11-15T10:00:00.5-08:00", "2026-11-15T23:59:59+15:59", "0001-01-01T00:00:00Z"]
+no = ["2026-11-15T10:00:00", "2026-11-15 10:00:00Z", "2026-02-30T10:00:00Z", "2026-11-15T24:00:00Z", "2026-11-15T10:00:00+16:00",
+      "2026-11-15T10:00:00+01:60", "0000-01-01T00:00:00Z"]
+print(" ".join(str(tr.instant(s) is not None) for s in ok + no))')"
+it "R6: two times are one moment whatever the offset or the fraction they are written with; an hour apart, or half a second, they are not"
+assert_eq "True True False False True False" "$(tool '
+print(tr.same_field("at", "2026-11-15T10:00:00.250Z", "2026-11-15T11:00:00.25+01:00"), tr.same_field("at", "2026-11-15T10:00:00.123456789Z", "2026-11-15T10:00:00.123457+00:00"),
+      tr.same_field("at", "2026-11-15T10:00:00Z", "2026-11-15T10:00:00+01:00"), tr.same_field("at", None, "2026-11-15T10:00:00Z"), tr.same_field("at", None, None),
+      tr.same_field("at", "2026-11-15T10:00:00.250Z", "2026-11-15T10:00:00.750Z"))')"
+it "R6: a microsecond apart is still one moment, since the table rounds a longer fraction its own way, and two apart is not"
+assert_eq "True False" "$(tool 'print(tr.same_field("at", "2026-11-15T10:00:00.123456Z", "2026-11-15T10:00:00.123457Z"), tr.same_field("at", "2026-11-15T10:00:00.123456Z", "2026-11-15T10:00:00.123458Z"))')"
+it "R4: a line nested deeper than the reader goes gives no row and stops nothing: the next line's row is there"
+assert_eq "2 the line after" "$(tool '
+deep = b"[" * 200000 + b"]" * 200000
+rows = tr.message_rows(deep + b"\n" + json.dumps({"type": "user", "message": {"content": "the line after"}}).encode() + b"\n")
+print(" ".join(str(r["line"]) + " " + r["text"] for r in rows))')"
+
+echo "readable-store R5: transcripts messages fills the table from what the store holds"
+# filled NAME [stand-in options]: a new stand-in holding one session's chunks and no rows: main in two chunks,
+# one subagent's stream, and one stream whose only line gives no row.
+SUBN="$PROJ/$SID/subagents/agent-n0.jsonl"
+filled() {
+  standin "$@"; local ar="$TMPROOT/ar-$1"
+  part1 > "$TR"; line 2026-11-01T10:01:00.000Z user '"sub '"$EMAIL"'"' > "$SUB"; line 2026-11-01T10:02:00.000Z system '"nothing to read"' > "$SUBN"
+  (cd "$REPO" && AGENT_TRANSCRIPTS="$ar" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1
+   AGENT_TRANSCRIPTS="$ar" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+  part2 >> "$TR"
+  (cd "$REPO" && AGENT_TRANSCRIPTS="$ar" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1
+   AGENT_TRANSCRIPTS="$ar" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+}
+messages() { (cd "$REPO" && AGENT_TRANSCRIPTS_URL="$URL" "$T" messages "$@" 2>&1); }
+get() { curl -s -H "apikey: $READKEY" "$URL/rest/v1/$1"; }
+# stored: the rows the stand-in holds, a line each: stream, the chunk's place by its id, line, block, who, kind, text
+stored() { get 'messages?select=*' | python3 -c '
+import json, sys
+for r in sorted(json.load(sys.stdin), key=lambda r: (r["stream"], r["chunk_id"], r["line"], r["block"])):
+    print(r["stream"], r["line"], r["block"], r["who"], r["kind"], r["shape"], json.dumps(r["text"])[:60])'; }
+posts() { python3 -c '
+import json, sys
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    if r["method"] == "POST" and r["path"] == "/rest/v1/messages":
+        print(len(json.loads(r["body"])) if isinstance(json.loads(r["body"]), list) else "one", len(r["body"].encode()))' "$LOG"; }
+# chunk_of STREAM N: the id of the stream's Nth chunk as the stand-in was sent it
+chunk_of() { sent | python3 -c '
+import json, sys
+print([c["chunk_id"] for c in map(json.loads, sys.stdin) if c["stream"] == sys.argv[1]][int(sys.argv[2]) - 1])' "$1" "$2"; }
+filled m1
+it "without the read key it refuses before any request"
+mv "$XDG_CONFIG_HOME/agent-transcripts/read-key" "$TMPROOT/rk"; before="$(wc -l < "$LOG")"
+out="$(messages)"; rc=$?
+assert_eq 2 "$rc"; has "$out" "read-key"; assert_eq "$before" "$(wc -l < "$LOG")"
+mv "$TMPROOT/rk" "$XDG_CONFIG_HOME/agent-transcripts/read-key"
+it "a store with chunks and no rows is filled: it says the chunks read, the rows inserted and the chunks that needed none"
+out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "read 4 chunks of 1 session"; has "$out" "inserted 6 rows"; has "$out" "1 chunk needed none"
+it "the rows are each line's texts, calls and results, in the chunk they were read from, under the tool's shape"
+assert_eq "main 1 0 assistant text 1 main 1 0 user text 1 main 2 0 assistant call 1 main 2 0 user text 1 main 3 0 tool result 1 subagents/agent-a1 1 0 user text 1" \
+  "$(stored | cut -d' ' -f1-6 | sort | tr '\n' ' ' | sed 's/ $//')"
+it "what is stored is the redacted text: no secret or address of the fixture is in any row or request"
+rows="$(get 'messages?select=*')"
+for s in "${SECRETS[@]}"; do lacks "$rows" "$s"; lacks "$(cat "$LOG")" "$s"; done
+has "$rows" "Mail <redacted:email> about it."; has "$rows" "Bearer <redacted:token>"
+it "each chunk's rows went in one request, a list, and a chunk with no row sent none"
+assert_eq "1 2 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+it "a second run inserts nothing: every chunk needs none, the one whose lines give no row among them both times"
+before="$(posts | wc -l | tr -d ' ')"; out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "inserted 0 rows"; has "$out" "4 chunks needed none"; assert_eq "$before" "$(posts | wc -l | tr -d ' ')"
+it "an unknown argument is a usage error, and nothing is asked of the store"
+before="$(wc -l < "$LOG")"; out="$(messages --all)"; rc=$?
+assert_eq 2 "$rc"; has "$out" "usage: transcripts messages"; assert_eq "$before" "$(wc -l < "$LOG")"
+
+filled m2
+c1="$(chunk_of main 1)"
+# plant CHUNK LINE TEXT [SHAPE] [AT, as JSON] [WHO]: a row of main put there by another hand, with the hooks' key
+plant() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "[{\"session_id\":\"$SID\",\"stream\":\"main\",\"chunk_id\":\"$1\",\"shape\":${4:-1},\"line\":$2,\"block\":0,\"at\":${5:-null},\"who\":\"${6:-user}\",\"kind\":\"text\",\"tool\":null,\"call_id\":null,\"failed\":false,\"side\":false,\"text\":\"$3\"}]" "$URL/rest/v1/messages"; }
+it "a chunk with one row already there gets the others, one at a time, and the row that was there is left as it was"
+assert_eq 201 "$(plant "$c1" 2 "planted by another hand")"
+out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "inserted 5 rows"
+assert_eq "1 1 1 1 2" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+has "$(stored)" 'main 2 0 user text 1 "planted by another hand"'
+assert_eq "6" "$(stored | wc -l | tr -d ' ')"
+it "a row under another shape does not count as there"
+filled m3; c1="$(chunk_of main 1)"
+assert_eq 201 "$(plant "$c1" 2 "another shape's row" 2)"
+out="$(messages)"
+has "$out" "inserted 6 rows"; assert_eq "7" "$(stored | wc -l | tr -d ' ')"
+it "a chunk whose bytes do not match its id is named and left out, the others are filled, and the exit status is 1"
+filled m4; c1="$(chunk_of main 1)"
+python3 -c 'import json,sys,urllib.request; urllib.request.urlopen(urllib.request.Request(sys.argv[1]+"/__admin/tamper", data=json.dumps({"chunk_id":sys.argv[2]}).encode(), method="POST"))' "$URL" "$c1"
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "chunk ${c1:0:12} does not match its chain id"; has "$out" "1 chunk left out"; has "$out" "inserted 3 rows"
+has "$out" ", 1 chunk needed none"
+assert_eq "3" "$(stored | wc -l | tr -d ' ')"
+it "a chunk the store will not take rows for is named with the store's answer, and the exit status is 1"
+filled m5 --refuse messages
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "chunk $(chunk_of main 1 | cut -c1-12) could not be filled: messages insert answered 503"
+has "$out" "3 chunks could not be filled"; has "$out" "inserted 0 rows"
+it "rows that went in one at a time before the store refused the next are counted: the summary says what is there"
+filled m12 --refuse-line 3; c1="$(chunk_of main 1)"
+plant "$c1" 1 "there already" > /dev/null
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "chunk ${c1:0:12} could not be filled: messages insert answered 503"
+has "$out" "inserted 4 rows"; has "$out" "1 chunk could not be filled"; assert_eq "5" "$(stored | wc -l | tr -d ' ')"
+it "with --session only that session's chunks are read"
+filled m6
+SIDM=60000000-2222-3333-4444-555555555555
+line 2026-11-03T10:00:00.000Z user '"another session"' | sed "s/$SID/$SIDM/" > "$PROJ/$SIDM.jsonl"
+(cd "$REPO" && AGENT_TRANSCRIPTS="$TMPROOT/ar-m6b" "$T" archive --transcript "$PROJ/$SIDM.jsonl" < /dev/null > /dev/null 2>&1
+ AGENT_TRANSCRIPTS="$TMPROOT/ar-m6b" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+out="$(messages --session "$SIDM")"; rc=$?
+assert_eq 0 "$rc"; has "$out" "read 1 chunk of 1 session"; has "$out" "inserted 1 row"
+assert_eq "1" "$(stored | wc -l | tr -d ' ')"
+out="$(messages)"
+has "$out" "read 5 chunks of 2 sessions"; has "$out" "inserted 6 rows"; has "$out" "2 chunks needed none"
+it "a chunk whose rows are over 1,000,000 bytes goes in several requests, each a list and none over, and all its rows are there"
+standin m7
+SIDL=70000000-2222-3333-4444-555555555555
+for i in $(seq 30); do line "2026-11-04T10:00:$(printf %02d "$i").000Z" user "\"$(printf 'row %02d ' "$i")$(head -c 50000 /dev/zero | tr '\0' x)\""; done | sed "s/$SID/$SIDL/" > "$PROJ/$SIDL.jsonl"
+(cd "$REPO" && AGENT_TRANSCRIPTS="$TMPROOT/ar-m7" "$T" archive --transcript "$PROJ/$SIDL.jsonl" < /dev/null > /dev/null 2>&1
+ AGENT_TRANSCRIPTS="$TMPROOT/ar-m7" AGENT_TRANSCRIPTS_URL="$URL" "$T" push > /dev/null 2>&1)
+out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "inserted 30 rows"
+assert_eq "19 11 True" "$(posts | python3 -c '
+import sys
+p = [l.split() for l in sys.stdin]
+print(" ".join(x[0] for x in p), all(int(x[1]) <= 1000000 for x in p))')"
+assert_eq "30" "$(stored | wc -l | tr -d ' ')"
+
+it "a chunk whose data cannot be opened at all is left out like one that does not match, and the others are filled"
+filled m8
+for d in '@@@' 'aGVsbG8='; do curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"$SID\",\"stream\":\"main\",\"chunk_id\":\"$(printf '%s' "$d" | shasum -a 256 | cut -c1-64)\",\"start_id\":\"x\",\"data\":\"$d\"}" "$URL/rest/v1/chunks"; done
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "2 chunks left out"; has "$out" "inserted 6 rows"; lacks "$out" "Traceback"
+it "a row written by another hand between the reading and the insert: the request is refused whole, and its rows then go one at a time"
+filled m9; c1="$(chunk_of main 1)"
+curl -s -o /dev/null -X POST --data-binary "{\"rows\":[{\"session_id\":\"$SID\",\"stream\":\"main\",\"chunk_id\":\"$c1\",\"shape\":1,\"line\":2,\"block\":0,\"who\":\"user\",\"kind\":\"text\",\"text\":\"written meanwhile\"}]}" "$URL/__admin/after-read"
+out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "inserted 5 rows"; assert_eq "6" "$(stored | wc -l | tr -d ' ')"
+assert_eq "1 1 1 1 2 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+it "where the store has no such table yet it says to run schema.sql, sends nothing, and exits 1"
+filled m10 --without messages
+: > "$LOG"; out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "run plugins/change-record/store/schema.sql"; assert_eq "GET" "$(methods)"; assert_eq "1" "$(wc -l < "$LOG" | tr -d ' ')"
+out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "run plugins/change-record/store/schema.sql"
+it "with no store named, or one that cannot be reached, it says so: exit 2 and exit 1"
+out="$(cd "$REPO" && "$T" messages 2>&1)"; rc=$?
+assert_eq 2 "$rc"; has "$out" "AGENT_TRANSCRIPTS_URL"
+out="$(cd "$REPO" && AGENT_TRANSCRIPTS_URL="http://127.0.0.1:1" "$T" messages 2>&1)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "cannot reach"; lacks "$out" "Traceback"
+
+it "the rows store/probe leaves behind are passed over and said: its chunk is no transcript's, and it fails neither the fill nor the check"
+filled m11
+XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$here/../store/probe" > /dev/null 2>&1
+out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "read 4 chunks of 1 session"; has "$out" "inserted 6 rows"; has "$out" "1 chunk of store/probe's passed over"
+out="$(messages --check)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "4 chunks, 6 rows, each as its chunk gives it, 1 chunk of store/probe's passed over"
+it "only the probe's own chunk is passed over: another chunk in a session named like the probe's is read, and left out if it is not what its id says"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"probe-0000\",\"stream\":\"main\",\"chunk_id\":\"$(printf x | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf y | shasum -a 256 | cut -c1-64)\",\"sender\":\"probe\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"probe-0001\",\"stream\":\"main\",\"chunk_id\":\"$(printf z | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf %064d 0)\",\"sender\":\"machine-A\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
+curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"not-the-probe\",\"stream\":\"main\",\"chunk_id\":\"$(printf w | shasum -a 256 | cut -c1-64)\",\"start_id\":\"$(printf %064d 0)\",\"sender\":\"probe\",\"data\":\"first\"}" "$URL/rest/v1/chunks"
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "3 chunks left out"; has "$out" "1 chunk of store/probe's passed over"
+
+echo "readable-store R6: transcripts messages --check compares the table with the chunks and changes nothing"
+filled k1; messages > /dev/null
+it "a filled store is clean, and the check sends nothing but reads"
+: > "$LOG"; out="$(messages --check)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "4 chunks, 6 rows, each as its chunk gives it"; assert_eq "GET" "$(methods)"
+it "a row planted before the fill under a key the chunk does not give, and one planted under a key it does with another text, are each reported"
+filled k2; c1="$(chunk_of main 1)"; c2="$(chunk_of main 2)"
+plant "$c1" 9 "no line 9 in this chunk" > /dev/null; plant "$c2" 1 "another text" 1 '"2026-11-01T10:05:00.000Z"' assistant > /dev/null
+messages > /dev/null
+: > "$LOG"; out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"
+has "$out" "not the chunk's: $SID main chunk ${c1:0:12} line 9 block 0"
+has "$out" "differs (text): $SID main chunk ${c2:0:12} line 1 block 0"
+has "$out" "1 row that is not its chunk's"; has "$out" "1 row that differs"; lacks "$out" "missing"
+assert_eq "GET" "$(methods)"
+it "a row that differs in a field and not in its text is reported with the field's name"
+filled k3; c1="$(chunk_of main 1)"; c2="$(chunk_of main 2)"
+plant "$c1" 1 'Mail <redacted:email> about it.\nUse token <redacted:github-token>' 1 '"2026-11-01T10:00:01.000Z"' context > /dev/null
+it "and the same moment written another way is no difference"
+plant "$c2" 2 'plain line with nothing to hide' 1 '"2026-11-01T11:09:00+01:00"' > /dev/null
+messages > /dev/null; out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "differs (at, who): $SID main chunk ${c1:0:12} line 1 block 0"
+has "$out" "1 row that differs"; lacks "$out" "chunk ${c2:0:12}"
+it "a row left out is reported as missing, the check does not put it there, and the command then does, alone"
+filled k4; c2="$(chunk_of main 2)"; messages > /dev/null
+curl -s -o /dev/null -X POST --data-binary "{\"table\":\"messages\",\"match\":{\"chunk_id\":\"$c2\",\"line\":2}}" "$URL/__admin/forget"
+assert_eq "5" "$(stored | wc -l | tr -d ' ')"
+out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "missing: $SID main chunk ${c2:0:12} line 2 block 0"; has "$out" "1 row missing"
+assert_eq "5" "$(stored | wc -l | tr -d ' ')"
+: > "$LOG"; out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "inserted 1 row"; assert_eq "1" "$(posts | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
+it "a chunk whose bytes do not match its id is named by the check too, and the exit status is 1"
+python3 -c 'import json,sys,urllib.request; urllib.request.urlopen(urllib.request.Request(sys.argv[1]+"/__admin/tamper", data=json.dumps({"chunk_id":sys.argv[2]}).encode(), method="POST"))' "$URL" "$c2"
+out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "chunk ${c2:0:12} does not match its chain id"; has "$out" "1 chunk left out"
+lacks "$out" "not the chunk's"; has "$out" "messages --check: 4 chunks, 4 rows, each as its chunk gives it, 1 chunk left out"
+it "a row whose chunk the store does not hold is reported too, by its chunk and with how many, whatever its shape"
+filled k6; messages > /dev/null
+ghost="$(printf ghost | shasum -a 256 | cut -c1-64)"
+plant "$ghost" 1 "a row with no chunk behind it" > /dev/null; plant "$ghost" 2 "and another" > /dev/null; plant "$ghost" 3 "of another shape" 7 > /dev/null
+: > "$LOG"; out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "no such chunk: $SID main chunk ${ghost:0:12}: 3 rows"
+has "$out" "messages --check: 4 chunks; 3 rows whose chunk the store does not hold"; assert_eq "GET" "$(methods)"
+out="$(messages)"; rc=$?   # the fill has nothing to say of them: it cannot take a row out
+assert_eq 0 "$rc"; lacks "$out" "no such chunk"
+it "with --session only that session's rows are looked at, and a store with rows and no chunk at all is not clean"
+out="$(messages --check --session "no-such-session")"; rc=$?
+assert_eq 0 "$rc"; lacks "$out" "no such chunk"
+standin k7; plant "$ghost" 1 "nothing behind it" > /dev/null
+out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "no such chunk: $SID main chunk ${ghost:0:12}: 1 row"; has "$out" "0 chunks; 1 row whose chunk the store does not hold"
+it "the rows store/probe leaves are under its own chunk, which the store holds: they are not reported"
+XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$here/../store/probe" > /dev/null 2>&1
+out="$(messages --check)"
+has "$out" "0 chunks; 1 row whose chunk the store does not hold, 1 chunk of store/probe's passed over"; assert_eq 1 "$(printf '%s\n' "$out" | grep -c 'no such chunk')"
+it "without the read key the check refuses too"
+mv "$XDG_CONFIG_HOME/agent-transcripts/read-key" "$TMPROOT/rk"
+out="$(messages --check)"; rc=$?
+assert_eq 2 "$rc"; has "$out" "read-key"
+mv "$TMPROOT/rk" "$XDG_CONFIG_HOME/agent-transcripts/read-key"
 
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]
