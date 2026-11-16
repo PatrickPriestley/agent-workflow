@@ -954,7 +954,7 @@ def chunk_requests(sid, stream, cid, raw):
     return row_requests([dict({"session_id": sid, "stream": stream, "chunk_id": cid}, **r) for r in message_rows(raw)])
 
 
-def push_session(ar, url, key, sid, sender):
+def push_session(ar, url, key, sid, sender, no_table=None):
     """Send one session's unsent parts with each chunk's rows, the requests of rows it owes from before,
     and, if it changed, its index entry; returns (chunks, index rows, requests of rows still owed).
     Rows never hold back a chunk, a part or the index row: a request of rows that is refused or gets
@@ -963,7 +963,9 @@ def push_session(ar, url, key, sid, sender):
     sent = json.loads(json.dumps(entry.get("sent") or {}))
     sent.setdefault("streams", {})
     owed = [o for o in sent.get("owed") or [] if o.get("stream") in entry["streams"]]
-    no_table = []  # holds the store's answer once it has said it has no such table: no more rows go to it in this run
+    # no_table: the caller's list for the run; it holds the store's answer once the store has said it has no
+    # such table, and from then on no more rows go to it, for this session or the next
+    no_table = [] if no_table is None else no_table
 
     def restart(name, st):
         s = sent["streams"].get(name)
@@ -1110,6 +1112,7 @@ def cmd_push(args):
         signal.alarm(max(1, limit))
     chunks = rows = sessions = 0
     owed = {}  # by session: the requests of rows each still owes after this push
+    no_table = []  # for the whole run: see push_session
     passed_over = {}  # sessions whose own data could not be sent: the others still go, and these are tried again next time
     try:
         key = key_file("insert-key", required=False)
@@ -1123,7 +1126,7 @@ def cmd_push(args):
                     break
                 for sid in todo:
                     try:
-                        c, r, owed[sid] = push_session(ar, url, key, sid, sender)
+                        c, r, owed[sid] = push_session(ar, url, key, sid, sender, no_table)
                     except (OSError, ValueError, KeyError) as e:  # its archived files cannot be read
                         passed_over[sid] = e
                         continue
