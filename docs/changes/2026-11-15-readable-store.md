@@ -996,21 +996,10 @@ stand, by the assertion that failed first for each:
 - Caught first by "without the read key it refuses before any request": command: the read
   key is not required.
 
-A rehearsal of the real use on the copy of the real rows (mock only: the stand-in for
-the interface, then a real PostgreSQL 16.15 for the table and the view), on the final
-code:
-
-```
-$ transcripts messages
-transcripts: messages: read 271 chunks of 17 sessions, inserted 6199 rows, 42 chunks needed none
-$ transcripts messages --check
-transcripts: messages --check: 271 chunks, 6199 rows, each as its chunk gives it
-$ transcripts messages
-transcripts: messages: read 271 chunks of 17 sessions, inserted 0 rows, 271 chunks needed none
-```
-
-The 6,199 rows went in 230 requests, 16,121,104 bytes in all, the largest 978,277, each
-run in about 2 seconds against the stand-in. Read back and put through the real table,
+A rehearsal on the copy of the real rows came first (mock only: the stand-in for the
+interface, then a real PostgreSQL 16.15 for the table and the view), and gave what the
+real use below gave: 6,199 rows in 230 requests, 16,121,104 bytes in all, the largest
+978,277; the check clean; a second fill inserting none. Put through the real table,
 every row was taken, and the view shows 5,959 rows, the number of the plan's probe. Row
 for row against that probe, 5,189 are the same; 762 are calls whose input is the same
 JSON with its keys now sorted, as R4 has had it since the review; and 8 are results
