@@ -844,7 +844,7 @@ the README's two queries in `store/schema.test.sh`, 3 failing with no query in t
 and a store with no such table yet, 3 failing, then the message for it. Two expectations
 of the first tests were wrong and were corrected with the code, each said in its commit:
 the order of two rows in a sorted list, and the number of rows in a chunk's request.
-Suites after: transcripts-store 317, store schema 58, transcripts 364, transcripts-grade
+Suites after: transcripts-store 330, store schema 58, transcripts 364, transcripts-grade
 212, transcripts-judge 422, ci-workflow 21, none failing.
 
 The fixture is `store/fixtures/shape-1.jsonl`, 21 made-up lines with one for each clause
@@ -878,12 +878,12 @@ the ones `push` sends. `push` sends none until task 3, which adds it; here the c
 rule is tested by itself. The stand-in gained three things for these tests:
 `/__admin/forget`, `/__admin/after-read` and `--without TABLE`.
 
-Guards, each broken by hand in a clone of the repository: 87 breaks, 83 caught at the
+Guards, each broken by hand in a clone of the repository: 92 breaks, 88 caught at the
 first run. Of the four that survived, three were gaps in the tests, each closed and
 broken again: the fraction of a second, the microsecond the check allows, and a chunk
 left out that was read as an empty one. The fourth was a guard that did less than it
 cost and is taken out: it ended the whole fill when one insert got no answer, and a
-store that cannot be reached still ends the run at the next reading. The 86 guards that
+store that cannot be reached still ends the run at the next reading. The 91 guards that
 stand, by the assertion that failed first for each:
 
 - Caught first by "the fixture named for the tool's shape gives its rows, compared whole":
@@ -921,6 +921,10 @@ stand, by the assertion that failed first for each:
   byte more and they part, and a first row that is over gives no empty request": requests:
   the comma between rows is not counted; requests: a first row that is over leaves an
   empty request; requests: cut at exactly the limit.
+- Caught first by "a row whose chunk the store does not hold is reported too, by its chunk
+  and with how many, whatever its shape": check: a row with no chunk behind it is not
+  reported; check: the fill reports rows with no chunk too; check: rows with no chunk do
+  not count against a clean check.
 - Caught first by "a text whose form in a request would be over 3,000,000 bytes is cut to
   the longest beginning that is not, and its last line says how many characters are left
   in the chunk": rows: no text is ever cut; rows: the cut is not the longest; rows: the
@@ -942,6 +946,9 @@ stand, by the assertion that failed first for each:
 - Caught first by "the limit is in the bytes of the request and not in characters: 600,000
   characters of 6 bytes each are cut, and 2,999,998 of one byte are not": rows: a text of
   exactly the limit is cut; rows: the cut text may be one byte over.
+- Caught first by "the rows store/probe leaves behind are passed over and said: its chunk
+  is no transcript's, and it fails neither the fill nor the check": command: the probe's
+  chunk is read like any other; check: no chunk is known to be held.
 - Caught first by "R4, R6: read back as the interface gives rows, each is the row that
   went in by the tool's own comparison, the time of a line among them": check: a time is
   compared as it is written.
@@ -977,13 +984,13 @@ stand, by the assertion that failed first for each:
 - Caught first by "the rows are each line's texts, calls and results, in the chunk they
   were read from, under the tool's shape": command: a row with no text of the session is
   keyed to another chunk.
-- Caught first by "the rows store/probe leaves behind are passed over and said: its chunk
-  is no transcript's, and it fails neither the fill nor the check": command: the probe's
-  chunk is read like any other.
 - Caught first by "where the store has no such table yet it says to run schema.sql, sends
   nothing, and exits 1": command: a store with no table is not said.
 - Caught first by "with --session only that session's chunks are read": command: --session
   reads every session.
+- Caught first by "with --session only that session's rows are looked at, and a store with
+  rows and no chunk at all is not clean": check: rows outside the sessions named are
+  looked at.
 - Caught first by "with no store named, or one that cannot be reached, it says so: exit 2
   and exit 1": command: with no store named it goes on.
 - Caught first by "without the read key it refuses before any request": command: the read
@@ -1059,6 +1066,18 @@ it now passes over the probe's own chunk and says how many: one in a session who
 begins `probe-`, sent by `probe`, whose start is 64 zeros, which no chain the view shows
 can hold. A chunk that is like it in two of the three is still read, and left out.
 Tested first, 7 assertions failing, and its four guards are among those above.
+
+The review of this task's pull request, by another model family (pr-agent, 2026-11-16,
+on the first push): two findings. No line naming the reviewer, as for task 1: added
+with what it found. And one that is right: the check looked only at the rows of chunks
+the store holds, so a row whose chunk is not there was never seen, and a store with
+such rows and no chunk at all passed for clean. R6 has the check print each row that is
+there and should not be. It now reads the keys of every row in the sessions it was asked
+about, of any shape, and reports by chunk the rows whose chunk the store does not hold;
+the rows the probe leaves are under its own chunk, which is held. Tested first, 8
+assertions failing, and its five guards are among those above. On the real store after
+it: `messages --check: 271 chunks, 6199 rows, each as its chunk gives it, 1 chunk of
+store/probe's passed over`, exit 0, in 73 seconds: it holds no such row.
 
 Not done: the owner reading a session in the dashboard, with the README's query. Not
 verified: the command where the hooks' key is the only key (it refuses, by the suite);

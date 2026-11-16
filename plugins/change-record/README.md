@@ -356,7 +356,7 @@ longer than 3,000,000 bytes in a request is stored cut, and its last line says s
 `transcripts messages [--session ID]...`, run where the read key is, fills the table from the
 chunks the store holds and inserts only the rows that are missing; `transcripts messages
 --check` changes nothing and prints each row that is missing, that is there and is not its
-chunk's, or that differs, and exits 1 if there is one. Nothing else writes rows yet, so a
+chunk's, that differs, or whose chunk the store does not hold, and exits 1 if there is one. Nothing else writes rows yet, so a
 session stored since the last run has none until the command is run again. If the table and
 the chunks ever disagree the chunks are right: they are what `materialize` and the graders
 read, and each is checked against its chain id.
