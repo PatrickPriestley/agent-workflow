@@ -688,3 +688,149 @@ Not done, and what to keep in mind:
   removed them; the repository was not touched.
 - Task 3 (`transcripts propose`) is still not started. The confirmed failures are defects in
   this plugin's code, not failures of the `change` skill's text.
+
+### Task 3: edits (2026-11-16)
+
+The note above, that no confirmed failure was a failure of the skill's text, was true of
+the two rubric blocks and is no longer the whole of it. The labels in `grade/labels/` also
+confirm failures of the seven steps: twenty of them, in ten of the twenty-five labelled
+sessions, two of those stored sessions that failed `red-first`. `transcripts propose` drafts
+from one of those, a step at a time. The rubrics were taken out under task 2, so R6's "the
+step or rubric" is the step.
+
+Built test first: the tests of `propose` in `bin/transcripts-judge.test.sh`, 44 assertions
+failing with no such command; then `grade/propose.py`, `cmd_propose` in `bin/transcripts` and
+the report's section. One of the first tests passed before the code and holds what must
+not change: the skill file and its repository are as they were. Suites after:
+transcripts-judge 516, transcripts-store 440, transcripts 364, transcripts-grade 212, store
+schema 58, none failing.
+
+What was built, where R6 and R7 left a choice:
+
+- A failure is confirmed by the session's label file: the step says `fail`, a name follows
+  `labelled-by:`, and the file is of this version of the transcript. Anything else exits 1
+  before anything is sent or written.
+- One call to Claude Sonnet with no tools and a limit of $0.50, holding what a label sheet
+  shows, each part redacted as for the store: the skill file as the session used it, the
+  step and its rule, the labeller's reason, and the session's sheet, cut to its last 60,000
+  characters. Sonnet and not Haiku because the answer is the whole file.
+- The answer is three blocks: the proposed file, why, and the numbers of the calls. An
+  answer with no file, an empty one, one that changes nothing, a refusal, an error, or one
+  served by another model leaves no proposal.
+- The proposal is `proposals/<session>/<step>/` beside the transcripts: `SKILL.md`,
+  `SKILL.diff`, `proposal.md` and `proposal.json`. The skill is never written, and a folder
+  inside a working tree is refused.
+- R7: the page names the eval case for the step, `evals/red-first` or
+  `evals/record-before-code`, or says there is none and that one is written first. The
+  other five steps have none. A test holds each named case to a folder the plugin has,
+  and each step's rule to its row in the README.
+- The report lists the proposals a folder holds, whether or not it was graded.
+
+The real use, with the owner's leave ("Run it", in chat): the store's sessions rebuilt by
+`materialize`, and the labels of the repository.
+
+```
+$ transcripts propose <folder> --session bf01bd72... --step red-first
+transcripts: a proposed edit to change-record:change is in <folder>/proposals/bf01bd72.../red-first: SKILL.md, SKILL.diff and proposal.md; nothing else was changed
+exit 0, in 18 seconds; claude-sonnet-5-5, $0.14
+$ transcripts propose <folder> --session bf01bd72... --step change-line        (the error path)
+transcripts: no label confirms that bf01bd72... failed change-line: a proposal is drafted only from a failure a person has labelled (transcripts sheet, then the session's file in plugins/change-record/grade/labels)
+exit 1
+```
+
+The label it was drafted from says the session wrote `.github/workflows/test.yml` before
+any test had failed, the owner having ruled that a workflow file counts as code. The
+proposed edit adds to step 3 of the skill, and nothing else:
+
+```
++   nothing), commit the test, make it pass, run the whole suite, commit. Code is any file
++   outside docs, tests and fixtures, a CI workflow file included: no such file is edited
++   until a test run has reported a failed test. Reading and searching are not a run. When the
++   test can only run in CI, push the test or job alone as a draft, read its red log, and only
++   then write the fix. Where the repository
+```
+
+It named calls 8, 9, 11, 25, 43 and 63, each of which the label's reason names.
+
+What that run showed of the tool, each fixed test first (8 assertions failing):
+
+- The skill file was taken from the folder's own copy when it had one, and `materialize`
+  keeps one copy a skill, the newest session's. For this session it was the right blob by
+  chance. It is now found by the session's blob, in the repository or in the folder's copy
+  when that is the same blob, and another version is never taken for it.
+- The other stored session that failed `red-first` never loaded the skill. A session that
+  did not load the skill now gets no proposal: an edit would not have reached it.
+- The page said the eval case "shows this failure". The case is chosen by the step, and
+  `evals/red-first` asks for a flag whose tests run on the machine, not one whose test can run only in CI. The page now says to check
+  that the case shows this failure and to extend it if it does not, and it names the blob.
+
+Guards, each broken by hand in a clone of the repository: 40 breaks, 36 caught at the first
+run. The four that survived were gaps in the tests, each closed and broken again: a run
+with no session named, an unknown argument, a folder whose index entry is gone, and the
+report's section on a graded folder. One check no input can reach was taken out: refusing a
+label with no name, since such a label is not loaded at all. The 39 guards that stand, by
+the assertion that failed first for each:
+
+- Caught first by "an answer with no skill file in it, one that changes nothing, a refusal: each
+  is said, exits 1 and leaves no proposal": propose: a refusal or an error is taken for an
+  answer; propose: a run that says it failed is taken; propose: an edit that changes nothing is
+  a proposal; propose: a refusal is taken for an error; propose: an answer with no skill block
+  is read; propose: an answer served by another model is taken; propose: an empty skill block is
+  a proposal.
+- Caught first by "usage: a session and a step are both needed, the step is one of the seven,
+  and the folder is outside every working tree": propose: with no step named it goes on;
+  propose: a folder inside a working tree is written to; propose: with no session named it goes
+  on (survived the first run); propose: an unknown argument is taken (survived the first run);
+  propose: any step's name is taken.
+- Caught first by "each eval case a proposal can name is a case the plugin has, a long session
+  is cut to its end, and the calls are said as a person would": propose: a long session is sent
+  whole; propose: a long session is cut to its beginning; propose: an eval case is named that
+  the plugin has not; propose: one call is said as several.
+- Caught first by "the skill file is the version the session used, by its blob: from the
+  repository, or the folder's copy when that is the same blob; another version is never taken
+  for it": propose: with no skill file it goes on; propose: the folder's copy is taken whatever
+  its version; propose: the folder's copy is never taken; propose: the page does not name the
+  skill's blob.
+- Caught first by "what is sent is redacted as for the store, to Claude Sonnet with no tools,
+  and holds the skill, the step's rule, the label's reason and the session's calls": propose:
+  the label's reason is sent unredacted; propose: the page is written unredacted; propose: the
+  skill's text is sent unredacted; propose: a step's rule is not the README's.
+- Caught first by "a confirmed failure gives a proposal: the proposed skill file, its diff, and
+  a note citing the session, the step, the label and the calls": propose: the calls are given in
+  the answer's order; propose: no call is ever named; propose: the repository's blob is never
+  taken.
+- Caught first by "the report lists the proposals a folder holds, each with its step and its
+  eval case, and has no such section when there are none": report: a folder never graded shows
+  no proposal; propose: the report is told of no proposal; report: a graded folder shows no
+  proposal (survived the first run).
+- Caught first by "a label with no person's name is no label, and neither is one of another
+  version of the transcript": propose: a label of another version of the transcript confirms;
+  propose: a session with no label is proposed for.
+- Caught first by "R7: a step no eval case shows says that none does, and that one is needed
+  before the edit can be kept": propose: every step is said to have an eval case.
+- Caught first by "R7: the note names the eval case that shows the failure, and says the edit is
+  kept only if that case improves with it": propose: no step is said to have an eval case.
+- Caught first by "a failure no label confirms is refused: exit 1, nothing written, nothing sent
+  to a model": propose: any label of the session confirms any step.
+- Caught first by "a label that passes the step, or one of another step, confirms nothing":
+  propose: a label that does not say fail confirms.
+- Caught first by "a session that never loaded the skill gets no proposal: an edit to the skill
+  would not have reached it": propose: a session that did not load the skill is proposed for.
+- Caught first by "a session whose index entry is gone from a damaged folder is said to be no
+  session there, with no traceback": propose: a session with no index entry stops it with a
+  traceback (survived the first run).
+- Caught first by "exits 0 and matches the stored expected report": report: the section of
+  proposals is there with none.
+
+Not done:
+
+- The edit is not in the skill, and should not be yet. It was drafted on the skill as that
+  session used it (blob 597d465d); the skill changed on 2026-11-14. And C5 keeps an edit only
+  when the eval comparison improves with it: no case shows this failure yet, so the next
+  step is a case that does (a change whose test can run only in CI), run with the edit and
+  without. That is a change of its own.
+- The proposal's page from the real run was written before the three fixes above, so its
+  words are the earlier ones. The run was not made again: it would spend a second call to
+  show a change of wording that the suite shows.
+- Not verified: a proposal for `record-before-code`, the other step with an eval case; and a
+  long session, whose sheet is cut, against the real model.
