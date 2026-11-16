@@ -1391,6 +1391,10 @@ def cmd_messages(args):
     sessions, chunks, inserted, none, left_out, unfilled, compared = set(), 0, 0, 0, 0, 0, 0
     found = {"missing": 0, "not the chunk's": 0, "differs": 0}
     try:
+        if request(url, key, "GET", "/rest/v1/messages?select=line&limit=1")[0] == 404:
+            say("the store has no table `messages` yet: run plugins/change-record/store/schema.sql in the project's SQL editor, "
+                "then this again")
+            return 1
         q = "/rest/v1/chunks?select=session_id,stream,chunk_id&order=session_id,stream,chunk_id"
         if only:
             q += "&session_id=in.(" + ",".join(quote(x, safe="") for x in only) + ")"
