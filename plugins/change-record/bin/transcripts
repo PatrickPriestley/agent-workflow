@@ -2521,7 +2521,7 @@ def cmd_propose(args):
         return 1
     label = labels.load(lab)[0].get(sid)
     verdict, reason = (label["steps"].get(step) or (None, "")) if label else (None, "")
-    if not label or not label["by"] or verdict != labels.FAIL:
+    if not label or verdict != labels.FAIL:  # a label with verdicts and no name is not loaded at all (labels.parse)
         say(f"no label confirms that {sid} failed {step}: a proposal is drafted only from a failure a person has labelled "
             f"(transcripts sheet, then the session's file in {os.path.abspath(lab)})")
         return 1

@@ -1463,7 +1463,7 @@ out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out"
 
 echo "session-quality R6 and R7: transcripts propose drafts a skill edit from a failure a label confirms (record 2026-11-12-session-quality, task 3)"
 PW="$TMPROOT/propose"; PREPO="$PW/repo"; PAR="$PW/archive"; PLAB="$PW/labels"; mkdir -p "$PREPO/plugins/change-record/skills/change" "$PLAB"
-SKILL0="$(printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write the code.\n')"
+SKILL0="$(printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write the code.\n\nAsk skill-owner@example.org if unsure.\n')"
 ( cd "$PREPO" && git init -q -b work && git config user.email t@example.com && git config user.name t && git config core.hooksPath /dev/null
   printf '%s\n' "$SKILL0" > plugins/change-record/skills/change/SKILL.md
   git add -A && git commit -qm "feat: base" && git remote add origin https://github.com/Owner/Repo ) > /dev/null 2>&1
@@ -1528,6 +1528,7 @@ it "what is sent is redacted as for the store, to Claude Sonnet with no tools, a
 assert_eq "1" "$(asked)"
 sentp="$(py -c 'import json,sys; r=json.loads(open(sys.argv[1]).read().splitlines()[-1]); print(r["kind"], r["argv"][r["argv"].index("--model")+1], repr(r["argv"][r["argv"].index("--tools")+1])); print(r["prompt"])' "$FAKELOG")"
 has "$sentp" "claude sonnet ''"; lacks "$sentp" "$EMAIL"; has "$sentp" "<redacted:email>"
+lacks "$sentp" "skill-owner@example.org"; lacks "$(cat "$PD/proposal.md")" "$EMAIL"
 has "$sentp" "2. Write the code."; has "$sentp" "no test was run before greet.py was written"; has "$sentp" "a test run, before the first code"; has "$sentp" "greet.py"
 it "R7: a step no eval case shows says that none does, and that one is needed before the edit can be kept"
 plabel $P2 probe-before-record fail "the record was written with nothing looked at"
@@ -1537,7 +1538,11 @@ has "$note" "No eval case shows this failure"; lacks "$note" "plugins/change-rec
 it "an answer with no skill file in it, one that changes nothing, a refusal: each is said, exits 1 and leaves no proposal"
 plabel $P2 red-first fail "no test before greet.py"
 printf 'I would add a step.\n<why>x</why>\n' > "$PW/bad1.txt"; printf '<skill>\n%s\n</skill>\n<why>x</why>\n' "$SKILL0" > "$PW/bad2.txt"
+printf '<skill>\n\n</skill>\n<why>x</why>\n' > "$PW/bad3.txt"
 out="$(ANSWER="$PW/bad1.txt" propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "no proposed skill file"
+out="$(ANSWER="$PW/bad3.txt" propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "no proposed skill file"
+rm -f "$COUNTER"; out="$(FAKE_SCRIPT=haiku propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "not Sonnet"
+rm -f "$COUNTER"; out="$(FAKE_SCRIPT=iserror propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "gave no answer"
 out="$(ANSWER="$PW/bad2.txt" propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "changes nothing"
 rm -f "$COUNTER"; out="$(FAKE_SCRIPT=refused propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "refused"
 [ ! -e "$PAR/proposals/$P2/red-first" ] && ok || bad "a proposal was left"
@@ -1546,6 +1551,23 @@ out="$(propose --session $P1)"; assert_eq 2 "$?"; has "$out" "usage: transcripts
 out="$(propose --session $P1 --step tidy-code)"; assert_eq 2 "$?"; has "$out" "tier-declared"
 out="$(cd "$PREPO" && "$T" propose "$PREPO/inside" --session $P1 --step red-first 2>&1)"; assert_eq 2 "$?"; has "$out" "inside the working tree"
 out="$(propose --session 99999999-2222-3333-4444-555555555555 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"
+it "the skill file is the one the session used: the folder's own copy when a rebuilt folder holds one, else the blob in the repository, and with neither it says so"
+mkdir -p "$PAR/skills/change-record:change"; printf -- '---\nname: change\n---\n# Change, as the store rebuilt it\n' > "$PAR/skills/change-record:change/SKILL.md"
+: > "$FAKELOG"; out="$(propose --session $P1 --step red-first)"; assert_eq 0 "$?"
+has "$(py -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["prompt"])' "$FAKELOG")" "# Change, as the store rebuilt it"
+has "$(cat "$PAR/proposals/$P1/red-first/SKILL.diff")" "-# Change, as the store rebuilt it"
+rm -rf "$PAR/skills"; : > "$FAKELOG"
+out="$(propose --session $P1 --step red-first --repo-dir "$TMPROOT")"; assert_eq 1 "$?"; has "$out" "is neither in"; assert_eq "0" "$(asked)"
+it "each eval case a proposal can name is a case the plugin has, a long session is cut to its end, and the calls are said as a person would"
+assert_eq "record-before-code red-first | True True | call 3 | calls 1, 2 and 9 | no call was named" "$(py - "$here/.." <<'PY'
+import os, sys
+sys.path.insert(0, sys.argv[1] + "/grade")
+import propose
+p = propose.prompt_for("s", "skill", "red-first", "reason", "x" * 100000 + "THE END OF THE SESSION", lambda s: s)
+print(" ".join(sorted(propose.EVALS.values())), "|", all(os.path.isdir(os.path.join(sys.argv[1], "evals", c)) for c in propose.EVALS.values()),
+      len(p) < 70000 and "THE END OF THE SESSION" in p, "|", propose.some([3]), "|", propose.some([1, 2, 9]), "|", propose.some([]))
+PY
+)"
 it "the rule a proposal states for each of the seven steps is in the README's row for that step"
 assert_eq "7 steps, each rule in its row" "$(py - "$here/../README.md" <<'PY'
 import re, sys
