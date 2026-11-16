@@ -23,8 +23,8 @@ as PostgreSQL answered that record's probe: several rows in one request are stor
 or, if one is a duplicate, not at all; a text holding U+0000 or a lone surrogate is 400; the
 hooks' key reads neither. The view is the table's rows here: this stand-in runs no SQL, and
 the view's own rules are tested in store/schema.test.sh. --loose TABLE makes that table keep the
-new rows of a request it answers 409 to, as a store that is not all or none would: the probe
-must fail against it.
+new rows of a request it answers 409 to, and take a text PostgreSQL would refuse, as a store that
+is not what the plan needs would: the probe must fail against it.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -126,7 +126,7 @@ class H(BaseHTTPRequestHandler):
             rows = rows if isinstance(rows, list) else [rows]
             if REFUSE_SESSION and any(r.get("session_id") == REFUSE_SESSION for r in rows):
                 return self.answer(400, {"code": "23514", "message": "new row violates a check constraint (the stand-in refuses this session)"})
-            if table == "messages" and any(unstorable(r) for r in rows):
+            if table == "messages" and table != LOOSE and any(unstorable(r) for r in rows):
                 return self.answer(400, {"code": "22P05", "message": "unsupported Unicode escape sequence"})
             with LOCK:
                 have = {tuple(r.get(c) for c in KEYS.get(table, ())) for r in TABLES[table]}

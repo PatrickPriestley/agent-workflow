@@ -551,21 +551,22 @@ for c in "two rows in one request: stored" "the same request again: refused as a
          "select messages: refused" "update a message: refused" "delete a message: refused" "select the transcript view: refused" \
          "one row in a request of at least 3,100,000 bytes: stored" "a text holding U+0000: refused" "a text holding a lone surrogate: refused" \
          "read key: the new row of the refused request is not there"; do has "$out" "ok   $c: HTTP"; done
-it "the rows went as the probe says: several in one request, and one request of at least 3,100,000 bytes"
+it "the rows went as the probe says: the first request holds two, and one request is at least 3,100,000 bytes"
 assert_eq "True True" "$(python3 - "$LOG" <<'PY2'
 import json, sys
 posts = [json.loads(l) for l in open(sys.argv[1])]
 posts = [p["body"] for p in posts if p["method"] == "POST" and p["path"] == "/rest/v1/messages"]
-print(any(isinstance(json.loads(b), list) and len(json.loads(b)) == 2 for b in posts), max(len(b.encode()) for b in posts) >= 3100000)
+print(isinstance(json.loads(posts[0]), list) and len(json.loads(posts[0])) == 2, max(len(b.encode()) for b in posts) >= 3100000)
 PY2
 )"
 it "without the read key the probe says the read-back was not made, and exits 1"
 out="$(XDG_CONFIG_HOME="$TMPROOT/configQ" AGENT_TRANSCRIPTS_URL="$URL" python3 "$PROBE" 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "not made: no read key here"; lacks "$out" "FAIL"
-it "against a store that keeps the new row of a refused request, the probe fails on the read-back and exits 1"
+it "against a store that keeps the new row of a refused request and takes a text PostgreSQL would not, the probe fails on each and exits 1"
 standin loose --loose messages
 out="$(XDG_CONFIG_HOME="$TMPROOT/configP" AGENT_TRANSCRIPTS_URL="$URL" python3 "$PROBE" 2>&1)"; rc=$?
-assert_eq 1 "$rc"; has "$out" "FAIL read key: the new row of the refused request is not there: HTTP 200 but"; has "$out" " 1 failed"
+assert_eq 1 "$rc"; has "$out" "FAIL read key: the new row of the refused request is not there: HTTP 200 but"
+has "$out" "FAIL a text holding U+0000: refused: HTTP 201"; has "$out" "FAIL a text holding a lone surrogate: refused: HTTP 201"; has "$out" " 3 failed"
 standin probe2
 it "the stand-in answers for the new table as PostgreSQL answered the probe of the record: a duplicate among several rows stores none of them"
 row() { printf '{"session_id":"standin-m","stream":"main","chunk_id":"%064d","shape":1,"line":%s,"block":0,"who":"user","kind":"text","text":"%s"}' 0 "$1" "$2"; }

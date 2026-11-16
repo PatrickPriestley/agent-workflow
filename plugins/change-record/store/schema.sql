@@ -183,8 +183,8 @@ with recursive best as (
   where b.session_id !~ '^\.'
     and not exists (select 1 from tips t
                     where t.session_id = b.session_id
-                      and (not t.named or not exists (select 1 from whole w
-                                                      where w.session_id = t.session_id and w.stream = t.stream)))
+                      and not exists (select 1 from whole w    -- only a stream named as a transcript is ever whole
+                                      where w.session_id = t.session_id and w.stream = t.stream))
 )
 select m.session_id, m.stream,
        row_number() over (partition by m.session_id, m.stream order by h.depth desc, m.line, m.block) as n,

@@ -154,7 +154,7 @@ def pair(sid, first, second):
     for name, (red, when, size, version) in (("shown", first), ("hidden", second)):
         cid = h(f"{sid}/{name}"); chunk(sid, cid, root(sid), 1); msg(sid, cid, 1, 0, f"{sid}-{name}")
         e = entry({"main": cid}, redaction=red, when=when); e["sent"]["streams"]["main"]["bytes"] = size
-        index(sid, e, version=version)
+        index(sid, e, row_id=("f" if name == "shown" else "0") * 64, version=version)  # a tie would go to the hidden row
 pair("redact", (2, "2026-11-01T00:00:00Z", 10, 1), (1, "2026-11-15T00:00:00Z", 99, 9))
 pair("late", (2, "2026-11-15T00:00:00Z", 10, 1), (2, "2026-11-01T00:00:00Z", 99, 9))
 pair("large", (2, "2026-11-15T00:00:00Z", 99, 1), (2, "2026-11-15T00:00:00Z", 10, 9))
@@ -176,7 +176,8 @@ index("bad3", entry({"main": tip}, redaction=None)); index("bad3", dict(entry({"
 tip = chain("only"); index("only", entry({"main": tip}, redaction="two"))
 # rows of another shape beside a session's own
 tip = chain("shape", 1); msg("shape", tip, 1, 0, "shape-planted", shape=999); msg("shape", tip, 3, 0, "shape-planted-2", shape=2); index("shape", entry({"main": tip}))
-print("\n".join(out))
+# the rows of messages go in last and backwards, so that no order of insertion can pass for the order of the view
+print("\n".join([s for s in out if "public.messages" not in s] + [s for s in reversed(out) if "public.messages" in s]))
 PY
 it "the made-up rows load"
 out="$(sql_file "$PG/rows.sql")"; rc=$?; assert_eq "0 " "$rc $out"
