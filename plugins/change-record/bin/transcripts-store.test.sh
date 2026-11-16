@@ -593,7 +593,7 @@ tool() { python3 "$TMPROOT/tool.py" "$T" "$@" 2>&1 | tail -4; }
 it "the fixture named for the tool's shape gives its rows, compared whole"
 assert_eq "1" "$(tool 'print(tr.SHAPE)')"
 "$T" redact < "$FIX/shape-1.jsonl" > "$TMPROOT/shape-1.redacted" 2>/dev/null
-assert_eq "15 rows, the same" "$(tool '
+assert_eq "16 rows, the same" "$(tool '
 want = [json.loads(l) for l in open(sys.argv[3])]
 got = tr.message_rows(open(sys.argv[4], "rb").read())
 bad = [(w, g) for w, g in zip(want, got) if w != g]
@@ -633,6 +633,28 @@ a = row(1000000 - size([row(0)]))
 reqs = tr.row_requests([a, row(1), row(2)])
 print(" ".join(str(len(r)) for r in reqs) + ":", size(reqs[0]), "bytes and then the rest")')"
 assert_eq "0" "$(tool 'print(len(tr.row_requests([])))')"
+it "R5: two rows whose request is exactly 1,000,000 bytes go together, one byte more and they part, and a first row that is over gives no empty request"
+assert_eq "2 | 1 1 | 1 1" "$(tool '
+row = lambda n: {"t": "x" * n}
+size = lambda r: len(json.dumps(r, separators=(",", ":")).encode())
+fill = 1000000 - size([row(0), row(0)])
+shape = lambda rows: " ".join(str(len(r)) for r in tr.row_requests(rows))
+print(shape([row(fill - 5), row(5)]), "|", shape([row(fill - 5), row(6)]), "|", shape([row(1200000), row(1)]))')"
+it "R4: a time is kept only when it names a moment: the form, a real date, and an offset a clock can have"
+assert_eq "True True True True False False False False False False False" "$(tool '
+ok = ["2026-11-15T10:00:00Z", "2026-11-15T10:00:00.5-08:00", "2026-11-15T23:59:59+15:59", "0001-01-01T00:00:00Z"]
+no = ["2026-11-15T10:00:00", "2026-11-15 10:00:00Z", "2026-02-30T10:00:00Z", "2026-11-15T24:00:00Z", "2026-11-15T10:00:00+16:00",
+      "2026-11-15T10:00:00+01:60", "0000-01-01T00:00:00Z"]
+print(" ".join(str(tr.instant(s) is not None) for s in ok + no))')"
+it "R6: two times are one moment whatever the offset or the fraction they are written with, and an hour apart they are not"
+assert_eq "True True False False True" "$(tool '
+print(tr.same_field("at", "2026-11-15T10:00:00.250Z", "2026-11-15T11:00:00.25+01:00"), tr.same_field("at", "2026-11-15T10:00:00.123456789Z", "2026-11-15T10:00:00.123457+00:00"),
+      tr.same_field("at", "2026-11-15T10:00:00Z", "2026-11-15T10:00:00+01:00"), tr.same_field("at", None, "2026-11-15T10:00:00Z"), tr.same_field("at", None, None))')"
+it "R4: a line nested deeper than the reader goes gives no row and stops nothing: the next line's row is there"
+assert_eq "2 the line after" "$(tool '
+deep = b"[" * 200000 + b"]" * 200000
+rows = tr.message_rows(deep + b"\n" + json.dumps({"type": "user", "message": {"content": "the line after"}}).encode() + b"\n")
+print(" ".join(str(r["line"]) + " " + r["text"] for r in rows))')"
 
 echo "readable-store R5: transcripts messages fills the table from what the store holds"
 # filled NAME [stand-in options]: a new stand-in holding one session's chunks and no rows: main in two chunks,
@@ -741,6 +763,30 @@ import sys
 p = [l.split() for l in sys.stdin]
 print(" ".join(x[0] for x in p), all(int(x[1]) <= 1000000 for x in p))')"
 assert_eq "30" "$(stored | wc -l | tr -d ' ')"
+
+it "a chunk whose data cannot be opened at all is left out like one that does not match, and the others are filled"
+filled m8
+for d in '@@@' 'aGVsbG8='; do curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary \
+  "{\"session_id\":\"$SID\",\"stream\":\"main\",\"chunk_id\":\"$(printf '%s' "$d" | shasum -a 256 | cut -c1-64)\",\"start_id\":\"x\",\"data\":\"$d\"}" "$URL/rest/v1/chunks"; done
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "2 chunks left out"; has "$out" "inserted 6 rows"; lacks "$out" "Traceback"
+it "a row written by another hand between the reading and the insert: the request is refused whole, and its rows then go one at a time"
+filled m9; c1="$(chunk_of main 1)"
+curl -s -o /dev/null -X POST --data-binary "{\"rows\":[{\"session_id\":\"$SID\",\"stream\":\"main\",\"chunk_id\":\"$c1\",\"shape\":1,\"line\":2,\"block\":0,\"who\":\"user\",\"kind\":\"text\",\"text\":\"written meanwhile\"}]}" "$URL/__admin/after-read"
+out="$(messages)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "inserted 5 rows"; assert_eq "6" "$(stored | wc -l | tr -d ' ')"
+assert_eq "1 1 1 1 2 3" "$(posts | cut -d' ' -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+it "where the store has no such table yet it says to run schema.sql, sends nothing, and exits 1"
+filled m10 --without messages
+: > "$LOG"; out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "run plugins/change-record/store/schema.sql"; assert_eq "GET" "$(methods)"; assert_eq "1" "$(wc -l < "$LOG" | tr -d ' ')"
+out="$(messages --check)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "run plugins/change-record/store/schema.sql"
+it "with no store named, or one that cannot be reached, it says so: exit 2 and exit 1"
+out="$(cd "$REPO" && "$T" messages 2>&1)"; rc=$?
+assert_eq 2 "$rc"; has "$out" "AGENT_TRANSCRIPTS_URL"
+out="$(cd "$REPO" && AGENT_TRANSCRIPTS_URL="http://127.0.0.1:1" "$T" messages 2>&1)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "cannot reach"; lacks "$out" "Traceback"
 
 echo "readable-store R6: transcripts messages --check compares the table with the chunks and changes nothing"
 filled k1; messages > /dev/null

@@ -2,7 +2,7 @@
 """A stand-in for the store's HTTPS interface (PostgREST on Supabase), for the tests only.
 
   stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE [--refuse-status N]]
-              [--refuse-after N] [--refuse-session ID] [--loose TABLE]
+              [--refuse-after N] [--refuse-session ID] [--loose TABLE] [--without TABLE]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -25,7 +25,11 @@ or, if one is a duplicate, not at all; a text holding U+0000 or a lone surrogate
 hooks' key reads neither. The view is the table's rows here: this stand-in runs no SQL, and
 the view's own rules are tested in store/schema.test.sh. --loose TABLE makes that table keep the
 new rows of a request it answers 409 to, and take a text PostgreSQL would refuse, as a store that
-is not what the plan needs would: the probe must fail against it.
+is not what the plan needs would: the probe must fail against it. --without TABLE answers 404 to
+anything asked of that table, as a project where schema.sql has not been run since the table was
+added. POST /__admin/after-read with {"rows": [...]} puts those rows into `messages` just after
+the next reading of their chunk's rows, as another hand writing between a sender's reading and
+its insert would.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -44,6 +48,8 @@ REFUSE_AFTER = int(OPTS["--refuse-after"]) if "--refuse-after" in OPTS else None
 REFUSE_SESSION = OPTS.get("--refuse-session")
 REFUSE_STATUS = int(OPTS.get("--refuse-status", 503))
 LOOSE = OPTS.get("--loose")
+WITHOUT = OPTS.get("--without")
+AFTER_READ = []  # rows of messages to put in after its next reading
 ACCEPTED = {"chunks": 0}
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
         "scores": ("session_id", "step", "grader", "graded_at"),
@@ -104,6 +110,10 @@ class H(BaseHTTPRequestHandler):
                 TABLES[want["table"]][:] = [r for r in TABLES[want["table"]]
                                             if any(r.get(k) != v for k, v in want["match"].items())]
             return self.answer(204)
+        if u.path == "/__admin/after-read":
+            with LOCK:
+                AFTER_READ.extend(json.loads(raw)["rows"])
+            return self.answer(204)
         table = u.path[len("/rest/v1/"):] if u.path.startswith("/rest/v1/") else None
         if table in VIEWS:  # a view is read, by the read key alone
             if key != READKEY:
@@ -111,7 +121,7 @@ class H(BaseHTTPRequestHandler):
             if self.command != "GET":
                 return self.answer(405, {"message": "the stand-in only reads a view"})
             table = VIEWS[table]
-        if table not in TABLES:
+        if table not in TABLES or table == WITHOUT:
             return self.answer(404, {"code": "PGRST205", "message": f"Could not find the table 'public.{table}'"})
         reader = key == READKEY
         if self.command == "POST" and table == REFUSE:
@@ -170,6 +180,11 @@ class H(BaseHTTPRequestHandler):
         rows = rows[offset:offset + limit if limit is not None else None]
         if cols:
             rows = [{c: r.get(c) for c in cols} for r in rows]
+        if table == "messages":
+            with LOCK:  # the rows waiting for this chunk's rows to be read
+                now = [r for r in AFTER_READ if ("chunk_id", "eq." + str(r.get("chunk_id"))) in q]
+                TABLES["messages"].extend(dict(r, created_at=time.time()) for r in now)
+                AFTER_READ[:] = [r for r in AFTER_READ if r not in now]
         return self.answer(200, rows)
 
     do_GET = do_POST = do_PATCH = do_DELETE = handle_any

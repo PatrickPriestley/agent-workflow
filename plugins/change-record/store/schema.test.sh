@@ -232,15 +232,15 @@ cols = ", ".join(rows[0])
 print(f"insert into public.messages ({cols}) select {cols} from json_populate_recordset(null::public.messages, $fixture${json.dumps(rows)}$fixture$::json);")
 root = hashlib.sha256(b"fixture/main").hexdigest()
 print("insert into public.chunks (session_id, stream, chunk_id, start_id, sender, generation, number, lines, bytes, redaction, data) "
-      f"values ('fixture', 'main', '{'f' * 64}', '{root}', 'test', 1, 1, 20, 1, 2, '');")
+      f"values ('fixture', 'main', '{'f' * 64}', '{root}', 'test', 1, 1, 21, 1, 2, '');")
 entry = json.dumps({"redaction_version": 2, "sent": {"streams": {"main": {"tip": "f" * 64, "bytes": 1}}}})
 print(f"insert into public.sessions (session_id, row_id, sender, version, entry) values ('fixture', '{'e' * 64}', 'test', 1, '{entry}');")
 PY
 out="$(sql_file "$PG/fixture.sql")"; rc=$?; assert_eq "0 " "$rc $out"
-assert_eq "15" "$(sql "select count(*) from public.messages where session_id = 'fixture'")"
+assert_eq "16" "$(sql "select count(*) from public.messages where session_id = 'fixture'")"
 it "R4, R6: read back as the interface gives rows, each is the row that went in by the tool's own comparison, the time of a line among them"
 run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -c "select json_agg(row_to_json(m) order by line, block) from (select shape, line, block, at, who, kind, tool, call_id, failed, side, text from public.messages where session_id = 'fixture') m" > "$PG/back.json" 2>&1
-assert_eq "15 rows, none differs; a time comes back as 2026-11-15T10:00:00.25+00:00 for 2026-11-15T10:00:00.250Z" "$(python3 - "$here/../bin/transcripts" "$here/fixtures/shape-1.rows.jsonl" "$PG/back.json" 2>&1 <<'PY'
+assert_eq "16 rows, none differs; a time comes back as 2026-11-15T10:00:00.25+00:00 for 2026-11-15T10:00:00.250Z" "$(python3 - "$here/../bin/transcripts" "$here/fixtures/shape-1.rows.jsonl" "$PG/back.json" 2>&1 <<'PY'
 import importlib.machinery, importlib.util, json, sys
 sys.dont_write_bytecode = True
 loader = importlib.machinery.SourceFileLoader("transcripts_tool", sys.argv[1])
@@ -254,7 +254,7 @@ PY
 )"
 it "R4: and the view shows them in the fixture's order, with each row's kind, tool and text"
 run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -c "select json_agg(json_build_array(kind, tool, text) order by n) from public.transcript where session_id = 'fixture'" > "$PG/view.json" 2>&1
-assert_eq "15 rows in the fixture's order" "$(python3 -c '
+assert_eq "16 rows in the fixture's order" "$(python3 -c '
 import json, sys
 want = [[r["kind"], r["tool"], r["text"]] for r in map(json.loads, open(sys.argv[1]))]
 got = json.load(open(sys.argv[2]))

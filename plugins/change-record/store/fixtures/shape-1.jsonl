@@ -18,3 +18,4 @@ not json at all, jane.doe@example.org
 {"type": "user", "message": {"content": "   "}}
 {"type": "summary", "summary": "x"}
 {"type": "user", "timestamp": "2026-11-15T10:00:20Z", "message": {"content": [{"type": "text", "text": "the last line, typed by the user"}]}}
+{"type": "user", "isMeta": "yes", "isCompactSummary": 1, "isSidechain": 1, "timestamp": "2026-11-15T10:00:21+16:00", "message": {"content": "typed by the user, whatever the flags say"}}
