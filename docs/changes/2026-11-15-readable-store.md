@@ -1086,7 +1086,7 @@ failing while a push stored no row; then the code in `push_session`, `unsent` an
 `cmd_push`. Two of the 16 passed before the code and are there to hold what must not
 change: the push still only inserts, and `materialize` rebuilds a session whose rows are
 owed. The tests of `transcripts messages` now take out the rows a push left, so that
-they stay tests of a store with chunks and no rows. Suites after: transcripts-store 429,
+they stay tests of a store with chunks and no rows. Suites after: transcripts-store 436,
 store schema 58, transcripts 364, transcripts-grade 212, transcripts-judge 422,
 ci-workflow 21, record-check 117, none failing.
 
@@ -1108,8 +1108,8 @@ Where R7 left a choice, what was built:
   chunk it gets is that chunk; if not (a redaction that came out otherwise, a part that
   is gone, a place past the end) it strikes the request off, says so, and leaves the rows
   to `transcripts messages`, which reads the chunk the store holds.
-- After the store has answered 404 for the table, no more rows are sent in that run:
-  each later request is owed without being uploaded. Any other refusal is one request's,
+- After the store has answered 404 for the table, no more rows are sent in that run,
+  for that session or any after it: each later request is owed without being uploaded. Any other refusal is one request's,
   and the next is still tried, as R7 has it.
 - A stream that starts again (a new redaction, or the archive rewrote it) drops what it
   owed: its parts are all sent again, rows and all.
@@ -1118,11 +1118,11 @@ Where R7 left a choice, what was built:
 - The stand-in gained `/__admin/option`, which sets `--without`, `--refuse`,
   `--refuse-line` and `--hang` while it runs, and `--hang-table`.
 
-Guards, each broken by hand in a clone of the repository: 28 breaks, 26 caught at the
+Guards, each broken by hand in a clone of the repository: 29 breaks, 27 caught at the
 first run. One survivor was a gap in a test, closed and broken again: a stream that
 starts again went looking for what it owed. The other was a guard with no effect and is
 taken out: writing the state only when what is owed had changed, on a path reached only
-for a session pushed for what it owes. The 27 guards that stand, by the assertion that
+for a session pushed for what it owes. The 28 guards that stand, by the assertion that
 failed first for each:
 
 - Caught first by "a session that owes rows counts as unsent: the next push, once the
@@ -1167,6 +1167,9 @@ failed first for each:
 - Caught first by "every request of rows refused (503): nothing is held back, each is
   tried, each is owed, and the next push tries them again": push: any refusal ends the
   sending of rows for the run.
+- Caught first by "no more rows after a 404 holds for the whole run, not for one session:
+  with two sessions to send, one request of rows is tried and the rest are owed": push:
+  each session finds out for itself that the store has no table.
 - Caught first by "one request refused (503), the second of a chunk's two: only that one
   is owed, and only it is sent again": push: what is owed forgets which request.
 - Caught first by "one row of an owed request stored by another hand before the retry: its
@@ -1197,6 +1200,17 @@ they nearly double what is uploaded: 12.3 MB of rows beside 13.4 MB of chunks, s
 row's text is not compressed. That is C6's cost, and over a network it is time. The
 second run is this task's error path: every chunk and the index row stored, the exit
 status 0, and what is owed said.
+
+The review of this task's pull request, by another model family (pr-agent, 2026-11-16,
+on the first push): three findings. No line naming the reviewer, as before: added with
+what it found. One in the code, and right: the note that the store has no table was
+kept for one session, so with several sessions to send each still tried one request of
+rows, where this record says none are sent for the rest of the run. It is kept for the
+run now; tested first with two sessions, one assertion failing, and broken by hand. And
+the one it calls blocking: the push of rows has not been made against the real store
+with the hooks' key. That is so, and it is the paragraph below. It can be made before
+the merge as well as after, from this branch on the owner's laptop, and that is the
+better order, as it was for task 1's gate.
 
 Not done, and it is this task's real use: a push of a real session from a machine that
 holds the hooks' key, timed, and `--check` clean on it afterwards. The cloud session
