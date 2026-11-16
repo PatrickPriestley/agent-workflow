@@ -83,6 +83,14 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           if bwrap --unshare-all --ro-bind / / true; then echo "a box can start here"
           else echo "::warning::no bwrap box can start on this runner: the boxed review tests are skipped"; fi
+      # The store's schema is tested in a PostgreSQL the suite starts for itself. A Linux runner
+      # has one installed or can install it; the suite must then run. On macOS it runs where one
+      # is installed and says so where none is.
+      - name: A PostgreSQL for the store's schema (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          ls /usr/lib/postgresql/*/bin/initdb >/dev/null 2>&1 || { sudo apt-get update -q; sudo apt-get install -y -q postgresql; }
+          echo "SCHEMA_TEST_REQUIRED=1" >> "$GITHUB_ENV"
       - name: red-check
         if: ${{ !cancelled() }}
         run: bash plugins/change-record/bin/red-check.test.sh
@@ -101,6 +109,9 @@ jobs:
       - name: transcripts store
         if: ${{ !cancelled() }}
         run: bash plugins/change-record/bin/transcripts-store.test.sh
+      - name: store schema
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/store/schema.test.sh
       - name: transcripts grade
         if: ${{ !cancelled() }}
         run: bash plugins/change-record/bin/transcripts-grade.test.sh
