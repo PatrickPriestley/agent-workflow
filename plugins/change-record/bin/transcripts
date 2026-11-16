@@ -122,6 +122,13 @@ itself sees exit 0 at the session's last commit and not at its base, each run in
 (grade/review.py). The answers are kept in DIR/reviews. No call is made until the sessions are
 chosen with --session or --limit.
 
+messages fills the store's readable table (store/schema.sql: `messages`, and the view `transcript`
+the dashboard reads) from the chunks the store holds, with the read key: for each chunk it reads the
+rows its redacted lines give, a row for each text, tool call and tool result, and inserts the ones
+the table does not have. A chunk whose bytes do not match its id is named and left out.
+messages --check changes nothing: it prints each row that is missing, that is there and is not its
+chunk's, or that differs, and exits 1 if there is one.
+
 probe is a Codex or Cursor hook command that writes a sample of what the hook passed, holding
 structure and no content, to DIR (default grade/fixtures/agents): see probe/agent_sample.py.
 """

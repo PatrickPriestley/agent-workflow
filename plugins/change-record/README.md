@@ -320,18 +320,53 @@ against its chain id. Where the store holds a session more than once, it takes t
 the newest redaction version, then the latest and longest. For Skill Doctor, point `--claude-home` at that folder and `--skills-dir`
 at its `skills/`.
 
-**The store's text, for reading** (record `docs/changes/2026-11-15-readable-store.md`; being
-built: the table and the view are in `store/schema.sql`, and nothing fills them yet).
+**The store's text, for reading** (record `docs/changes/2026-11-15-readable-store.md`).
 `chunks` holds each transcript gzipped, which no query can open, so the dashboard shows that a
-session is stored and nothing of what was said. `schema.sql` now also creates `messages`, one
-row for each text, tool call and tool result of a transcript, and the view `transcript`, which
-shows each session's rows in order. Run the file again in the project's SQL editor to get
-them; it changes nothing that is there. The hooks' key can insert into `messages` and nothing
-else, and `store/probe` now checks that too. Its check that a request of several rows is
-stored whole or not at all needs the read key, so it now exits 1 where there is none: run it
-where both keys are. `store/schema.test.sh` runs the file in a PostgreSQL of its own and
-tests the grants and each rule of the view; it says so and passes nothing off where none is
-installed.
+session is stored and nothing of what was said. `store/schema.sql` also creates `messages`, one
+row for each text, tool call and tool result of a transcript line, and the view `transcript`,
+which shows each session's rows in the order of the copy `materialize` rebuilds. Run the file
+in the project's SQL editor to get them; running it again changes nothing that is there. The
+text in a row is the redacted text of the chunk it was read from, never the original.
+
+To read one session, in the dashboard's SQL editor (or filter the view `transcript` by
+`session_id` in the table editor); a subagent's lines are under its own `stream`:
+
+```sql
+select n, at, who, kind, tool, text
+from transcript
+where session_id = '<session id>' and stream = 'main'
+order by n;
+```
+
+To search every session for some words, whatever their case:
+
+```sql
+select session_id, stream, n, who, kind, left(text, 300) as text
+from transcript
+where text ilike '%<words>%'
+order by session_id, stream, n;
+```
+
+`who` is `user`, `assistant`, `tool` (a tool's result) or `context` (what the harness put in:
+reminders and summaries); `kind` is `text`, `call` (the tool's input as JSON, its name in
+`tool`) or `result` (`failed` when the tool marked an error); `call_id` ties a result to its
+call. Left out: thinking, images, and every line that is no user's or assistant's. One text
+longer than 3,000,000 bytes in a request is stored cut, and its last line says so.
+
+`transcripts messages [--session ID]...`, run where the read key is, fills the table from the
+chunks the store holds and inserts only the rows that are missing; `transcripts messages
+--check` changes nothing and prints each row that is missing, that is there and is not its
+chunk's, or that differs, and exits 1 if there is one. Nothing else writes rows yet, so a
+session stored since the last run has none until the command is run again. If the table and
+the chunks ever disagree the chunks are right: they are what `materialize` and the graders
+read, and each is checked against its chain id.
+
+The hooks' key can insert into `messages` and nothing else, and `store/probe` checks that too.
+Its check that a request of several rows is stored whole or not at all needs the read key, so
+it exits 1 where there is none: run it where both keys are. `store/schema.test.sh` runs the
+file in a PostgreSQL of its own and tests the grants, each rule of the view, the rows of the
+tool's fixture through the real table, and the two queries above as they are printed here; it
+says so and passes nothing off where none is installed.
 
 **Grading.** `transcripts grade` scores every session in a folder (the local archive by
 default, or a folder `materialize` wrote) with the field graders in `grade/fields.py`, one
