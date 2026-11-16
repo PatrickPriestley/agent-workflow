@@ -1086,7 +1086,7 @@ failing while a push stored no row; then the code in `push_session`, `unsent` an
 `cmd_push`. Two of the 16 passed before the code and are there to hold what must not
 change: the push still only inserts, and `materialize` rebuilds a session whose rows are
 owed. The tests of `transcripts messages` now take out the rows a push left, so that
-they stay tests of a store with chunks and no rows. Suites after: transcripts-store 436,
+they stay tests of a store with chunks and no rows. Suites after: transcripts-store 440,
 store schema 58, transcripts 364, transcripts-grade 212, transcripts-judge 422,
 ci-workflow 21, record-check 117, none failing.
 
@@ -1118,17 +1118,18 @@ Where R7 left a choice, what was built:
 - The stand-in gained `/__admin/option`, which sets `--without`, `--refuse`,
   `--refuse-line` and `--hang` while it runs, and `--hang-table`.
 
-Guards, each broken by hand in a clone of the repository: 29 breaks, 27 caught at the
+Guards, each broken by hand in a clone of the repository: 32 breaks, 30 caught at the
 first run. One survivor was a gap in a test, closed and broken again: a stream that
 starts again went looking for what it owed. The other was a guard with no effect and is
 taken out: writing the state only when what is owed had changed, on a path reached only
-for a session pushed for what it owes. The 28 guards that stand, by the assertion that
+for a session pushed for what it owes. The 31 guards that stand, by the assertion that
 failed first for each:
 
 - Caught first by "a session that owes rows counts as unsent: the next push, once the
   table is there, stores them and strikes them off": push: an owed request that was stored
   stays owed; push: what is owed forgets where its chunk starts; push: what was struck off
-  is not saved when nothing else was sent; push: a session that owes rows is not unsent.
+  is not saved when nothing else was sent; push: a session that owes rows is not unsent;
+  push: what is owed is never tried.
 - Caught first by "after the first 404 no more rows are sent in that run: what the table
   would have taken is owed, not uploaded": push: what is owed is tried at every pass of a
   run; push: a 404 does not end the sending of rows for the run; push: rows go on being
@@ -1141,6 +1142,9 @@ failed first for each:
   left to transcripts messages, and the others are sent": push: an owed chunk is not
   checked against what the archive gives; push: a request past the end of its chunk's is
   sent.
+- Caught first by "once a run holds when a session is sent again in the same run for lines
+  archived meanwhile: what it owes is not tried again": push: a session sent again in a
+  run tries again what it owes; push: what is owed is tried whatever the caller says.
 - Caught first by "one row of a new chunk's request there before the push: the request is
   refused whole, its rows then go one at a time, and the others are there": push: a chunk
   just stored is taken for one the store had; push: no refusal as a duplicate is followed
@@ -1211,6 +1215,12 @@ the one it calls blocking: the push of rows has not been made against the real s
 with the hooks' key. That is so, and it is the paragraph below. It can be made before
 the merge as well as after, from this branch on the owner's laptop, and that is the
 better order, as it was for task 1's gate.
+
+Its second pass found one more in the code, right again: a session sent a second time in
+one run, for lines archived while the run was on, tried again what it owed, so "once a
+run" did not hold there. The run now keeps which sessions it has tried. Tested first
+with a push slowed by the stand-in while a second part is archived: five requests of
+rows where three are expected; then fixed, and broken by hand.
 
 Not done, and it is this task's real use: a push of a real session from a machine that
 holds the hooks' key, timed, and `--check` clean on it afterwards. The cloud session
