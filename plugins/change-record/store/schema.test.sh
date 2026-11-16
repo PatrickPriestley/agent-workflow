@@ -40,7 +40,8 @@ stop() { run "$bindir/pg_ctl" -D "$PG/data" -m immediate stop >/dev/null 2>&1; r
 trap stop EXIT
 run "$bindir/initdb" -D "$PG/data" -A trust -U postgres -E UTF8 --locale=C >"$PG/initdb.log" 2>&1 \
   || { echo "store schema: initdb failed: $(tail -3 "$PG/initdb.log")" >&2; exit 1; }
-run "$bindir/pg_ctl" -D "$PG/data" -l "$PG/server.log" -w -o "-c listen_addresses='' -k $PG" start >"$PG/start.log" 2>&1 \
+# No statement may run for more than 20 seconds: a view that never ends fails its test and does not hang the suite.
+run "$bindir/pg_ctl" -D "$PG/data" -l "$PG/server.log" -w -o "-c listen_addresses='' -k $PG -c statement_timeout=20000" start >"$PG/start.log" 2>&1 \
   || { echo "store schema: the server did not start: $(tail -3 "$PG/server.log" 2>/dev/null)" >&2; exit 1; }
 # sql STATEMENTS...: run in one session, the last line of what it prints (an error included)
 sql() { run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -v ON_ERROR_STOP=1 "${@/#/-c}" 2>&1 | tail -1; }
@@ -51,8 +52,10 @@ sql_all() { run "$bindir/psql" -h "$PG" -U postgres -d postgres -At -v ON_ERROR_
 as_role() { sql "set role $1" "$2"; }
 
 echo "the store's schema in $("$bindir/psql" --version)"
-# The roles Supabase has: anon and authenticated with nothing of their own, service_role past row security.
-sql "create role anon nologin" "create role authenticated nologin" "create role service_role nologin bypassrls" "create role someone nologin" >/dev/null
+# The roles Supabase has, and its habit of granting everything on a new table or view in public to all three, which
+# is what schema.sql's revokes are there to undo (its own first lines say so).
+sql "create role anon nologin" "create role authenticated nologin" "create role service_role nologin bypassrls" "create role someone nologin" \
+    "alter default privileges in schema public grant all on tables to anon, authenticated, service_role" >/dev/null
 
 it "R1: schema.sql runs, and runs again with nothing to say"
 out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
@@ -80,6 +83,23 @@ it "R1: running the file a third time leaves the row and the grants as they were
 sql_file "$here/schema.sql" >/dev/null
 assert_eq "1" "$(sql "select count(*) from public.messages")"
 has "$(as_role anon "select count(*) from public.messages")" "permission denied for table messages"
+it "R1: the view reads as the one who asks where the server can (PostgreSQL 15 and later)"
+if [ "$(sql "select current_setting('server_version_num')::int >= 150000")" = t ]; then
+  assert_eq "{security_invoker=true}" "$(sql "select reloptions from pg_class where relname = 'transcript'")"
+else ok; fi
+it "R1: each check of the table refuses what it is there for"
+# refused CHECK COLUMNS VALUES: the constraint an insert of those values trips
+refused() { sql_all "insert into public.messages ($2) values ($3)" | sed -n 's/.*violates check constraint "\([a-z_]*\)".*/\1/p'; }
+base="session_id, stream, chunk_id, shape, line, block, who, kind, text"
+assert_eq "messages_session_id_check" "$(refused x "$base" "'a b', 'main', repeat('a', 64), 1, 1, 0, 'user', 'text', 'x'")"
+assert_eq "messages_stream_check" "$(refused x "$base" "'r1', '', repeat('a', 64), 1, 1, 0, 'user', 'text', 'x'")"
+assert_eq "messages_chunk_id_check" "$(refused x "$base" "'r1', 'main', 'abc', 1, 1, 0, 'user', 'text', 'x'")"
+assert_eq "messages_shape_check" "$(refused x "$base" "'r1', 'main', repeat('a', 64), 0, 1, 0, 'user', 'text', 'x'")"
+assert_eq "messages_line_check" "$(refused x "$base" "'r1', 'main', repeat('a', 64), 1, 0, 0, 'user', 'text', 'x'")"
+assert_eq "messages_block_check" "$(refused x "$base" "'r1', 'main', repeat('a', 64), 1, 1, -1, 'user', 'text', 'x'")"
+assert_eq "messages_who_check" "$(refused x "$base" "'r1', 'main', repeat('a', 64), 1, 1, 0, 'nobody', 'text', 'x'")"
+assert_eq "messages_tool_check" "$(refused x "$base, tool" "'r1', 'main', repeat('a', 64), 1, 9, 0, 'user', 'text', 'x', repeat('t', 201)")"
+assert_eq "messages_call_id_check" "$(refused x "$base, call_id" "'r1', 'main', repeat('a', 64), 1, 9, 0, 'user', 'text', 'x', repeat('c', 201)")"
 it "R1: a row the table's checks refuse: a kind that is none of the three, a text with no end to it"
 has "$(sql_all "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, text) values ('r1', 'main', repeat('a', 64), 1, 2, 0, 'user', 'thought', 'x')")" 'violates check constraint "messages_kind_check"'
 has "$(sql_all "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, text) values ('r1', 'main', repeat('a', 64), 1, 3, 0, 'user', 'text', repeat('x', 3000001))" | cut -c1-200)" 'violates check constraint "messages_text_check"'
