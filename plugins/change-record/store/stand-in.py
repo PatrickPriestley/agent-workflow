@@ -12,7 +12,8 @@ judge_votes are
 401 42501. With READKEY, GET reads rows with `col=eq.value` filters, `select`, `order`,
 `limit` and `offset`. Every request is appended to LOGFILE as one JSON line: method, path,
 apikey, prefer and body. POST /__admin/tamper with {"chunk_id": ...} changes a stored chunk's
-data, to test that materialize checks it. --refuse TABLE answers 503 (or --refuse-status N)
+data, to test that materialize checks it; POST /__admin/forget with {"table": ..., "match":
+{column: value}} drops the rows that match, to test what finds a row missing. --refuse TABLE answers 503 (or --refuse-status N)
 to every insert into TABLE, as a store that fails part way would; --refuse-after N accepts N
 inserts into chunks and answers 503 to every later one, as a store that fails part way
 through a session would; --refuse-session ID answers 400 to any insert of that session's
@@ -96,6 +97,12 @@ class H(BaseHTTPRequestHandler):
                 for r in TABLES["chunks"]:
                     if r["chunk_id"] == cid:
                         r["data"] = "H4sIAAAAAAAAA8tIzcnJBwCGphA2BQAAAA=="  # gzip of "hello"
+            return self.answer(204)
+        if u.path == "/__admin/forget":  # {"table": ..., "match": {column: value}}: the rows that match are gone
+            want = json.loads(raw)
+            with LOCK:
+                TABLES[want["table"]][:] = [r for r in TABLES[want["table"]]
+                                            if any(r.get(k) != v for k, v in want["match"].items())]
             return self.answer(204)
         table = u.path[len("/rest/v1/"):] if u.path.startswith("/rest/v1/") else None
         if table in VIEWS:  # a view is read, by the read key alone
