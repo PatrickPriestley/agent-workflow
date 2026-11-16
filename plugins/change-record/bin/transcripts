@@ -954,7 +954,7 @@ def chunk_requests(sid, stream, cid, raw):
     return row_requests([dict({"session_id": sid, "stream": stream, "chunk_id": cid}, **r) for r in message_rows(raw)])
 
 
-def push_session(ar, url, key, sid, sender, no_table=None):
+def push_session(ar, url, key, sid, sender, no_table=None, retry=True):
     """Send one session's unsent parts with each chunk's rows, the requests of rows it owes from before,
     and, if it changed, its index entry; returns (chunks, index rows, requests of rows still owed).
     Rows never hold back a chunk, a part or the index row: a request of rows that is refused or gets
@@ -1018,7 +1018,7 @@ def push_session(ar, url, key, sid, sender, no_table=None):
         if s is None or s["archive_generation"] != st["generation"]:
             s = restart(name, st)
         cut = {}  # the pieces of each part that owes, cut from the archive as they first were
-        for o in [o for o in owed if o["stream"] == name]:
+        for o in [o for o in owed if retry and o["stream"] == name]:  # retry: not for a session already sent in this run
             if o["part"] not in cut:
                 try:
                     cut[o["part"]] = part_pieces(redacted(name, st, o["part"]))
@@ -1113,6 +1113,7 @@ def cmd_push(args):
     chunks = rows = sessions = 0
     owed = {}  # by session: the requests of rows each still owes after this push
     no_table = []  # for the whole run: see push_session
+    tried = set()  # the sessions whose owed rows this run has tried: once a run, however often a session is sent in it
     passed_over = {}  # sessions whose own data could not be sent: the others still go, and these are tried again next time
     try:
         key = key_file("insert-key", required=False)
@@ -1126,7 +1127,9 @@ def cmd_push(args):
                     break
                 for sid in todo:
                     try:
-                        c, r, owed[sid] = push_session(ar, url, key, sid, sender, no_table)
+                        first = sid not in tried
+                        tried.add(sid)
+                        c, r, owed[sid] = push_session(ar, url, key, sid, sender, no_table, retry=first)
                     except (OSError, ValueError, KeyError) as e:  # its archived files cannot be read
                         passed_over[sid] = e
                         continue
