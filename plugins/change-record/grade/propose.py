@@ -123,21 +123,24 @@ def some(numbers):
     return ("call " + words[0]) if len(words) == 1 else "calls " + ", ".join(words[:-1]) + " and " + words[-1]
 
 
-def note(sid, step, skill_name, by, reason, why, calls, got):
+def note(sid, step, skill_name, blob, by, reason, why, calls, got):
     """The proposal's own page: what it is drafted from, why, and the eval case that must show it helps (R7)."""
     case = EVALS.get(step)
     cost = f", ${got['cost_usd']:.2f}" if got.get("cost_usd") is not None else ""
     return "\n".join([
         f"# Proposed edit to {skill_name}", "",
         f"- Session: {sid}",
+        f"- Skill file: blob {blob[:12]}, the version the session used; if the skill has changed since, make the edit "
+        "again on the file as it is now",
         f"- Step it failed: `{step}` (passes when: {RULES[step]})",
         f"- Confirmed by: {by}: \"{reason}\"",
         f"- Where: {some(calls)} of the session's sheet (`transcripts sheet`)",
         f"- Drafted by: {got.get('served_model') or MODEL}{cost} ({PROPOSE})", "",
         "## Why this edit", "", why or "The answer gave no reason.", "",
         "## The eval case", "",
-        (f"`{EVALS_DIR}/{case}` shows this failure. The edit is kept only if that case improves with it: run the case "
-         "with and without the proposed file, and keep the edit only when the comparison improves."
+        (f"`{EVALS_DIR}/{case}` is the eval case for this step. Check that it shows this failure, and extend it if it "
+         "does not: the case was chosen by the step, not by what this session did. The edit is kept only if the case "
+         "improves with it: run it with and without the proposed file, and keep the edit only when the comparison improves."
          if case else
          "No eval case shows this failure. Write one first (the incident-to-eval skill): until a case shows the failure, "
          "and improves when run with the edit and not without, the edit is not kept."), "",

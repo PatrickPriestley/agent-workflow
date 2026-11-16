@@ -2529,11 +2529,17 @@ def cmd_propose(args):
         say(f"the label of {sid} is of another version of the transcript: label this one before a proposal is drafted from it")
         return 1
     name, blob = change_skill(entry)
+    if not any(sk.get("name") == name for sk in entry.get("skills") or []):
+        say(f"{sid} did not load the change skill: an edit to the skill would not have reached that session")
+        return 1
+    # The version the session used, by its blob: from the repository, or the folder's own copy when that is the
+    # same blob (materialize keeps one copy a skill, the newest session's). Another version is never taken for it.
     kept = os.path.join(d, "skills", name, "SKILL.md")
-    current = open(kept, "rb").read() if os.path.isfile(kept) else (
-        git_blob(repo_dir, blob) if re.match(r"^[0-9a-f]{40}$", blob or "") else None)
+    current = git_blob(repo_dir, blob) if re.match(r"^[0-9a-f]{40}$", blob or "") else None
+    if current is None and blob and blob_hash(kept) == blob:
+        current = open(kept, "rb").read()
     if current is None:
-        say(f"the skill file the session used ({name}, blob {(blob or 'unknown')[:12]}) is neither in {d}/skills nor in {repo_dir}")
+        say(f"the skill file the session used ({name}, blob {(blob or 'unknown')[:12]}) is neither in {repo_dir} nor in {d}/skills")
         return 1
     current = current.decode("utf-8", "replace")
     out = os.path.join(d, "proposals", sid, step)
@@ -2550,7 +2556,7 @@ def cmd_propose(args):
     write_atomic(os.path.join(out, "SKILL.md"), proposed.encode())
     write_atomic(os.path.join(out, "SKILL.diff"), propose.diff(current, proposed, name).encode())
     write_atomic(os.path.join(out, "proposal.md"), redact_text(
-        propose.note(sid, step, name, label["by"], reason, why, calls, got)).encode())
+        propose.note(sid, step, name, blob, label["by"], reason, why, calls, got)).encode())
     write_atomic(os.path.join(out, "proposal.json"), (json.dumps({
         "session_id": sid, "step": step, "skill": name, "skill_blob": blob, "labelled_by": label["by"], "calls": calls,
         "eval": propose.EVALS.get(step), "proposer": propose.PROPOSE, "served_model": got["served_model"],

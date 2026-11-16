@@ -687,9 +687,14 @@ file as the session used it, the step and its rule, the labeller's reason and th
 calls. It writes to `DIR/proposals/<session>/<step>/`:
 
 - `SKILL.md`, the proposed file, and `SKILL.diff`, its difference from the file the session used;
-- `proposal.md`, which cites the session, the step, the label and the calls that show the
-  failure, and names the eval case that shows it (`evals/red-first` for `red-first`,
-  `evals/record-before-code` for `record-before-code`) or says that none does.
+- `proposal.md`, which cites the session, the skill file's blob, the step, the label and the
+  calls that show the failure, and names the eval case for the step (`evals/red-first` for
+  `red-first`, `evals/record-before-code` for `record-before-code`) or says that there is none.
+  The case is chosen by the step, so whether it shows this session's failure is for you to check.
+
+The skill file is the version the session used, found by its blob in the repository (or the
+folder's own copy when that is the same blob), never a later one. A session that did not load
+the skill gets no proposal: an edit would not have reached it.
 
 It never writes to the skill. An edit enters the skill as a change of its own, with its record,
 and is kept only if the eval case improves when run with the edit and not without; for a step
