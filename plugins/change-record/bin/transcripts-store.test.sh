@@ -913,8 +913,11 @@ assert_eq "chunks messages chunks messages chunks sessions" "$(python3 -c 'impor
 out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"; has "$out" "3 chunks, 4 rows, each as its chunk gives it"
 it "it still sends with the hooks' key and only inserts"
 assert_eq "POST" "$(python3 -c 'import json,sys; print(" ".join(sorted({json.loads(l)["method"] for l in open(sys.argv[1]) if json.loads(l)["apikey"] != sys.argv[2]})))' "$LOG" "$READKEY")"
-it "a second push sends nothing, and new lines send their chunk and its rows"
-before="$(grep -c '"method": "POST"' "$LOG")"; pushx > /dev/null; assert_eq "$before" "$(grep -c '"method": "POST"' "$LOG")"
+it "a second push sends nothing and leaves the session's state file as it was, with no word of rows owed in it"
+before="$(grep -c '"method": "POST"' "$LOG")"; ino="$(ls -i "$ARX/sessions/$SID.json" | cut -d' ' -f1)"
+pushx > /dev/null; assert_eq "$before" "$(grep -c '"method": "POST"' "$LOG")"
+assert_eq "$ino" "$(ls -i "$ARX/sessions/$SID.json" | cut -d' ' -f1)"; lacks "$(cat "$ARX/sessions/$SID.json")" '"owed"'
+it "new lines send their chunk and its rows"
 part2 >> "$TR"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1)
 out="$(pushx)"; assert_eq "6" "$(stored | wc -l | tr -d ' ')"; out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
 it "the requests the command sends for a chunk are, body for body, the ones push sent for it"
@@ -996,10 +999,50 @@ python3 - "$ARX/sessions/$SID.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["sent"]["streams"]["main"]["archive_generation"] = 99
+[o for o in d["sent"]["owed"] if o["stream"] == "main"][0]["part"] = 9  # as a longer stream owed before it was rewritten
 open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")
 PY
 out="$(pushx)"; rc=$?
 assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "0" "$(owed)"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
+it "what is owed names its place: a part that is gone, a chunk or a request past the end, each is struck off with its reason and stops nothing"
+# owing NAME KEY VALUE: a store that refused every row, mended, and the main stream's owed request made to name KEY as VALUE
+owing() { mk "$1" --refuse messages; pushx > /dev/null; option --refuse
+  python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+[o for o in d["sent"]["owed"] if o["stream"] == "main"][0][sys.argv[2]] = int(sys.argv[3])
+open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")' "$ARX/sessions/$SID.json" "$2" "$3"; }
+for place in part chunk request; do
+  owing "p11-$place" "$place" 9; out="$(pushx)"; rc=$?
+  assert_eq "0 0 1" "$rc $(owed) $(stored | wc -l | tr -d ' ')"; has "$out" "its rows are left to transcripts messages"
+done
+it "a request owed for a stream the archive no longer has is dropped, and the session is sent"
+mk p12 --refuse messages; pushx > /dev/null; option --refuse
+python3 - "$ARX/sessions/$SID.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["sent"]["owed"].append(dict(d["sent"]["owed"][0], stream="subagents/gone"))
+open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")
+PY
+out="$(pushx)"; rc=$?; assert_eq "0 0 4" "$rc $(owed) $(stored | wc -l | tr -d ' ')"
+it "requests owed across two parts and two chunks of a part are each cut again from their own place"
+standin p13 --refuse messages; SKIP=0; ARX="$TMPROOT/ar-p13"; SIDT=80000000-2222-3333-4444-555555555555
+long() { for i in $(seq "$1" "$2"); do line "2026-11-05T10:$(printf %02d "$i"):00.000Z" user "\"$(printf 'row %02d ' "$i")$(head -c 50000 /dev/zero | tr '\0' x)\""; done | sed "s/$SID/$SIDT/"; }
+long 1 45 > "$PROJ/$SIDT.jsonl"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDT.jsonl" < /dev/null > /dev/null 2>&1)
+long 46 50 >> "$PROJ/$SIDT.jsonl"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDT.jsonl" < /dev/null > /dev/null 2>&1)
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"; has "$out" "5 requests of rows are owed"
+assert_eq "1.0.0 1.0.1 1.0.2 1.1.0 2.0.0" "$(python3 -c 'import json,sys; print(" ".join("%d.%d.%d" % (o["part"], o["chunk"], o["request"]) for o in json.load(open(sys.argv[1]))["sent"]["owed"]))' "$ARX/sessions/$SIDT.json")"
+option --refuse; out="$(pushx)"; rc=$?
+assert_eq "0 0 50" "$rc $(owed "$SIDT") $(stored | wc -l | tr -d ' ')"; lacks "$out" "left to transcripts messages"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
+it "the push's time limit ends it in the middle of a request of rows as anywhere else, and the part it was in is sent again, rows and all"
+mk p14 --hang 3 --hang-table messages
+out="$(AGENT_TRANSCRIPTS_PUSH_LIMIT=1 pushx --background)"; rc=$?
+assert_eq 0 "$rc"; has "$out" "push stopped: the push reached its time limit"; assert_eq "1 0" "$(sentn chunks) $(sentn sessions)"
+option --hang; out="$(pushx)"; rc=$?
+assert_eq "0 0 4" "$rc $(owed) $(stored | wc -l | tr -d ' ')"; assert_eq "4 1" "$(sentn chunks) $(sentn sessions)"
+out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
 it "the background push says what is owed in its log too, and still exits 0"
 mk p10 --refuse messages
 out="$(pushx --background)"; rc=$?

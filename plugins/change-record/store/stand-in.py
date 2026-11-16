@@ -3,7 +3,7 @@
 
   stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE [--refuse-status N]]
               [--refuse-after N] [--refuse-session ID] [--loose TABLE] [--without TABLE]
-              [--refuse-line N]
+              [--refuse-line N] [--hang-table TABLE]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -33,7 +33,8 @@ anything asked of that table, as a project where schema.sql has not been run sin
 added. POST /__admin/after-read with {"rows": [...]} puts those rows into `messages` just after
 the next reading of their chunk's rows, as another hand writing between a sender's reading and
 its insert would. POST /__admin/option with {"name": "--without" | "--refuse" | "--refuse-line",
-"value": ...} sets that option while it runs (null turns it off), as a store that is mended would.
+"value": ...} sets that option while it runs (null turns it off; "--hang" too), as a store that is
+mended would. --hang-table TABLE makes --hang wait only on requests for that table.
 It writes its port to PORTFILE once it listens.
 """
 import json
@@ -47,6 +48,7 @@ from urllib.parse import parse_qsl, urlsplit
 PORTFILE, LOGFILE, READKEY = sys.argv[1:4]
 OPTS = dict(zip(sys.argv[4::2], sys.argv[5::2]))
 HANG = float(OPTS.get("--hang", 0))
+HANG_TABLE = OPTS.get("--hang-table")  # with --hang: only requests for this table wait
 REFUSE = OPTS.get("--refuse")
 REFUSE_AFTER = int(OPTS["--refuse-after"]) if "--refuse-after" in OPTS else None
 REFUSE_SESSION = OPTS.get("--refuse-session")
@@ -94,9 +96,10 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_any(self):
-        if HANG:
-            time.sleep(HANG)
+        global WITHOUT, REFUSE, REFUSE_LINE, HANG  # POST /__admin/option sets them while the stand-in runs
         u = urlsplit(self.path)
+        if HANG and (HANG_TABLE is None or u.path == "/rest/v1/" + HANG_TABLE):
+            time.sleep(HANG)
         n = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(n) if n else b""
         key, prefer = self.headers.get("apikey"), self.headers.get("Prefer") or ""
@@ -118,9 +121,10 @@ class H(BaseHTTPRequestHandler):
                                             if any(r.get(k) != v for k, v in want["match"].items())]
             return self.answer(204)
         if u.path == "/__admin/option":
-            global WITHOUT, REFUSE, REFUSE_LINE
             want = json.loads(raw)
-            if want["name"] == "--without":
+            if want["name"] == "--hang":
+                HANG = float(want["value"] or 0)
+            elif want["name"] == "--without":
                 WITHOUT = want["value"]
             elif want["name"] == "--refuse":
                 REFUSE = want["value"]
