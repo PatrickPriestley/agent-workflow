@@ -681,17 +681,90 @@ first for each:
 - Caught first by "without the read key the probe says the read-back was not made, and
   exits 1": probe: without the read key it exits 0.
 
-Run on the copy of the real rows (mock only, as in Probed facts): the final `schema.sql`
-runs with no error; the view returns 5,959 rows for the 17 sessions, the same rows in the
-same order as the plan's probe; `anon` is refused the view and `service_role` reads it.
+The commands themselves, on the final code. The file in PostgreSQL 16.15, on the copy of
+the real rows (mock only, as in Probed facts), as the database's owner and then as each
+role:
+
+```
+$ psql -d store -v ON_ERROR_STOP=1 -q -f plugins/change-record/store/schema.sql
+NOTICE:  relation "messages" already exists, skipping      (and one for each older table)
+schema.sql: exit 0
+$ psql -d store -c "select count(*) as rows, count(distinct session_id) as sessions,
+    count(distinct (session_id, stream)) as streams from transcript"
+ rows | sessions | streams
+ 5959 |       17 |      37
+$ psql -d store -c "set role anon; select count(*) from transcript"
+ERROR:  permission denied for view transcript
+$ psql -d store -c "set role service_role; select who, kind, count(*) from transcript group by 1, 2 order by 1, 2"
+ assistant | call   |  2448
+ assistant | text   |   666
+ context   | text   |    57
+ tool      | result |  2443
+ user      | text   |   345
+$ psql -d store -Atc "select session_id, stream, n, who, kind, md5(text) from transcript
+    order by session_id, stream, n" | cmp - view-final.txt && echo same
+same
+```
+
+`view-final.txt` is the plan's probe: the same 5,959 rows in the same order. The probe
+against the stand-in (mock only), its new checks and its end, and then the error path,
+against a store that is not what the plan needs (`stand-in.py --loose messages`), with
+both keys and with the hooks' key alone:
+
+```
+$ AGENT_TRANSCRIPTS_URL=http://127.0.0.1:<port> plugins/change-record/store/probe
+ok   two rows in one request: stored: HTTP 201
+ok   the same request again: refused as a duplicate: HTTP 409
+ok   one new row and one stored row: refused as a duplicate: HTTP 409
+ok   select messages: refused: HTTP 401
+ok   update a message: refused: HTTP 401
+ok   delete a message: refused: HTTP 401
+ok   select the transcript view: refused: HTTP 401
+ok   one row in a request of at least 3,100,000 bytes: stored: HTTP 201
+ok   a text holding U+0000: refused: HTTP 400
+ok   a text holding a lone surrogate: refused: HTTP 400
+ok   read key: the probe chunk still holds its first bytes: HTTP 200
+ok   read key: the new row of the refused request is not there: HTTP 200
+probe session probe-<id>: 26 passed, 0 failed
+exit 0
+$ plugins/change-record/store/probe                        (the loose store, both keys)
+FAIL a text holding U+0000: refused: HTTP 201
+FAIL a text holding a lone surrogate: refused: HTTP 201
+FAIL read key: the new row of the refused request is not there: HTTP 200 but [{"line": 3}]
+probe session probe-<id>: 23 passed, 3 failed
+exit 1
+$ plugins/change-record/store/probe                        (the loose store, no read key)
+FAIL a text holding U+0000: refused: HTTP 201
+FAIL a text holding a lone surrogate: refused: HTTP 201
+note: no read key here, so the probe chunk was not read back
+the check that a request of several rows stores all or none was not made: no read key here
+probe session probe-<id>: 22 passed, 2 failed
+exit 1
+```
 
 Not done, and it is this task's real use: the gate of R3. The owner runs `schema.sql` in
 the project's SQL editor, opens `transcript` in the table editor, and runs `store/probe`
 where both keys are; the probe's output goes here, and tasks 2 and 3 are not merged
-before it passes. Nothing here has been sent to the real store: from the cloud session
-every request carries the read key, so the probe's checks of what the hooks' key may not
-do cannot be made from it. Not verified: the suite on a Mac, where it runs only if a
-PostgreSQL is installed; and the CI step, which this pull request's own run shows.
+before it passes. Nothing here has been sent to the real store, and until the probe has
+passed there this task is a prototype: what the real store answers to a request of
+several rows, to one of 3,100,000 bytes, and to the hooks' key on the new table and view
+is known from a PostgreSQL and a stand-in only. It cannot be run from the cloud session:
+the table is not in the project until the owner has run the file, and every request from
+the session carries the read key, so the checks of what the hooks' key may not do cannot
+be made from it. The CI step is verified by this pull request's own run: on the Linux
+runner the suite ran with `SCHEMA_TEST_REQUIRED=1` in PostgreSQL 18.6, 51 passed, none
+failed; so the file is run in two versions, 16.15 here and 18.6 there. Not verified: the
+suite on a Mac, where it runs only if a PostgreSQL is installed.
+
+The review of this task's pull request, by another model family (pr-agent, 2026-11-16,
+on the first push): three findings. No line naming the reviewer, since the review is the
+pull request's own job: added with what it found. No commands with their output, only
+counts: right of the record, which had none, and they are above. And the one it calls
+blocking: the requests to the real store are not verified against it, and the probe
+should pass there before this is merged, not after. The fact is as it says, and it is
+what R3 says; the order is the owner's to rule, since only the owner can run either
+step. The file can be run from this branch as well as from main, and it is the better
+order: a probe that fails is then mended here, before anything is merged.
 
 Changed after approval, each from a review and each run in the probe's PostgreSQL: an
 index row that cannot be read ranks last and has no stream (the review of the approval
