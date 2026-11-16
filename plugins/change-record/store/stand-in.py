@@ -3,6 +3,7 @@
 
   stand-in.py PORTFILE LOGFILE READKEY [--hang SECONDS] [--refuse TABLE [--refuse-status N]]
               [--refuse-after N] [--refuse-session ID] [--loose TABLE] [--without TABLE]
+              [--refuse-line N]
 
 It answers as the real project answered `store/probe` (record docs/changes/2026-11-09-skill-
 transcripts.md, Probed facts): with any key but READKEY (or none, as through the cloud proxy)
@@ -25,7 +26,9 @@ or, if one is a duplicate, not at all; a text holding U+0000 or a lone surrogate
 hooks' key reads neither. The view is the table's rows here: this stand-in runs no SQL, and
 the view's own rules are tested in store/schema.test.sh. --loose TABLE makes that table keep the
 new rows of a request it answers 409 to, and take a text PostgreSQL would refuse, as a store that
-is not what the plan needs would: the probe must fail against it. --without TABLE answers 404 to
+is not what the plan needs would: the probe must fail against it. --refuse-line N answers 503 to an insert
+into `messages` that holds a row of line N, as a store that fails part way through a chunk's
+rows would. --without TABLE answers 404 to
 anything asked of that table, as a project where schema.sql has not been run since the table was
 added. POST /__admin/after-read with {"rows": [...]} puts those rows into `messages` just after
 the next reading of their chunk's rows, as another hand writing between a sender's reading and
@@ -49,6 +52,7 @@ REFUSE_SESSION = OPTS.get("--refuse-session")
 REFUSE_STATUS = int(OPTS.get("--refuse-status", 503))
 LOOSE = OPTS.get("--loose")
 WITHOUT = OPTS.get("--without")
+REFUSE_LINE = int(OPTS["--refuse-line"]) if "--refuse-line" in OPTS else None
 AFTER_READ = []  # rows of messages to put in after its next reading
 ACCEPTED = {"chunks": 0}
 KEYS = {"chunks": ("session_id", "stream", "chunk_id"), "sessions": ("session_id", "row_id"),
@@ -145,6 +149,8 @@ class H(BaseHTTPRequestHandler):
             rows = rows if isinstance(rows, list) else [rows]
             if REFUSE_SESSION and any(r.get("session_id") == REFUSE_SESSION for r in rows):
                 return self.answer(400, {"code": "23514", "message": "new row violates a check constraint (the stand-in refuses this session)"})
+            if table == "messages" and REFUSE_LINE is not None and any(r.get("line") == REFUSE_LINE for r in rows):
+                return self.answer(503, {"message": f"the stand-in refuses a row of line {REFUSE_LINE}"})
             refusal = next((unstorable(r) for r in rows if unstorable(r)), None)
             if table == "messages" and table != LOOSE and refusal:
                 return self.answer(400, refusal)

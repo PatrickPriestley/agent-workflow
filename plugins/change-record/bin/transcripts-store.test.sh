@@ -746,6 +746,12 @@ filled m5 --refuse messages
 out="$(messages)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "chunk $(chunk_of main 1 | cut -c1-12) could not be filled: messages insert answered 503"
 has "$out" "3 chunks could not be filled"; has "$out" "inserted 0 rows"
+it "rows that went in one at a time before the store refused the next are counted: the summary says what is there"
+filled m12 --refuse-line 3; c1="$(chunk_of main 1)"
+plant "$c1" 1 "there already" > /dev/null
+out="$(messages)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "chunk ${c1:0:12} could not be filled: messages insert answered 503"
+has "$out" "inserted 4 rows"; has "$out" "1 chunk could not be filled"; assert_eq "5" "$(stored | wc -l | tr -d ' ')"
 it "with --session only that session's chunks are read"
 filled m6
 SIDM=60000000-2222-3333-4444-555555555555
