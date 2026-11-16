@@ -62,16 +62,18 @@ DENIED = {"code": "42501", "details": None, "hint": None, "message": "permission
 
 
 def unstorable(row):
-    """Whether a row holds a text PostgreSQL will not take: U+0000, or half of a surrogate pair."""
+    """What the real store answers a row it will not take, or None: a text holding U+0000 is PostgreSQL's 22P05,
+    and half of a surrogate pair makes the whole body no JSON to the interface (PGRST102), as the real project
+    answered store/probe on 2026-11-16."""
     for v in row.values() if isinstance(row, dict) else []:
         if isinstance(v, str):
             try:
                 v.encode("utf-8")
             except UnicodeEncodeError:
-                return True
+                return {"code": "PGRST102", "message": "Empty or invalid json"}
             if "\x00" in v:
-                return True
-    return False
+                return {"code": "22P05", "details": "\\u0000 cannot be converted to text.", "message": "unsupported Unicode escape sequence"}
+    return None
 
 
 class H(BaseHTTPRequestHandler):
@@ -143,8 +145,9 @@ class H(BaseHTTPRequestHandler):
             rows = rows if isinstance(rows, list) else [rows]
             if REFUSE_SESSION and any(r.get("session_id") == REFUSE_SESSION for r in rows):
                 return self.answer(400, {"code": "23514", "message": "new row violates a check constraint (the stand-in refuses this session)"})
-            if table == "messages" and table != LOOSE and any(unstorable(r) for r in rows):
-                return self.answer(400, {"code": "22P05", "message": "unsupported Unicode escape sequence"})
+            refusal = next((unstorable(r) for r in rows if unstorable(r)), None)
+            if table == "messages" and table != LOOSE and refusal:
+                return self.answer(400, refusal)
             with LOCK:
                 have = {tuple(r.get(c) for c in KEYS.get(table, ())) for r in TABLES[table]}
                 dup = [r for r in rows if table in KEYS and tuple(r.get(c) for c in KEYS[table]) in have]

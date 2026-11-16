@@ -1388,18 +1388,21 @@ def cmd_messages(args):
     except StoreError as e:
         say(str(e))
         return 2
-    sessions, chunks, inserted, none, left_out, unfilled, compared = set(), 0, 0, 0, 0, 0, 0
+    sessions, chunks, inserted, none, left_out, unfilled, compared, probes = set(), 0, 0, 0, 0, 0, 0, 0
     found = {"missing": 0, "not the chunk's": 0, "differs": 0}
     try:
         if request(url, key, "GET", "/rest/v1/messages?select=line&limit=1")[0] == 404:
             say("the store has no table `messages` yet: run plugins/change-record/store/schema.sql in the project's SQL editor, "
                 "then this again")
             return 1
-        q = "/rest/v1/chunks?select=session_id,stream,chunk_id&order=session_id,stream,chunk_id"
+        q = "/rest/v1/chunks?select=session_id,stream,chunk_id,sender,start_id&order=session_id,stream,chunk_id"
         if only:
             q += "&session_id=in.(" + ",".join(quote(x, safe="") for x in only) + ")"
         for c in read_rows(url, key, q):
             sid, stream, cid = c["session_id"], c["stream"], c["chunk_id"]
+            if sid.startswith("probe-") and c.get("sender") == "probe" and c.get("start_id") == "0" * 64:
+                probes += 1  # what store/probe leaves behind: no transcript's chunk, and no chain the view shows can hold it
+                continue
             where = f"session_id=eq.{quote(sid, safe='')}&stream=eq.{quote(stream, safe='')}&chunk_id=eq.{quote(cid, safe='')}"
             sessions.add(sid)
             chunks += 1
@@ -1446,7 +1449,8 @@ def cmd_messages(args):
     except StoreError as e:
         say(str(e))
         return 1
-    tail = (f", {so_many(left_out, 'chunk')} left out" if left_out else "")
+    tail = ((f", {so_many(left_out, 'chunk')} left out" if left_out else "")
+            + (f", {so_many(probes, 'chunk')} of store/probe's passed over" if probes else ""))
     if check:
         m, x, d = found["missing"], found["not the chunk's"], found["differs"]
         bad = [s for n, s in ((m, f"{so_many(m, 'row')} missing"),
@@ -1456,8 +1460,8 @@ def cmd_messages(args):
               + (f"; {', '.join(bad)}" if bad else f", {so_many(compared, 'row')}, each as its chunk gives it") + tail)
         return 1 if bad or left_out else 0
     print(f"transcripts: messages: read {so_many(chunks, 'chunk')} of {so_many(len(sessions), 'session')}, inserted "
-          f"{so_many(inserted, 'row')}, {so_many(none, 'chunk')} needed none" + tail
-          + (f", {so_many(unfilled, 'chunk')} could not be filled" if unfilled else ""))
+          f"{so_many(inserted, 'row')}, {so_many(none, 'chunk')} needed none"
+          + (f", {so_many(unfilled, 'chunk')} could not be filled" if unfilled else "") + tail)
     return 1 if left_out or unfilled else 0
 
 # ---- grading ----

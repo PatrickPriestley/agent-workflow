@@ -576,6 +576,9 @@ assert_eq "201 409 409" "$(post "[$(row 1 a),$(row 2 b)]") $(post "[$(row 1 a),$
 assert_eq "[1, 2]" "$(get 'messages?session_id=eq.standin-m&select=line&order=line' | python3 -c 'import json,sys; print([r["line"] for r in json.load(sys.stdin)])')"
 it "and it refuses a text PostgreSQL cannot hold, and any reading with the hooks' key, of the table or of the view"
 assert_eq "400 400 401 401" "$(post "$(row 4 'a\u0000b')") $(post "$(row 5 'a\ud800b')") $(curl -s -o /dev/null -w '%{http_code}' -H 'apikey: insert-key-made-up' "$URL/rest/v1/messages?select=line") $(curl -s -o /dev/null -w '%{http_code}' -H 'apikey: insert-key-made-up' "$URL/rest/v1/transcript?select=n")"
+it "each with the code the real store gave the probe: 22P05 for U+0000, PGRST102 for half of a pair"
+code() { curl -s -X POST -H 'Content-Type: application/json' -H 'apikey: insert-key-made-up' --data-binary "$1" "$URL/rest/v1/messages" | python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])'; }
+assert_eq "22P05 PGRST102" "$(code "$(row 6 'a\u0000b')") $(code "$(row 7 'a\ud800b')")"
 assert_eq "2" "$(get 'transcript?session_id=eq.standin-m&select=line' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 
 echo "readable-store R4: the rows of a chunk are read from its redacted lines by one rule (record 2026-11-15-readable-store)"
