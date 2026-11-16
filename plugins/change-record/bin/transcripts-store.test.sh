@@ -651,6 +651,8 @@ assert_eq "True True False False True False" "$(tool '
 print(tr.same_field("at", "2026-11-15T10:00:00.250Z", "2026-11-15T11:00:00.25+01:00"), tr.same_field("at", "2026-11-15T10:00:00.123456789Z", "2026-11-15T10:00:00.123457+00:00"),
       tr.same_field("at", "2026-11-15T10:00:00Z", "2026-11-15T10:00:00+01:00"), tr.same_field("at", None, "2026-11-15T10:00:00Z"), tr.same_field("at", None, None),
       tr.same_field("at", "2026-11-15T10:00:00.250Z", "2026-11-15T10:00:00.750Z"))')"
+it "R6: a microsecond apart is still one moment, since the table rounds a longer fraction its own way, and two apart is not"
+assert_eq "True False" "$(tool 'print(tr.same_field("at", "2026-11-15T10:00:00.123456Z", "2026-11-15T10:00:00.123457Z"), tr.same_field("at", "2026-11-15T10:00:00.123456Z", "2026-11-15T10:00:00.123458Z"))')"
 it "R4: a line nested deeper than the reader goes gives no row and stops nothing: the next line's row is there"
 assert_eq "2 the line after" "$(tool '
 deep = b"[" * 200000 + b"]" * 200000
@@ -734,6 +736,7 @@ filled m4; c1="$(chunk_of main 1)"
 python3 -c 'import json,sys,urllib.request; urllib.request.urlopen(urllib.request.Request(sys.argv[1]+"/__admin/tamper", data=json.dumps({"chunk_id":sys.argv[2]}).encode(), method="POST"))' "$URL" "$c1"
 out="$(messages)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "chunk ${c1:0:12} does not match its chain id"; has "$out" "1 chunk left out"; has "$out" "inserted 3 rows"
+has "$out" ", 1 chunk needed none"
 assert_eq "3" "$(stored | wc -l | tr -d ' ')"
 it "a chunk the store will not take rows for is named with the store's answer, and the exit status is 1"
 filled m5 --refuse messages
@@ -826,6 +829,7 @@ it "a chunk whose bytes do not match its id is named by the check too, and the e
 python3 -c 'import json,sys,urllib.request; urllib.request.urlopen(urllib.request.Request(sys.argv[1]+"/__admin/tamper", data=json.dumps({"chunk_id":sys.argv[2]}).encode(), method="POST"))' "$URL" "$c2"
 out="$(messages --check)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "chunk ${c2:0:12} does not match its chain id"; has "$out" "1 chunk left out"
+lacks "$out" "not the chunk's"; has "$out" "messages --check: 4 chunks, 4 rows, each as its chunk gives it, 1 chunk left out"
 it "without the read key the check refuses too"
 mv "$XDG_CONFIG_HOME/agent-transcripts/read-key" "$TMPROOT/rk"
 out="$(messages --check)"; rc=$?
