@@ -702,7 +702,7 @@ Built test first: the tests of `propose` in `bin/transcripts-judge.test.sh`, 44 
 failing with no such command; then `grade/propose.py`, `cmd_propose` in `bin/transcripts` and
 the report's section. One of the first tests passed before the code and holds what must
 not change: the skill file and its repository are as they were. Suites after:
-transcripts-judge 516, transcripts-store 440, transcripts 364, transcripts-grade 212, store
+transcripts-judge 517, transcripts-store 440, transcripts 364, transcripts-grade 212, store
 schema 58, none failing.
 
 What was built, where R6 and R7 left a choice:
@@ -780,11 +780,16 @@ on the first push): two findings. No line naming the reviewer: added with what i
 And that the real run was made before the three fixes and not again, so the evidence was
 not of the final program: right, and the run above is the one made again.
 
-Guards, each broken by hand in a clone of the repository: 40 breaks, 36 caught at the first
+Its second pass found a guard with no test, rightly: the model call's own failures (output
+that is no object, no output, a run that does not end, no `claude` to run) were copied from
+the other measure's call and never broken here. One test now covers the five guards, and
+each was broken by hand and caught.
+
+Guards, each broken by hand in a clone of the repository: 45 breaks, 41 caught at the first
 run. The four that survived were gaps in the tests, each closed and broken again: a run
 with no session named, an unknown argument, a folder whose index entry is gone, and the
 report's section on a graded folder. One check no input can reach was taken out: refusing a
-label with no name, since such a label is not loaded at all. The 39 guards that stand, by
+label with no name, since such a label is not loaded at all. The 44 guards that stand, by
 the assertion that failed first for each:
 
 - Caught first by "an answer with no skill file in it, one that changes nothing, a refusal: each
@@ -793,6 +798,11 @@ the assertion that failed first for each:
   a proposal; propose: a refusal is taken for an error; propose: an answer with no skill block
   is read; propose: an answer served by another model is taken; propose: an empty skill block is
   a proposal.
+- Caught first by "the call itself: output that is no object, no output at all, a run that does
+  not end, and no claude to run each give an error with its reason, never a traceback": ask:
+  output that is no object is read as one; ask: no output at all is not caught; ask: output that
+  is not JSON is not caught; ask: a run that does not end is not caught; ask: no claude to run
+  is not caught.
 - Caught first by "usage: a session and a step are both needed, the step is one of the seven,
   and the folder is outside every working tree": propose: with no step named it goes on;
   propose: a folder inside a working tree is written to; propose: with no session named it goes
