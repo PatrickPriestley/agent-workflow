@@ -946,6 +946,13 @@ assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "0" "$(owed)"; assert_eq "4" "
 assert_eq "3 1" "$(sentn chunks) $(sentn sessions)"
 out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
 before="$(grep -c '"method": "POST"' "$LOG")"; pushx > /dev/null; assert_eq "$before" "$(grep -c '"method": "POST"' "$LOG")"
+it "no more rows after a 404 holds for the whole run, not for one session: with two sessions to send, one request of rows is tried and the rest are owed"
+mk p3b --without messages
+(cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$PROJ/$SIDM.jsonl" < /dev/null > /dev/null 2>&1)
+out="$(pushx)"; rc=$?
+assert_eq 0 "$rc"; assert_eq "4 2" "$(sentn chunks) $(sentn sessions)"; assert_eq "1" "$(posts | wc -l | tr -d ' ')"
+has "$out" "3 requests of rows are owed"; assert_eq "1 2" "$(owed "$SIDM") $(owed)"
+option --without; out="$(pushx)"; lacks "$out" "owed"; assert_eq "0 0 5" "$(owed "$SIDM") $(owed) $(stored | wc -l | tr -d ' ')"
 it "every request of rows refused (503): nothing is held back, each is tried, each is owed, and the next push tries them again"
 mk p4 --refuse messages
 out="$(pushx)"; rc=$?
