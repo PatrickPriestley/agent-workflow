@@ -1546,6 +1546,16 @@ out="$(propose --session $P1)"; assert_eq 2 "$?"; has "$out" "usage: transcripts
 out="$(propose --session $P1 --step tidy-code)"; assert_eq 2 "$?"; has "$out" "tier-declared"
 out="$(cd "$PREPO" && "$T" propose "$PREPO/inside" --session $P1 --step red-first 2>&1)"; assert_eq 2 "$?"; has "$out" "inside the working tree"
 out="$(propose --session 99999999-2222-3333-4444-555555555555 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"
+it "the rule a proposal states for each of the seven steps is in the README's row for that step"
+assert_eq "7 steps, each rule in its row" "$(py - "$here/../README.md" <<'PY'
+import re, sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0] + "/grade")
+import fields, propose
+rows = dict(re.findall(r"^\| `([a-z-]+)` \| (.*) \|$", open(sys.argv[1]).read(), re.M))
+missing = [s for s in fields.STEPS if propose.RULES.get(s, "no rule") not in rows.get(s, "")]
+print(f"{len(fields.STEPS)} steps, " + ("each rule in its row" if not missing else f"not in the README: {missing}"))
+PY
+)"
 it "the report lists the proposals a folder holds, each with its step and its eval case, and has no such section when there are none"
 rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
 has "$rep" "## Proposed edits"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"; has "$rep" "| $P2 | probe-before-record | none |"

@@ -366,7 +366,7 @@ def coverage_section(used):
     return out
 
 
-def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of=None, answers=None):
+def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of=None, answers=None, proposals=None):
     """The report as Markdown, or None when there is neither a score row nor a session.
 
     answers: the kept answers of the two measures, as claims.py takes them.
@@ -448,10 +448,20 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
         return (counts_section(groups, taken, len(everyone), label, len(unreadable)) + coverage_section(used)
                 + claims.sections(answers or {}, checked["labels"], groups, label, red))
 
+    def proposed():
+        """The edits `transcripts propose` drafted, as (session, step, eval case or None); nothing when there are none."""
+        if not proposals:
+            return []
+        return (["", "## Proposed edits", "",
+                 "Each was drafted from a failure a person's label confirms, and is a file beside the transcripts "
+                 "(`proposals/<session>/<step>/`), not a change to the skill. One is kept only if its eval case improves "
+                 "with it.", "", "| Session | Step | Eval case |", "|---|---|---|"]
+                + [f"| {sid} | {step} | {'plugins/change-record/evals/' + case if case else 'none'} |" for sid, step, case in proposals])
+
     if not rows:
         return red("\n".join(["# Change skill report", "",
                               "No score rows here: run `transcripts grade` for the steps. The counts and the coverage below "
-                              "need only the transcripts and the index entries."] + taken_and_used()) + "\n")
+                              "need only the transcripts and the index entries."] + taken_and_used() + proposed()) + "\n")
 
     out = ["# Change skill report", "",
            f"Score rows from {len({r['session_id'] for r in rows})} sessions, grouped by skill version (the git blob of "
@@ -531,6 +541,7 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
                                false_fails.get((r["grader"], r["session_id"], r["step"])), votes_of(r), read, red)
     if not any_failed:
         out += ["", "No step's latest row is a fail."]
+    out += proposed()
     # Each text above is redacted where it is taken, before any cut. This is the net under them: a text
     # that reached the page some other way (a step's or a grader's name, a field added later) is redacted here.
     return red("\n".join(out) + "\n")

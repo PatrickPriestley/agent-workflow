@@ -18,6 +18,7 @@
   transcripts probe --agent codex|cursor [--out DIR]
   transcripts judge --repeats [DIR] (--session ID... | --limit N) [--again]
   transcripts judge --repeats --transcript FILE... --out DIR [--again]
+  transcripts propose [DIR] --session ID --step STEP [--labels DIR] [--repo-dir DIR]
   transcripts judge --review [DIR] (--session ID... | --limit N) [--repo-dir REPO] [--model sonnet|opus] [--again] [--local]
 
 archive is the Stop and SessionEnd hook: it reads the hook's JSON on stdin (session_id,
@@ -132,6 +133,12 @@ the table does not have. A chunk whose bytes do not match its id is named and le
 store/probe leaves behind is passed over.
 messages --check changes nothing: it prints each row that is missing, that is there and is not its
 chunk's, that differs, or whose chunk the store does not hold, and exits 1 if there is one.
+
+propose drafts an edit to the skill a session used, from one failure that a person's label confirms
+(grade/propose.py): the session's label file must say `fail` for the step, by a named person, of this
+version of the transcript, or nothing is sent and nothing written. One call to Claude Sonnet, with
+what a label sheet shows, redacted. The proposed file, its diff and a page naming the eval case that
+must show the edit helps go to DIR/proposals/<session>/<step>/; the skill itself is never written.
 
 probe is a Codex or Cursor hook command that writes a sample of what the hook passed, holding
 structure and no content, to DIR (default grade/fixtures/agents): see probe/agent_sample.py.
@@ -2466,6 +2473,92 @@ def cmd_judge(args):
     return 1 if problems else 0
 
 
+PROPOSE_USAGE = "usage: transcripts propose [DIR] --session ID --step STEP [--labels DIR] [--repo-dir DIR]"
+
+
+def cmd_propose(args):
+    """propose: a skill edit drafted from one failure a person's label confirms (grade/propose.py)."""
+    d, sid, step, repo_dir, i = None, None, None, os.getcwd(), 0
+    lab = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade", "labels")
+    while i < len(args):
+        a = args[i]
+        if a in ("--session", "--step", "--labels", "--repo-dir") and i + 1 < len(args):
+            if a == "--session":
+                sid = args[i + 1]
+            elif a == "--step":
+                step = args[i + 1]
+            elif a == "--labels":
+                lab = args[i + 1]
+            else:
+                repo_dir = args[i + 1]
+            i += 2
+        elif d is None and not a.startswith("--"):
+            d, i = a, i + 1
+        else:
+            say(PROPOSE_USAGE)
+            return 2
+    if not sid or not step:
+        say(PROPOSE_USAGE)
+        return 2
+    fields, _, _ = load_grade_modules()
+    import labels
+    import propose
+    if step not in fields.STEPS:
+        say(f"no such step {step!r}: one of {', '.join(fields.STEPS)}")
+        return 2
+    try:
+        d = folder_arg(d)
+    except PermissionError as e:
+        say(str(e))
+        return 2
+    entry = read_json(os.path.join(d, "sessions", sid + ".json"))
+    try:
+        if not isinstance(entry, dict):
+            raise LookupError("it has no index entry")
+        lines = session_lines(d, sid, entry)
+    except (OSError, LookupError) as e:
+        say(f"no such session in {d}: {sid} ({e})")
+        return 1
+    label = labels.load(lab)[0].get(sid)
+    verdict, reason = (label["steps"].get(step) or (None, "")) if label else (None, "")
+    if not label or not label["by"] or verdict != labels.FAIL:
+        say(f"no label confirms that {sid} failed {step}: a proposal is drafted only from a failure a person has labelled "
+            f"(transcripts sheet, then the session's file in {os.path.abspath(lab)})")
+        return 1
+    if (label["sha256"], label["lines"]) != labels.transcript_hash(lines):
+        say(f"the label of {sid} is of another version of the transcript: label this one before a proposal is drafted from it")
+        return 1
+    name, blob = change_skill(entry)
+    kept = os.path.join(d, "skills", name, "SKILL.md")
+    current = open(kept, "rb").read() if os.path.isfile(kept) else (
+        git_blob(repo_dir, blob) if re.match(r"^[0-9a-f]{40}$", blob or "") else None)
+    if current is None:
+        say(f"the skill file the session used ({name}, blob {(blob or 'unknown')[:12]}) is neither in {d}/skills nor in {repo_dir}")
+        return 1
+    current = current.decode("utf-8", "replace")
+    out = os.path.join(d, "proposals", sid, step)
+    sheet = labels.sheet(lines, sid, os.path.join(lab, sid + ".txt"), None, redact_text)
+    got = propose.ask(propose.prompt_for(name, current, step, reason, sheet, redact_text))
+    if got["status"] != "answer":
+        say(f"no proposal: Claude {'refused' if got['status'] == 'refused' else 'gave no answer'} ({got['detail']})")
+        return 1
+    try:
+        proposed, why, calls = propose.read_answer(got["answer"], current)
+    except ValueError as e:
+        say(f"no proposal: {e}")
+        return 1
+    write_atomic(os.path.join(out, "SKILL.md"), proposed.encode())
+    write_atomic(os.path.join(out, "SKILL.diff"), propose.diff(current, proposed, name).encode())
+    write_atomic(os.path.join(out, "proposal.md"), redact_text(
+        propose.note(sid, step, name, label["by"], reason, why, calls, got)).encode())
+    write_atomic(os.path.join(out, "proposal.json"), (json.dumps({
+        "session_id": sid, "step": step, "skill": name, "skill_blob": blob, "labelled_by": label["by"], "calls": calls,
+        "eval": propose.EVALS.get(step), "proposer": propose.PROPOSE, "served_model": got["served_model"],
+        "cost_usd": got["cost_usd"]}, indent=2) + "\n").encode())
+    print(f"transcripts: a proposed edit to {name} is in {out}: SKILL.md, SKILL.diff and proposal.md; nothing else was changed")
+    return 0
+
+
 def cmd_report(args):
     d, store, lab, i = None, False, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade", "labels"), 0
     while i < len(args):
@@ -2530,7 +2623,9 @@ def cmd_report(args):
     for fname, why in bad:
         say(f"{os.path.join(lab, fname)}: {why}; the file is rejected")
     checked = {"labels": found, "problems": bad, "files": len(found) + len({n for n, _ in bad}), "here": here}
-    text = report.build(rows, entries, judges, checked, read, redact_text, skills_in, read_answers(d))
+    proposals = sorted((x.get("session_id") or "", x.get("step") or "", x.get("eval")) for x in (
+        read_json(p, {}) for p in glob.glob(os.path.join(d, "proposals", "*", "*", "proposal.json"))) if isinstance(x, dict))
+    text = report.build(rows, entries, judges, checked, read, redact_text, skills_in, read_answers(d), proposals)
     if text is None:
         say(f"no score rows in {d}/scores" + (" or the store" if store else "") + " and no session in "
             f"{d}/sessions; run transcripts grade first")
@@ -2593,6 +2688,8 @@ def main(argv):
         return cmd_accuracy(argv[1:])
     if argv[:1] == ["judge"]:
         return cmd_judge(argv[1:])
+    if argv[:1] == ["propose"]:
+        return cmd_propose(argv[1:])
     if argv[:1] == ["report"]:
         return cmd_report(argv[1:])
     if argv[:1] == ["probe"]:
