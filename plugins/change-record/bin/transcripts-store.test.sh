@@ -914,9 +914,9 @@ out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"; has "$out" "3 chunks, 4 row
 it "it still sends with the hooks' key and only inserts"
 assert_eq "POST" "$(python3 -c 'import json,sys; print(" ".join(sorted({json.loads(l)["method"] for l in open(sys.argv[1]) if json.loads(l)["apikey"] != sys.argv[2]})))' "$LOG" "$READKEY")"
 it "a second push sends nothing and leaves the session's state file as it was, with no word of rows owed in it"
-before="$(grep -c '"method": "POST"' "$LOG")"; ino="$(ls -i "$ARX/sessions/$SID.json" | cut -d' ' -f1)"
+before="$(grep -c '"method": "POST"' "$LOG")"; ino="$(ls -i "$ARX/sessions/$SID.json" | awk '{print $1}')"; [ -n "$ino" ] || bad "no inode read"
 pushx > /dev/null; assert_eq "$before" "$(grep -c '"method": "POST"' "$LOG")"
-assert_eq "$ino" "$(ls -i "$ARX/sessions/$SID.json" | cut -d' ' -f1)"; lacks "$(cat "$ARX/sessions/$SID.json")" '"owed"'
+assert_eq "$ino" "$(ls -i "$ARX/sessions/$SID.json" | awk '{print $1}')"; lacks "$(cat "$ARX/sessions/$SID.json")" '"owed"'
 it "new lines send their chunk and its rows"
 part2 >> "$TR"; (cd "$REPO" && AGENT_TRANSCRIPTS="$ARX" "$T" archive --transcript "$TR" < /dev/null > /dev/null 2>&1)
 out="$(pushx)"; assert_eq "6" "$(stored | wc -l | tr -d ' ')"; out="$(messages --check)"; rc=$?; assert_eq 0 "$rc"
@@ -1004,6 +1004,7 @@ open(sys.argv[1], "w").write(json.dumps(d, indent=2) + "\n")
 PY
 out="$(pushx)"; rc=$?
 assert_eq 0 "$rc"; lacks "$out" "owed"; assert_eq "0" "$(owed)"; assert_eq "4" "$(stored | wc -l | tr -d ' ')"
+lacks "$out" "left to transcripts messages"   # what it owed is dropped unread, not looked for in a part that is gone
 it "what is owed names its place: a part that is gone, a chunk or a request past the end, each is struck off with its reason and stops nothing"
 # owing NAME KEY VALUE: a store that refused every row, mended, and the main stream's owed request made to name KEY as VALUE
 owing() { mk "$1" --refuse messages; pushx > /dev/null; option --refuse

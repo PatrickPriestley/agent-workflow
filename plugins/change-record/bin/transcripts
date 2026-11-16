@@ -963,7 +963,6 @@ def push_session(ar, url, key, sid, sender):
     sent = json.loads(json.dumps(entry.get("sent") or {}))
     sent.setdefault("streams", {})
     owed = [o for o in sent.get("owed") or [] if o.get("stream") in entry["streams"]]
-    saved = json.dumps(sent.get("owed") or [])
     no_table = []  # holds the store's answer once it has said it has no such table: no more rows go to it in this run
 
     def restart(name, st):
@@ -1047,8 +1046,7 @@ def push_session(ar, url, key, sid, sender):
             sent["row_pending"] = True  # the index row must follow, even if the push stops here
             save()  # each whole part, so a stopped push resumes after it
     if sent.get("version") and not sent.get("row_pending"):
-        if json.dumps(owed) != saved:
-            save()
+        save()  # it was called for what it owed: what was struck off is written down
         return chunks, 0, len(owed)
     row_entry = dict(entry, sent={"redaction": REDACTION, "streams": sent["streams"]}, redaction_version=REDACTION)
     row_entry = redact_obj(row_entry)
