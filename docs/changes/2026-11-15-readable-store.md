@@ -1222,9 +1222,54 @@ run" did not hold there. The run now keeps which sessions it has tried. Tested f
 with a push slowed by the stand-in while a second part is archived: five requests of
 rows where three are expected; then fixed, and broken by hand.
 
-Not done, and it is this task's real use: a push of a real session from a machine that
-holds the hooks' key, timed, and `--check` clean on it afterwards. The cloud session
-holds the read key and not the hooks' key, so it is the owner's laptop's to make: its
-first session after this is merged pushes with rows, and the check is then run from the
-cloud session. Not verified against the real store: the 404 path, which the real store
-can no longer show since it has the table; and the push's time with rows over a network.
+The real use, on the real store (verified against the real system, 2026-11-16, with
+this task's code before its merge). The owner checked this branch out on the laptop
+that holds the hooks' key and ran a short session in it. Two hooks fired at its end and
+two pushes raced for the lock; the one that won was an older copy of the tool, most
+likely the plugin as installed on that laptop, and it stored the session's chunk and no
+row, saying nothing of rows owed. Read from the cloud session, which holds the read key:
+
+```
+$ transcripts messages --check --session 5ecf0ffa...
+missing: <session> main chunk 8df8b6b46802 line 9 block 0
+[...]
+transcripts: messages --check: 1 chunk; 4 rows missing
+exit 1
+```
+
+So the owner made this branch's push send the session again, by taking the note of
+what was sent out of that one session's entry in the archive, and ran it by hand:
+
+```
+$ time plugins/change-record/bin/transcripts push --session 5ecf0ffa...
+transcripts: pushed 0 new chunks and 1 index rows for 1 sessions to https://<project>.supabase.co
+0.957 total
+```
+
+That is R7's case of a part sent again: the store had the chunk, and the request of its
+rows went whole. From the cloud session afterwards:
+
+```
+$ transcripts messages --check --session 5ecf0ffa...
+transcripts: messages --check: 1 chunk, 4 rows, each as its chunk gives it
+exit 0
+$ transcripts messages --check
+transcripts: messages --check: 272 chunks, 6203 rows, each as its chunk gives it, 1 chunk of store/probe's passed over
+exit 0
+```
+
+The four rows were written at the time of that push, and the view `transcript` shows
+them as rows 1 to 4 of the session: a user's text, a call, its result, the assistant's
+text. So a push with the hooks' key stores a chunk's rows in the real store, in under a
+second for this one request.
+
+What that use showed besides, and it is the owner's to act on: until the tool as
+installed on a machine is this version, that machine's hook can push a session with no
+rows, and it leaves nothing owed, so no later push sends them. Such a session's rows
+come from `transcripts messages`, run where the read key is. Updating the installed
+plugin after the merge ends it.
+
+Not verified against the real store: a chunk just stored and its rows in one push by
+this code, since the older copy stored the chunk first; the 404 path, which the real
+store can no longer show since it has the table; and the time of a long session's first
+push with rows over a network.
