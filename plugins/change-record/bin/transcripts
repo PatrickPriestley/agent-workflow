@@ -74,7 +74,10 @@ It only inserts: a 409 duplicate means already stored. A stream the archive rewr
 redaction version, starts a new generation from the chain's root. With AGENT_TRANSCRIPTS_URL set,
 the archive hook starts `push --background` detached, which stops after
 AGENT_TRANSCRIPTS_PUSH_LIMIT seconds (default 60) and writes to <archive>/push.log; what it did
-not send goes at the next stop.
+not send goes at the next stop. After each chunk it sends the chunk's rows for the readable table
+(`messages`, below), cut into requests of at most 1,000,000 bytes. Rows never hold back a chunk or
+the index row: a request of rows that is refused, or gets no answer, is kept in the session's sent
+state as owed, the last line says how many are, and the next push sends them again.
 
 materialize rebuilds from the store, with the read key in <config>/agent-transcripts/read-key
 (the owner's machine only), a folder in Claude Code's layout: projects/<repository>/<id>.jsonl
