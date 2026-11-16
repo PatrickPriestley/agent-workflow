@@ -676,6 +676,26 @@ To label, as the owner:
    sheet. Label and measure from the same kind of folder: the local archive is not redacted, so
    its hashes differ from the store's.
 
+**Proposing an edit to the skill** (record `docs/changes/2026-11-12-session-quality.md`, task 3).
+`transcripts propose [DIR] --session ID --step STEP` drafts an edit to the skill a session used,
+from one failure, and only from one a person has confirmed: the session's label file must say
+`fail` for that step, carry a name after `labelled-by:`, and be of this version of the
+transcript. Otherwise it exits 1 with nothing sent and nothing written, since the graders have
+been wrong too often for an edit to be drafted on a grader's word. It makes one call to Claude
+Sonnet, with no tools, holding what a label sheet shows, redacted as for the store: the skill
+file as the session used it, the step and its rule, the labeller's reason and the session's
+calls. It writes to `DIR/proposals/<session>/<step>/`:
+
+- `SKILL.md`, the proposed file, and `SKILL.diff`, its difference from the file the session used;
+- `proposal.md`, which cites the session, the step, the label and the calls that show the
+  failure, and names the eval case that shows it (`evals/red-first` for `red-first`,
+  `evals/record-before-code` for `record-before-code`) or says that none does.
+
+It never writes to the skill. An edit enters the skill as a change of its own, with its record,
+and is kept only if the eval case improves when run with the edit and not without; for a step
+with no eval case, write the case first (the `incident-to-eval` skill). `transcripts report`
+lists the proposals a folder holds.
+
 **Probing Codex and Cursor (the owner's steps).** Capture of Codex and Cursor sessions (record
 `docs/changes/2026-11-11-codex-cursor-capture.md`) is built on what those agents' hooks really
 pass, and neither agent runs in the cloud environment. `transcripts probe --agent codex|cursor`
