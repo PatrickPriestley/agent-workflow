@@ -1520,8 +1520,9 @@ has "$(cat "$PD/SKILL.diff" 2>&1)" "+2. Write a test and see it fail."; has "$(c
 note="$(cat "$PD/proposal.md" 2>&1)"
 has "$note" "$P1"; has "$note" "red-first"; has "$note" "Pat Example, 2026-11-16"; has "$note" "no test was run before greet.py was written"
 has "$note" "calls 1 and 2"; has "$note" "The skill never says to run a test before the code"; has "$note" "change-record:change"
-it "R7: the note names the eval case that shows the failure, and says the edit is kept only if that case improves with it"
+it "R7: the note names the eval case for the step, says to check that it shows this failure, and that the edit is kept only if the case improves with it"
 has "$note" "plugins/change-record/evals/red-first"; has "$note" "with and without"
+has "$note" "is the eval case for this step"; has "$note" "Check that it shows this failure"
 it "it never writes to the skill: the repository's file and tree are as they were"
 assert_eq "$SKILL0" "$(cat "$PREPO/plugins/change-record/skills/change/SKILL.md")"; assert_eq "" "$(git -C "$PREPO" status --porcelain)"
 it "what is sent is redacted as for the store, to Claude Sonnet with no tools, and holds the skill, the step's rule, the label's reason and the session's calls"
@@ -1551,13 +1552,26 @@ out="$(propose --session $P1)"; assert_eq 2 "$?"; has "$out" "usage: transcripts
 out="$(propose --session $P1 --step tidy-code)"; assert_eq 2 "$?"; has "$out" "tier-declared"
 out="$(cd "$PREPO" && "$T" propose "$PREPO/inside" --session $P1 --step red-first 2>&1)"; assert_eq 2 "$?"; has "$out" "inside the working tree"
 out="$(propose --session 99999999-2222-3333-4444-555555555555 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"
-it "the skill file is the one the session used: the folder's own copy when a rebuilt folder holds one, else the blob in the repository, and with neither it says so"
-mkdir -p "$PAR/skills/change-record:change"; printf -- '---\nname: change\n---\n# Change, as the store rebuilt it\n' > "$PAR/skills/change-record:change/SKILL.md"
+it "the skill file is the version the session used, by its blob: from the repository, or the folder's copy when that is the same blob; another version is never taken for it"
+PBLOB="$(git -C "$PREPO" hash-object plugins/change-record/skills/change/SKILL.md)"
+mkdir -p "$PAR/skills/change-record:change"; printf -- '---\nname: change\n---\n# Change, a later version\n' > "$PAR/skills/change-record:change/SKILL.md"
 : > "$FAKELOG"; out="$(propose --session $P1 --step red-first)"; assert_eq 0 "$?"
-has "$(py -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["prompt"])' "$FAKELOG")" "# Change, as the store rebuilt it"
-has "$(cat "$PAR/proposals/$P1/red-first/SKILL.diff")" "-# Change, as the store rebuilt it"
+sentp="$(py -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["prompt"])' "$FAKELOG")"
+has "$sentp" "2. Write the code."; lacks "$sentp" "a later version"
+has "$(cat "$PAR/proposals/$P1/red-first/proposal.md")" "blob ${PBLOB:0:12}"
+out="$(propose --session $P1 --step red-first --repo-dir "$TMPROOT")"; assert_eq 1 "$?"; has "$out" "is neither in"
+cp "$PREPO/plugins/change-record/skills/change/SKILL.md" "$PAR/skills/change-record:change/SKILL.md"
+: > "$FAKELOG"; out="$(propose --session $P1 --step red-first --repo-dir "$TMPROOT")"; assert_eq 0 "$?"; assert_eq "1" "$(asked)"
 rm -rf "$PAR/skills"; : > "$FAKELOG"
 out="$(propose --session $P1 --step red-first --repo-dir "$TMPROOT")"; assert_eq 1 "$?"; has "$out" "is neither in"; assert_eq "0" "$(asked)"
+it "a session that never loaded the skill gets no proposal: an edit to the skill would not have reached it"
+P3=93000000-2222-3333-4444-555555555555
+{ pline $P3 2026-11-10T11:00:00.000Z user '"Add --shout."'
+  pline $P3 2026-11-10T11:00:20.000Z assistant '[{"type":"tool_use","id":"t2","name":"Write","input":{"file_path":"'"$PREPO"'/greet.py","content":"print(1)"}}]'
+  pline $P3 2026-11-10T11:00:21.000Z user '[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]'; } > "$PW/$P3.jsonl"
+(cd "$PREPO" && AGENT_TRANSCRIPTS="$PAR" "$T" archive --transcript "$PW/$P3.jsonl" < /dev/null > /dev/null 2>&1; "$T" sheet "$PAR" --labels "$PLAB" > /dev/null 2>&1)
+plabel $P3 red-first fail "no test before greet.py"; : > "$FAKELOG"
+out="$(propose --session $P3 --step red-first)"; assert_eq 1 "$?"; has "$out" "did not load"; assert_eq "0" "$(asked)"
 it "each eval case a proposal can name is a case the plugin has, a long session is cut to its end, and the calls are said as a person would"
 assert_eq "record-before-code red-first | True True | call 3 | calls 1, 2 and 9 | no call was named" "$(py - "$here/.." <<'PY'
 import os, sys
