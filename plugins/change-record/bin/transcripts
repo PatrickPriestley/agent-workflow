@@ -1439,7 +1439,8 @@ def cmd_messages(args):
                     if len(missing) == len(req) and insert(url, key, "messages", req):
                         added += len(req)  # none of it was there: the request goes whole
                     else:  # some of it is there, or was written while this ran: what is missing goes a row at a time
-                        added += sum(insert(url, key, "messages", [r]) for r in missing)
+                        for r in missing:
+                            added += insert(url, key, "messages", [r])  # counted as it goes: a later refusal loses none
             except StoreError as e:  # refused, or no answer: the other chunks are still tried
                 failed = e
             inserted += added
