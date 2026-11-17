@@ -159,7 +159,8 @@ def note(sid, step, skill_name, blob, by, reason, why, calls, got):
         (f"{named} {'are the eval cases' if many else 'is the eval case'} for this step. Check that "
          f"{'they show' if many else 'it shows'} this failure, and extend {'them' if many else 'it'} if not: "
          f"{'they were' if many else 'it was'} chosen by the step, not by what this session did. The edit is kept only if "
-         "the step's graders pass more often with it, run with and without the proposed file."
+         "the step's graders pass more often with it, run with and without the proposed file: "
+         f"`transcripts compare --session {sid} --step {step}` makes that comparison, and says what it would spend first."
          if named else
          "No eval case shows this failure. Write one first (the incident-to-eval skill): until a case shows the failure, "
          "and improves when run with the edit and not without, the edit is not kept."), "",

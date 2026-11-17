@@ -118,6 +118,9 @@ jobs:
       - name: transcripts judge
         if: ${{ !cancelled() }}
         run: bash plugins/change-record/bin/transcripts-judge.test.sh
+      - name: transcripts compare
+        if: ${{ !cancelled() }}
+        run: bash plugins/change-record/bin/transcripts-compare.test.sh
       - name: eval cases
         if: ${{ !cancelled() }}
         run: node --test plugins/change-record/evals/cases.test.cjs

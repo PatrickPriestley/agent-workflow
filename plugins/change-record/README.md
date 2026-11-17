@@ -191,8 +191,9 @@ How the parts fit together, in the order a session passes through them:
 4. **Check the measures against people**: `sheet` builds what a person labels from;
    `accuracy` scores the graders against the labels; `report` puts pass rates per skill
    version beside each grader's error.
-5. **Improve the skill**: `propose` drafts an edit from a failure a label confirms; the edit
-   is kept only if the step's eval case (under `evals/`) scores better with it than without.
+5. **Improve the skill**: `propose` drafts an edit from a failure a label confirms; `compare`
+   runs it against the skill as it is through the step's eval cases (under `evals/`), and the
+   edit is kept only if they score better with it than without.
 
     transcripts archive [--scoped] [--transcript PATH]
     transcripts import [--claude-home DIR] [--repo URL]... [--evals]
@@ -702,9 +703,19 @@ calls. It writes to `DIR/proposals/<session>/<step>/`:
 
 - `SKILL.md`, the proposed file, and `SKILL.diff`, its difference from the file the session used;
 - `proposal.md`, which cites the session, the skill file's blob, the step, the label and the
-  calls that show the failure, and names the eval case for the step (`evals/red-first` for
-  `red-first`, `evals/record-before-code` for `record-before-code`) or says that there is none.
-  The case is chosen by the step, so whether it shows this session's failure is for you to check.
+  calls that show the failure, and names the eval cases of the step with the graders that test
+  its rule (below), or says that there is none. The cases are chosen by the step, so whether they
+  show this session's failure is for you to check.
+
+| Step | Eval cases, and the graders that test the step |
+|---|---|
+| `tier-declared` | `tier-0-no-record` (`declares-tier-0`), `tier-2-stops-before-code` (`record-is-tier-2`) |
+| `probe-before-record` | `probed-facts-labelled` (`probed-before-record`) |
+| `record-before-code` | `record-before-code` (`record-before-code`) |
+| `red-first` | `red-first` and `red-first-workflow` (`saw-it-fail` and the test-run grader of each) |
+| `change-line` | `record-before-code` (`pr-body-names-record`) |
+| `outcome-filled` | `outcome-has-real-output` (`outcome-quotes-main-path`, which asks more: an Outcome that quotes a run) |
+| `record-check` | none: it runs on commits, which the eval runner cannot make |
 
 The skill file is the version the session used, found by its blob in the repository (or the
 folder's own copy when that is the same blob), never a later one. A session that did not load
@@ -714,6 +725,31 @@ It never writes to the skill. An edit enters the skill as a change of its own, w
 and is kept only if the eval case improves when run with the edit and not without; for a step
 with no eval case, write the case first (the `incident-to-eval` skill). `transcripts report`
 lists the proposals a folder holds.
+
+**Comparing a proposal** (record `docs/changes/2026-11-17-compare-proposals.md`).
+`transcripts compare [DIR] --session ID --step STEP [--repo-dir DIR] [--runs N] [--max-cost USD] [--run]`
+makes that comparison. It puts the edit on the skill as it is in `--repo-dir` (the current
+directory by default): the proposal's file when the skill is still the version the session
+used, otherwise each part of `SKILL.diff`, which must stand once, unchanged, in the current file.
+When one does not, it says so and runs nothing: make the edit again by hand. For each eval case
+of the step it runs `claude plugin eval` twice, with the plugin as it is and with a copy under
+`DIR/compare/<session>/<step>/` whose skill file has the edit, `--ablation none`, 6 runs and at
+most $2 an arm unless `--runs` and `--max-cost` say otherwise. Without `--run` it prints what it
+would run and the most it could spend, and runs nothing:
+
+    transcripts compare: the edit to change-record:change proposed from session bf01bd72... at step red-first, the edit put on the skill as it is now.
+    It would run, with no arm without the plugin:
+      plugins/change-record/evals/red-first (graders saw-it-fail, test-run-before-code-change): 6 runs with the skill as it is and 6 with the edit
+      plugins/change-record/evals/red-first-workflow (graders saw-it-fail, test-run-before-workflow-change): 6 runs with the skill as it is and 6 with the edit
+    Each arm of each case stops at $2.00, so at most $8.00 in all.
+    Nothing was run: add --run to run it.
+
+The edit is **kept** when the step's graders pass more often with it, summed over its cases,
+and no case's mean over its scored graders is lower with it; it is **dropped** otherwise, a tie
+included. `skill-fired`, the runner's sign that the skill was loaded, is not counted. A run that
+errored, a result the ceiling cut short, or a runner that exits other than 0 or 1 gives no
+verdict and exit 1. The counts and the verdict go to `compare.json` and `compare.md` beside the
+proposal. It never writes the skill: a kept edit still enters it as a change of its own.
 
 **Probing Codex and Cursor (the owner's steps).** Capture of Codex and Cursor sessions (record
 `docs/changes/2026-11-11-codex-cursor-capture.md`) is built on what those agents' hooks really

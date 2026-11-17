@@ -1524,7 +1524,7 @@ it "R7: the note names every eval case of the step and the graders that show it,
 has "$note" "plugins/change-record/evals/red-first\` (graders \`saw-it-fail\`, \`test-run-before-code-change\`)"
 has "$note" "plugins/change-record/evals/red-first-workflow\` (graders \`saw-it-fail\`, \`test-run-before-workflow-change\`)"
 has "$note" "with and without"; has "$note" "are the eval cases for this step"; has "$note" "Check that they show this failure"
-has "$note" "run with and without the proposed file"; lacks "$note" "transcripts compare"   # not in this version
+has "$note" "run with and without the proposed file"; has "$note" "\`transcripts compare --session $P1 --step red-first\`"
 assert_eq '["red-first", "red-first-workflow"]' "$(py -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["eval"]))' "$PD/proposal.json")"
 it "it never writes to the skill: the repository's file and tree are as they were"
 assert_eq "$SKILL0" "$(cat "$PREPO/plugins/change-record/skills/change/SKILL.md")"; assert_eq "" "$(git -C "$PREPO" status --porcelain)"
@@ -1626,7 +1626,9 @@ assert_eq "7 steps, each rule in its row" "$(py - "$here/../README.md" <<'PY'
 import re, sys
 sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0] + "/grade")
 import fields, propose
-rows = dict(re.findall(r"^\| `([a-z-]+)` \| (.*) \|$", open(sys.argv[1]).read(), re.M))
+text = open(sys.argv[1]).read()
+table = text[text.index("| Step | Passes when |"):].split("\n\n")[0]   # the grading table, not another table of steps
+rows = dict(re.findall(r"^\| `([a-z-]+)` \| (.*) \|$", table, re.M))
 missing = [s for s in fields.STEPS if propose.RULES.get(s, "no rule") not in rows.get(s, "")]
 print(f"{len(fields.STEPS)} steps, " + ("each rule in its row" if not missing else f"not in the README: {missing}"))
 PY
