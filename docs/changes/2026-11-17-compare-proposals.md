@@ -256,12 +256,35 @@ with the same pass rate. A test showed it (`keep` on 5 of 6 against 6 of 6, from
 two), then `tally` was given the runs asked and an arm with any other number has no result.
 With the check put back as it was, the test fails.
 
+With `--run`, against the real eval runner, with the owner's leave ("1 run an arm, ~$0.50",
+in chat): the same real proposal against a checkout of `main` before the edit of
+`2026-11-17-skill-red-first-workflow` (e77d027), one run an arm, Claude Code 2.1.326:
+
+```
+$ transcripts compare <folder> --session bf01bd72... --step red-first --repo-dir <checkout at e77d027> --runs 1 --max-cost 0.5 --run
+transcripts compare: the edit to change-record:change proposed from session bf01bd72... at step red-first, the edit put on the skill as it is now.
+It would run, with no arm without the plugin:
+  plugins/change-record/evals/red-first (graders saw-it-fail, test-run-before-code-change): 1 runs with the skill as it is and 1 with the edit
+  plugins/change-record/evals/red-first-workflow (graders saw-it-fail, test-run-before-workflow-change): 1 runs with the skill as it is and 1 with the edit
+Each arm of each case stops at $0.50, so at most $2.00 in all.
+transcripts: drop: the step's graders passed 4 of 4 times with the edit and 4 of 4 without: not more often. The comparison is in <folder>/proposals/bf01bd72.../red-first/compare.md; the skill was not changed.
+real 2m19s; exit 0
+```
+
+The four results the runner wrote, read back: each `--ablation none`, not partial, one run,
+no error, every grader passed, `skill-fired` scored by the runner and left out by `compare`;
+$0.148, $0.126, $0.110 and $0.108, $0.49 in all. So the real runner takes the command as
+built, and the tool reads what it writes. At one run an arm the verdict says nothing about
+the edit; it was the cheapest run that shows the command works. The run showed two slips in
+the plan's wording, "1 runs" and "It would run" while it ran; a test asked for "1 run" and
+"It runs", failed, and the plan now says them.
+
 Not done, and not verified:
 
-- No comparison has been run with `--run` against the real eval runner: that spends model
-  calls and waits for the owner's leave. The runner's result format and exit codes the code
-  reads were taken from the real runs of `2026-11-17-skill-red-first-workflow`, and the
-  stand-in writes the same fields; the real runner may say more ways a run went wrong.
+- A comparison at the default 6 runs an arm, which would give a verdict worth reading on the
+  second draft; it costs about $2.70 and waits for the owner's leave.
+- The real runner may report ways a run went wrong that neither these runs nor the stand-in
+  showed.
 - Whether each newly named case shows its step's failure for a given session is still for a
   person to check, as the proposal page says; the map says only which grader tests the rule.
 - `transcripts report` lists proposals but not their comparison's verdict.
