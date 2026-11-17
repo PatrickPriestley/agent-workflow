@@ -2559,7 +2559,7 @@ def cmd_propose(args):
         propose.note(sid, step, name, blob, label["by"], reason, why, calls, got)).encode())
     write_atomic(os.path.join(out, "proposal.json"), (json.dumps({
         "session_id": sid, "step": step, "skill": name, "skill_blob": blob, "labelled_by": label["by"], "calls": calls,
-        "eval": propose.EVALS.get(step), "proposer": propose.PROPOSE, "served_model": got["served_model"],
+        "eval": propose.cases(step), "proposer": propose.PROPOSE, "served_model": got["served_model"],
         "cost_usd": got["cost_usd"]}, indent=2) + "\n").encode())
     print(f"transcripts: a proposed edit to {name} is in {out}: SKILL.md, SKILL.diff and proposal.md; nothing else was changed")
     return 0
