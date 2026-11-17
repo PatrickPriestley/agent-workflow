@@ -115,6 +115,7 @@ assert_eq "no" "$([ -e "$D/proposals/$SID/red-first/compare.json" ] && echo yes 
 it "--runs and --max-cost change the plan's numbers"
 out="$(compare --step red-first --runs 3 --max-cost 0.5)"; assert_eq 0 "$?"
 has "$out" "3 runs with the skill as it is and 3 with the edit"; has "$out" "at most \$2.00"
+out="$(compare --step red-first --runs 1)"; has "$out" "1 run with the skill as it is and 1 with the edit"; has "$out" "It would run"
 
 it "with --run: the step's graders pass more often with the edit and no case scores lower, so the edit is kept"
 export FAKE_EVAL="$(py - "$T1" "$T2" <<'PY'
@@ -127,7 +128,7 @@ print(json.dumps({"current": {"red-first": runs(6, 3, t1), "red-first-workflow":
 PY
 )"
 : > "$FAKELOG"; out="$(compare --step red-first --run)"; rc=$?
-assert_eq 0 "$rc"; has "$out" "keep"; has "$out" "19 of 24"; has "$out" "23 of 24"
+assert_eq 0 "$rc"; has "$out" "keep"; has "$out" "19 of 24"; has "$out" "23 of 24"; has "$out" "It runs, with no arm"; lacks "$out" "It would run"
 it "it ran each case once for each arm, with no arm without the plugin, at the runs and ceiling asked, and wrote the runner's results beside the proposal"
 assert_eq 4 "$(calls)"
 asked="$(py - "$FAKELOG" "$P" "$D/compare/$SID/red-first/plugin" <<'PY'
