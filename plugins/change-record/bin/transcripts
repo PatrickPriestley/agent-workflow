@@ -178,6 +178,18 @@ def say(msg):
     print("transcripts: " + msg, file=sys.stderr)
 
 
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")  # matched whole: one id, never a path, nor "." or ".."
+
+
+def one_session_each(ids):
+    """Whether each --session value is one session id, said of the first that is not. A command names files below
+    DIR by it, so it is checked before anything is read or written."""
+    bad = next((s for s in ids if not SESSION_ID.fullmatch(s)), None)
+    if bad is not None:
+        say(f"--session {bad!r} is not one session id")
+    return bad is None
+
+
 def git(cwd, *args):
     if not cwd or not os.path.isdir(cwd):
         return None
@@ -1100,6 +1112,8 @@ def cmd_push(args):
         else:
             say("usage: transcripts push [--session ID]... [--background]")
             return 2
+    if not one_session_each(only):
+        return 2
     tell = (lambda m: say(time.strftime("%Y-%m-%dT%H:%M:%S ") + m)) if background else say
     try:
         ar = archive_dir()
@@ -1237,6 +1251,8 @@ def cmd_materialize(args):
             break
     if out is None:
         say("usage: transcripts materialize DIR [--session ID]... [--repo-dir DIR]")
+        return 2
+    if not one_session_each(only):
         return 2
     tree = inside_work_tree(out)
     if tree:
@@ -1461,6 +1477,8 @@ def cmd_messages(args):
         else:
             say(MESSAGES_USAGE)
             return 2
+    if not one_session_each(only):
+        return 2
     try:
         url = store_url()
         if url is None:
@@ -1687,6 +1705,8 @@ def cmd_grade(args):
         else:
             say("usage: transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store] | grade --transcript FILE [--cwd DIR]")
             return 2
+    if not one_session_each(only):
+        return 2
     sys.dont_write_bytecode = True  # no __pycache__ beside the plugin's code
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade"))
     import fields
@@ -1864,7 +1884,7 @@ SHEET_USAGE = ("usage: transcripts sheet [DIR] [--session ID]... [--repo-dir DIR
 
 def cmd_sheet(args):
     o = labels_args(args, SHEET_USAGE, ("only", "repo", "labels", "out"))
-    if o is None:
+    if o is None or not one_session_each(o["only"]):
         return 2
     fields, labels = load_labels_modules()
     try:
@@ -2120,6 +2140,8 @@ def cmd_repeats(args):
         else:
             say(REPEATS_USAGE)
             return 2
+    if not one_session_each(only):
+        return 2
     if (limit is not None and limit < 1) or (files and (d or only or limit)) or (out and not files) or ("--transcript" in args and not files):
         say(REPEATS_USAGE)
         return 2
@@ -2145,8 +2167,9 @@ def cmd_repeats(args):
             except OSError as e:
                 lines = e
             sid = os.path.basename(path).split(".")[0]
-            if not isinstance(lines, Exception):
-                sid = next((m.group(1).decode() for m in (re.search(rb'"sessionId":"([^"]+)"', ln) for ln in lines) if m), sid)
+            if not isinstance(lines, Exception):  # the id the lines carry, when it is one id: it names the answer's file
+                said = next((m.group(1).decode() for m in (re.search(rb'"sessionId":"([^"]+)"', ln) for ln in lines) if m), sid)
+                sid = said if SESSION_ID.fullmatch(said) else sid
             found.append((sid, lines))
     else:
         entries = {os.path.basename(p)[:-5]: read_json(p, {}) or {} for p in glob.glob(os.path.join(d, "sessions", "*.json"))}
@@ -2240,6 +2263,8 @@ def cmd_review(args):
         else:
             say(REVIEW_USAGE)
             return 2
+    if not one_session_each(only):
+        return 2
     load_grade_modules()
     import review
     if model not in review.MODELS or (limit is not None and limit < 1):
@@ -2354,6 +2379,8 @@ def cmd_judge(args):
         else:
             say(JUDGE_USAGE)
             return 2
+    if not one_session_each(only):
+        return 2
     if kind not in ("claude", "opencode") or (limit is not None and limit < 1) or bool(transcript) != bool(record_file):
         say(JUDGE_USAGE)
         return 2
@@ -2499,6 +2526,8 @@ def cmd_propose(args):
             return 2
     if not sid or not step:
         say(PROPOSE_USAGE)
+        return 2
+    if not one_session_each([sid]):
         return 2
     fields, _, _ = load_grade_modules()
     import labels
