@@ -2638,8 +2638,17 @@ def cmd_compare(args):
         return 1
     skill = str(meta.get("skill") or "change-record:change")
     plugin_name, _, skill_name = skill.rpartition(":")
-    plugin = os.path.join(os.path.abspath(repo_dir), "plugins", plugin_name or "change-record")
+    plugin_name = plugin_name or "change-record"
+    # Each is one name, never a path: the proposal's file is data, and a path in it must not lead the copy's write
+    # (or the read before it) outside the plugin.
+    one = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    plugins_dir = os.path.realpath(os.path.join(os.path.abspath(repo_dir), "plugins"))
+    plugin = os.path.join(plugins_dir, plugin_name)
     skill_path = os.path.join(plugin, "skills", skill_name, "SKILL.md")
+    if not (one.match(plugin_name) and one.match(skill_name)) or \
+            not os.path.realpath(skill_path).startswith(os.path.realpath(plugin) + os.sep):
+        say(f"the proposal's skill {skill!r} is not one name of a plugin and one of a skill: nothing was read or run")
+        return 1
     if not os.path.isfile(skill_path):
         say(f"no skill file at {skill_path}: run it in the repository the skill is in, or give --repo-dir")
         return 1
