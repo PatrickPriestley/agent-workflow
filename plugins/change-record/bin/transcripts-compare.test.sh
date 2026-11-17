@@ -126,6 +126,11 @@ export FAKE_EVAL="$(py -c 'import json,sys; g=json.loads(sys.argv[1]); print(jso
 rm -rf "$D/compare/$SID"; mkdir -p "$D/compare"; ln -s "$ELSE" "$D/compare/$SID"
 : > "$FAKELOG"; out="$(compare --step red-first --run --runs 1)"; assert_eq 1 "$?"; has "$out" "is not inside"; assert_eq 0 "$(calls)"
 assert_eq "keep me" "$(cat "$ELSE/red-first/unrelated.txt" 2>&1)"; rm "$D/compare/$SID"; rmdir "$D/compare"
+it "a comparison root that is itself a link to somewhere else is not deleted through"
+ROOT2="$TMPROOT/root2"; mkdir -p "$ROOT2/$SID/red-first"; printf 'keep me too\n' > "$ROOT2/$SID/red-first/unrelated.txt"
+ln -s "$ROOT2" "$D/compare"
+: > "$FAKELOG"; out="$(compare --step red-first --run --runs 1)"; assert_eq 1 "$?"; has "$out" "is not inside"; assert_eq 0 "$(calls)"
+assert_eq "keep me too" "$(cat "$ROOT2/$SID/red-first/unrelated.txt" 2>&1)"; rm "$D/compare"
 it "a step no eval case shows says that one is written first, and runs nothing"
 proposal "$SID" record-check
 out="$(compare --step record-check)"; assert_eq 1 "$?"; has "$out" "no eval case shows a failure of record-check"; assert_eq 0 "$(calls)"
