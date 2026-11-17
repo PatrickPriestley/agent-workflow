@@ -150,7 +150,7 @@ The two that survived were gaps in the tests, closed and broken again: a workflo
 and a test run in one command, and which case a shared folder is named for. The first gap
 is what showed the hole in `saw-it-fail`, in the new grader and in the one it was copied
 from. All 35 are caught on the final code, by the test that failed first for each, with
-eight more added after the reviews below:
+ten more added after the reviews below:
 
 - `one command that writes the code and runs the tests is not a run before the code`:
   - red-first saw-it-fail: a failing run in the command that writes greet.py counts
@@ -182,6 +182,7 @@ eight more added after the reviews below:
   - test-run grader: any absolute path is the workflow, a scratch copy too
   - test-run grader: a write from inside `.github/` is not a write
   - test-run grader: a Write or Edit of a scratch copy is a write of the workflow
+  - test-run grader: a write as `../.github/workflows/test.yml` is not a write
   - test-run grader: a Write of the workflow is not a write
   - test-run grader: a shell redirect onto the workflow is not a write
   - test-run grader: a write and a run in one command count as a run first
@@ -194,6 +195,7 @@ eight more added after the reviews below:
   - saw-it-fail: any absolute path is the workflow, a scratch copy too
   - saw-it-fail: a write from inside `.github/` is not a write
   - saw-it-fail: a Write or Edit of a scratch copy is a write of the workflow
+  - saw-it-fail: a write as `../.github/workflows/test.yml` is not a write
   - saw-it-fail: a failing run in the command that writes the workflow counts
   - saw-it-fail: a green run counts
   - saw-it-fail: a shell redirect onto the workflow is not a write
@@ -220,6 +222,14 @@ rule above does not count. A tool's write now counts only at the repository's ow
 the shell's at `workflows/test.yml` too. Each of the two pieces was put back in each grader
 and caught. The four real traces were scored again with the changed graders: the same eight
 verdicts.
+
+Its fourth pass found that the graders do not follow the shell's `cd`. The form it gave,
+`cd tests && sed -i ... ../.github/workflows/test.yml`, is now seen, test first, and was
+broken by hand in each grader and caught; the real traces keep their verdicts. Following
+`cd` itself is not done: a pattern over the trace judges a write by the path it names, as
+`red-first`'s do. So a write named relative to a folder the agent moved to by some other
+path is missed, and `test.yml` written after moving into a scratch folder counts as the
+workflow. Both are left, with the writes from inside a script below.
 
 During the second round the container's commit signing began to fail (its session manager
 ran out of file handles), which failed every test that commits a scratch repository. The
@@ -261,6 +271,8 @@ Not done, and not verified:
 
 - Two runs an arm. With so few, one run moves a mean by half; the result says the case
   can separate the arms, not by how much.
+- The graders do not follow `cd`: a write is judged by the path it names (see the review
+  above).
 - The graders see a write of the workflow file by the Edit and Write tools, a redirect,
   `tee`, `cp` and `sed -i`. A write from inside a script (`python3 -c`, `yq -i`) is not
   seen, as in `red-first`.
