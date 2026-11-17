@@ -279,6 +279,14 @@ the edit; it was the cheapest run that shows the command works. The run showed t
 the plan's wording, "1 runs" and "It would run" while it ran; a test asked for "1 run" and
 "It runs", failed, and the plan now says them.
 
+The review's next pass found a path traversal, and it was real: the plugin and skill names
+come from `proposal.json`, and a name such as `change-record:/tmp/victim` made the path join
+start over at `/tmp/victim`, so the read, and with `--run` the copy's write, went to that file.
+A test showed the write (nine assertions failing, the named file overwritten), then the names
+were required to be one name each and the skill file's real path to lie inside the plugin; a
+second test covers a skill folder that is a link out of the plugin. With either check taken
+out, its test fails. It is a security finding: the owner decides whether this closes it.
+
 Not done, and not verified:
 
 - A comparison at the default 6 runs an arm, which would give a verdict worth reading on the
