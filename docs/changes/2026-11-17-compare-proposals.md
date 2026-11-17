@@ -287,6 +287,15 @@ were required to be one name each and the skill file's real path to lie inside t
 second test covers a skill folder that is a link out of the plugin. With either check taken
 out, its test fails. It is a security finding: the owner decides whether this closes it.
 
+Its fourth pass found the same kind of hole in `--session`, also real: an absolute session
+such as `/tmp/archive` made both the proposal's folder and the workspace
+`/tmp/archive/<step>`, and `--run` read a proposal there and then deleted that folder. A test
+showed an unrelated file in it deleted, then `--session` was required to be one id, and the
+workspace's real path to lie inside `DIR/compare` before anything is deleted; a second test
+covers a workspace that is a link out. With either check taken out, its test fails. `propose`
+takes `--session` the same way and writes beside the transcripts; it reads a label for that id
+first, so it is harder to reach, and it is left to a change of its own.
+
 Not done, and not verified:
 
 - A comparison at the default 6 runs an arm, which would give a verdict worth reading on the
