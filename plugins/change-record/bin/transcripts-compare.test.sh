@@ -101,6 +101,15 @@ it "a folder inside a working tree is refused, as for grade and propose"
 out="$(cd "$REPO" && "$T" compare "$P" --session "$SID" --step red-first 2>&1)"; assert_eq 2 "$?"; has "$out" "inside the working tree"
 it "a step with no proposal says so and runs nothing"
 out="$(compare --step change-line)"; assert_eq 1 "$?"; has "$out" "no proposal for $SID at change-line"; assert_eq 0 "$(calls)"
+it "a proposal whose skill or plugin name is a path, not one name, is refused: nothing outside the plugin is read or written"
+VICTIM="$TMPROOT/victim"; mkdir -p "$VICTIM"; printf '%s\n' "$USED" > "$VICTIM/SKILL.md"
+cp "$D/proposals/$SID/red-first/proposal.json" "$TMPROOT/proposal.keep"
+for bad in "change-record:$VICTIM" "change-record:../../../victim" "/tmp:change" "change-record:" "change-record:.." "a/b:change"; do
+  py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["skill"]=sys.argv[2]; json.dump(d, open(p, "w"))' "$D/proposals/$SID/red-first/proposal.json" "$bad"
+  : > "$FAKELOG"; out="$(compare --step red-first --run)"; assert_eq 1 "$?"; has "$out" "not one name"; assert_eq 0 "$(calls)"
+done
+assert_eq "$USED" "$(cat "$VICTIM/SKILL.md")"; assert_eq "no" "$([ -e "$D/compare" ] && echo yes || echo no)"
+cp "$TMPROOT/proposal.keep" "$D/proposals/$SID/red-first/proposal.json"
 it "a step no eval case shows says that one is written first, and runs nothing"
 proposal "$SID" record-check
 out="$(compare --step record-check)"; assert_eq 1 "$?"; has "$out" "no eval case shows a failure of record-check"; assert_eq 0 "$(calls)"
