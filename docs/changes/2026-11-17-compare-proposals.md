@@ -1,7 +1,7 @@
 ---
 id: 2026-11-17-compare-proposals
 tier: 1
-status: open
+status: done
 requester: Patrick Priestley, in chat on 2026-11-17 ("Go ahead with 1 and 3", of the list of what is left of the self-improvement loop)
 approvers: []
 ---
@@ -118,5 +118,142 @@ Not run: `propose` drafting a new proposal on the final code, which is one call 
 Sonnet and waits for the owner's leave; the page and `proposal.json` it writes are held by the
 suite, against a stand-in for `claude`. The review of task 1 also found that the page named
 `transcripts compare` before that command exists; it now says how the comparison is made and
-names no command, and task 2 names it. Task 2, `transcripts compare`, follows in its own pull
-request.
+names no command, and task 2 names it.
+
+Task 2, `transcripts compare`. Built test first: the suite of `compare` against a stand-in
+for the eval runner (61 failing with no such command), then `grade/compare.py` and the
+command; then tests for five guards the first tests left open, before any break was tried.
+
+```
+$ bash plugins/change-record/bin/transcripts-compare.test.sh | tail -1
+transcripts compare: 89 passed, 0 failed
+$ bash plugins/change-record/bin/transcripts-judge.test.sh | tail -1
+transcripts judge and report: 526 passed, 0 failed
+```
+
+The other suites that read what changed:
+
+```
+$ bash plugins/change-record/bin/transcripts.test.sh | tail -1
+passed=364 failed=0
+$ bash plugins/change-record/bin/transcripts-grade.test.sh | tail -1
+transcripts grade: 212 passed, 0 failed
+$ bash plugins/change-record/bin/transcripts-store.test.sh | tail -1
+passed=440 failed=0
+$ bash plugins/change-record/bin/record-check.test.sh | tail -1
+passed=117 failed=0
+$ node --test plugins/change-record/evals/cases.test.cjs
+46 tests, 46 pass, none fail
+$ bash bin/ci-workflow.test.sh | tail -1
+passed=21 failed=0
+$ bash install.test.sh | tail -1
+passed=112 failed=0
+$ bash pr-agent/workflow.test.sh | tail -1
+passed=69 failed=0
+```
+
+The real use, with no spend: `compare` without `--run` on the real proposal of session
+`bf01bd72` (the second draft, from the folder `materialize` rebuilt), against a checkout of
+`main`, where the skill is not the version the session used and does not yet hold the edit of
+`2026-11-17-skill-red-first-workflow`:
+
+```
+$ transcripts compare <folder> --session bf01bd72... --step red-first --repo-dir <checkout of main>
+transcripts compare: the edit to change-record:change proposed from session bf01bd72... at step red-first, the edit put on the skill as it is now.
+It would run, with no arm without the plugin:
+  plugins/change-record/evals/red-first (graders saw-it-fail, test-run-before-code-change): 6 runs with the skill as it is and 6 with the edit
+  plugins/change-record/evals/red-first-workflow (graders saw-it-fail, test-run-before-workflow-change): 6 runs with the skill as it is and 6 with the edit
+Each arm of each case stops at $2.00, so at most $8.00 in all.
+Nothing was run: add --run to run it.
+exit 0
+```
+
+The error path, the same proposal against this branch, whose skill already holds the edit
+of `2026-11-17-skill-red-first-workflow`, which changed the lines the draft changes:
+
+```
+$ transcripts compare <folder> --session bf01bd72... --step red-first --repo-dir <this branch>
+transcripts: the edit does not apply to <repo>/plugins/change-record/skills/change/SKILL.md as it is now (the part around '`references/splitting.md`.' is not in it): make it again by hand on the current file, as its own proposal, before it is compared
+exit 1
+```
+
+Nothing was written by either: no `compare/` folder and no `compare.json`.
+
+Guards, each broken by hand in a clone: 34 breaks. The first round caught 28 of 34. The six
+that survived were tests too loose to tell: the edit put on the current file was checked by
+words in it, not whole (two breaks of the diff reading); an errored run, a partial result and
+a runner stopped by its ceiling were each also missing something else, so another check
+caught them first (three); and the unscored graders, counted, tied the means instead of
+lowering one (one). Each fixture was made to turn on its one guard and the six were broken
+again and caught. All 34 were then broken once more on the final tests, and each is caught,
+by the test that failed first for each:
+
+- `R7: a step whose case is one of the earlier eight names it with its grader: probe-before-record and probed-facts-labelled`:
+  - map: a grader is named that its case has not
+- `R7: the note names every eval case of the step and the graders that show it, says to check that they show this failure, and that the edit is kept only if they improve with it`:
+  - map: red-first names one case
+  - propose: the proposal names no case
+- `a folder inside a working tree is refused, as for grade and propose`:
+  - cmd: a folder inside a working tree is written to
+- `a grader the runner does not score is not counted: failing it alone would have made the edit's case lower`:
+  - tally: a grader the runner does not score is counted
+- `a part of the edit that stands more than once in the skill as it is now: it is not guessed at, and nothing runs`:
+  - apply: a part that stands twice is taken at its first place
+- `a run that errored, a result cut short by the ceiling, or a runner that exits otherwise gives no verdict, exit 1, and says which`:
+  - cmd: no verdict exits 0
+  - run_eval: a runner stopped by its ceiling is read
+  - tally: a partial result is read
+  - tally: a run that errored is read
+  - verdict: an arm with no result still gives a verdict
+- `a run with no result for one of the step's graders gives no verdict, naming the grader`:
+  - tally: a run with no step grader is read
+- `a skill that changed since the session, away from the edit: the edit is put on the skill as it is now`:
+  - cmd: the drafted file is always taken
+  - hunks: a removed line is kept
+  - hunks: context is not part of the old text
+- `a step no eval case shows says that one is written first, and runs nothing`:
+  - cmd: a step with no case is compared
+- `a tie is no improvement: the edit is dropped`:
+  - cmd: an earlier run's results are kept
+  - verdict: a tie keeps the edit
+- `an empty diff is no edit, and nothing runs`:
+  - apply: an empty diff is an edit
+- `compare.json and compare.md hold the verdict and each case's counts for each arm`:
+  - tally: skill-fired is counted
+- `it ran each case once for each arm, with no arm without the plugin, at the runs and ceiling asked, and wrote the runner's results beside the proposal`:
+  - command: an arm without the plugin is run too
+  - command: the case's scaffold is not run
+  - command: the ceiling is not passed
+  - command: the runs asked are not passed
+  - run_eval: the eval sessions are captured
+- `no claude to run gives no verdict, never a traceback`:
+  - run_eval: no claude to run is not caught
+- `the edit's plugin is a copy that differs from the plugin only in the skill file, without the plugin's old results`:
+  - cmd: the plugin's old results are copied
+- `a proposal drafted before a step could name several cases, one case as a string, is still listed`:
+  - report: a proposal of one case as a string is not listed
+- `the step's graders pass more often, but a case scores lower on its other graders: dropped, naming the case`:
+  - verdict: a case that scores lower is not looked at
+- `with no session or no step, an unknown step, runs that are not a whole number above 0, or a ceiling that is no amount, it says how to use it`:
+  - cmd: --runs takes 0
+  - cmd: any step's name is taken
+- `without --run it says what it would run and the most it could spend, and runs nothing and writes nothing`:
+  - cmd: it runs without --run
+  - cmd: the edit is always put on the current file
+  - plan: the most it could spend is one arm's
+
+Found by that run, and fixed: the README's new table of steps and cases made the test that
+holds each step's rule to the README's grading table read the wrong table (its rows also
+begin with a step's name), so the judge suite had one failure that the suites run before
+the README change did not show. The test now reads the grading table by its heading, and
+still fails when a rule there is changed.
+
+Not done, and not verified:
+
+- No comparison has been run with `--run` against the real eval runner: that spends model
+  calls and waits for the owner's leave. The runner's result format and exit codes the code
+  reads were taken from the real runs of `2026-11-17-skill-red-first-workflow`, and the
+  stand-in writes the same fields; the real runner may say more ways a run went wrong.
+- Whether each newly named case shows its step's failure for a given session is still for a
+  person to check, as the proposal page says; the map says only which grader tests the rule.
+- `transcripts report` lists proposals but not their comparison's verdict.
