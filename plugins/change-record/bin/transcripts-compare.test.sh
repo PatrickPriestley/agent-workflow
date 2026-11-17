@@ -182,8 +182,10 @@ export FAKE_EVAL="$(py -c '
 import json
 def run(s, f, k): return {"saw-it-fail": s, k: True, "skill-fired": f}
 k1, k2 = "test-run-before-code-change", "test-run-before-workflow-change"
+# counted, skill-fired would make red-first 2/3 a run as it is and (2/3 + 1/3) / 2 with the edit: lower, so dropped
 print(json.dumps({"current": {"red-first": [run(False, True, k1)] * 2, "red-first-workflow": [run(True, True, k2)] * 2},
-                  "edit": {"red-first": [run(True, False, k1)] * 2, "red-first-workflow": [run(True, True, k2)] * 2}}))')"
+                  "edit": {"red-first": [run(True, False, k1), {"saw-it-fail": False, k1: True, "skill-fired": False}],
+                           "red-first-workflow": [run(True, True, k2)] * 2}}))')"
 out="$(compare --step red-first --run --runs 2)"; assert_eq 0 "$?"; has "$out" "keep"
 
 it "a run that errored, a result cut short by the ceiling, or a runner that exits otherwise gives no verdict, exit 1, and says which"
