@@ -296,6 +296,11 @@ covers a workspace that is a link out. With either check taken out, its test fai
 takes `--session` the same way and writes beside the transcripts; it reads a label for that id
 first, so it is harder to reach, and it is left to a change of its own.
 
+Its fifth pass found that the workspace check resolved `DIR/compare` too, so if that folder
+was itself a link out of `DIR`, both sides of the check went through the link and the delete
+followed. A test showed it, then the check was anchored to `DIR`'s own real path; with the old
+anchor put back, the test fails.
+
 Not done, and not verified:
 
 - A comparison at the default 6 runs an arm, which would give a verdict worth reading on the
