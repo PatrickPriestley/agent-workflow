@@ -1626,7 +1626,9 @@ assert_eq "7 steps, each rule in its row" "$(py - "$here/../README.md" <<'PY'
 import re, sys
 sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0] + "/grade")
 import fields, propose
-rows = dict(re.findall(r"^\| `([a-z-]+)` \| (.*) \|$", open(sys.argv[1]).read(), re.M))
+text = open(sys.argv[1]).read()
+table = text[text.index("| Step | Passes when |"):].split("\n\n")[0]   # the grading table, not another table of steps
+rows = dict(re.findall(r"^\| `([a-z-]+)` \| (.*) \|$", table, re.M))
 missing = [s for s in fields.STEPS if propose.RULES.get(s, "no rule") not in rows.get(s, "")]
 print(f"{len(fields.STEPS)} steps, " + ("each rule in its row" if not missing else f"not in the README: {missing}"))
 PY
