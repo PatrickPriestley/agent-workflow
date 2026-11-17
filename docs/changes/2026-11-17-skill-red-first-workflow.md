@@ -35,7 +35,7 @@ it than without, as concern C5 of record `2026-11-12-session-quality` asks.
   repository's own CI. Failures that showed only on the macOS runner were pushed, their red
   logs read (runs 43712625701 and 43714085731, each made to print more), and only then fixed;
   that record says the cause was not found by reading, but by those two runs. They ran in a
-  pull request, not a draft of the test alone, which is the one part not exercised.
+  pull request, not a draft of the test alone; that part was probed on 2026-11-17 (Outcome).
 - Assumed, not probed: how the case scores with the edit. That is the measurement below.
 
 ## Decisions
@@ -112,6 +112,30 @@ two runs of the case's own record and these six, the current skill saw a test fa
 4 of 8 runs and the edit in 6 of 6, which a one-sided Fisher exact test puts at p = 0.07. The
 direction is clear and the traces show the mechanism; the size is not settled.
 
+The CI-only clause, probed on the real CI after the review asked for it, with the owner's
+leave ("Probe it, then record", in chat). A branch from main, `ci-probe-red-first`, held only
+a test that refuses to run outside GitHub Actions (`ci-probe/ci-only.test.sh`) and a job to
+run it (`.github/workflows/ci-probe.yml`), opened as draft pull request 15. Pushed alone, its
+job went red; the log was read with the GitHub tools, and only then was the fix written:
+
+```
+$ bash ci-probe/ci-only.test.sh                       (here, outside CI)
+ci-only: not in GitHub Actions, not run
+exit 2
+(push b933189, the test alone; draft PR 15; the review job is skipped for a draft)
+ci-only, run 44078387522:
+FAIL ci-probe/fix.txt: want 'fixed', got 'no fix.txt' (run 44078387522 on Linux)
+##[error]Process completed with exit code 1.
+(push f735bc6, the fix, written after reading that log)
+ci-only, run 44078468742:
+ok   ci-probe/fix.txt says fixed (run 44078468742 on Linux)
+```
+
+The draft was then closed unmerged and its branch deleted. So an agent in this repository
+can push a test alone as a draft, have CI run it, read the red log and then fix: each part
+the clause names works. What it does not show is an agent choosing to do it unprompted;
+no eval case can, since the runner cannot push.
+
 The error path: no run with the edit edited the workflow first, so the failure the edit is
 for was read in the current skill's three runs above, where it happened.
 
@@ -122,7 +146,8 @@ Not done, and not verified:
 - The clause for a test that can run only in CI (push the test or job alone as a draft, read
   its red log) is in the skill as the owner ruled, but no eval case exercises it: the eval
   runner can neither push nor run CI. The procedure itself was followed in this repository's
-  CI on 2026-11-15 (Probed facts), in a pull request rather than a draft of the test alone.
+  CI on 2026-11-15 (Probed facts), and as written, a draft of the test alone, on 2026-11-17
+  (above); a probe's test, not a real fix.
 - The other eight cases were not run with the edit. It changes step 3 only, but a case such
   as `red-first` could move with it; a run of the whole suite with the edit and without
   would show that, and spends model calls.
