@@ -50,6 +50,21 @@ concern C5 of record `2026-11-12-session-quality` asks before any edit is kept.
 - The graders are the two of `red-first`, with the workflow file in the place of
   `greet.py`. Rejected: a grader that reads the final workflow file, which would score
   whether the task was done and not whether it was done test first.
+- The case starts from a repository of its own: its `scaffold.sh` runs the shared scaffold
+  and then commits the workflow file and its test. Rejected, after it was tried: adding the
+  workflow file to the shared scaffold. `outcome-evals/` builds its tasks on that scaffold
+  and its checks count the files a task may touch; with two more files its own suites
+  failed (1 of 175 and 8 of 91).
+- So the export to `evals.json`, which refused cases that start from different
+  repositories, now writes a folder for each starting repository: `files/repo/` stays the
+  one most cases start from, so the eight earlier cases keep their paths, and another is
+  `files/repo-<its first case>/`. `verify` compares a file with the folder of its own case.
+  Rejected: leaving the new case out of the export, which would end the rule that the
+  export holds every case.
+- Found while breaking the guards, and fixed here because the new grader is a copy:
+  `saw-it-fail` counted a failing test run made in the command that itself wrote the code.
+  The fix is the same one insertion in `red-first` and in `red-first-workflow`. Rejected:
+  fixing the copy alone and leaving the first with a hole now known.
 - `transcripts propose` still names `evals/red-first` for the step. Its page already says
   to check that the case shows the failure; naming two cases for one step waits until
   this one has been run and shown to measure something.
@@ -59,6 +74,9 @@ concern C5 of record `2026-11-12-session-quality` asks before any edit is kept.
 1. The case `red-first-workflow`: scaffold, prompt, graders, their fixtures in
    `evals/cases.test.cjs`, and the README's row. Test: `node --test
    plugins/change-record/evals/cases.test.cjs`. Red today: there is no such case.
+2. Added while building, for the reason in Decisions: the export and `verify` take cases
+   that start from different repositories. Same test file. Red before: the export exits 2
+   with "the cases start from different repositories".
 
 ## Checks
 
@@ -70,4 +88,129 @@ fails both graders.
 
 ## Outcome
 
-Nothing is built yet.
+Built test first, on 2026-11-17. The record went in with four failing tests of a case that
+did not exist; then the case; then failing tests of an export that refused it, and the
+export; then a failing test of `verify`, and its fix; then, from the guard run below, two
+failing assertions on `saw-it-fail` and its fix.
+
+```
+$ node --test plugins/change-record/evals/cases.test.cjs
+# tests 46
+# pass 46
+# fail 0
+$ plugins/change-record/evals/export-evals-json --check; echo $?
+0
+$ bash plugins/change-record/outcome-evals/checks/selftest.sh | tail -1
+passed=175 failed=0
+$ bash plugins/change-record/outcome-evals/run.test.sh | tail -1
+passed=91 failed=0
+```
+
+The case's task done by hand in the repository its scaffold builds, to see that a test of
+the workflow can fail first on the machine:
+
+```
+$ bash plugins/change-record/evals/red-first-workflow/scaffold.sh && git log --oneline
+b95f994 ci: run the tests on push, and test the workflow
+d9310e9 greet: initial
+$ python3 -m unittest discover -s tests -t . 2>&1 | tail -3
+Ran 2 tests in 0.000s
+
+OK
+$ (a test added to tests/test_workflow.py: "macos-latest" is in the workflow file)
+$ python3 -m unittest discover -s tests -t . 2>&1 | tail -3
+Ran 3 tests in 0.001s
+
+FAILED (failures=1)
+$ sed -i 's/os: \[ubuntu-latest\]/os: [ubuntu-latest, macos-latest]/' .github/workflows/test.yml
+$ python3 -m unittest discover -s tests -t . 2>&1 | tail -3
+Ran 3 tests in 0.000s
+
+OK
+```
+
+`verify` on that folder, and its error path:
+
+```
+$ skills/change/evals/verify red-first-workflow <the folder>
+  "assertion_results": [],
+  "not_checked": [ ...the two statements, each "needs the run's transcript" ],
+exit 0
+$ skills/change/evals/verify red-first-workflow /nonexistent
+verify: /nonexistent is not a folder
+exit 2
+```
+
+The error path of the case itself is in the fixtures: a trace in which the workflow file is
+written before any test run fails both graders, whether it is written with Edit, Write, a
+redirect, `sed -i`, or from inside its folder.
+
+Guards, each broken by hand in a clone: 35 breaks. In the first round 31 of 33 were caught.
+The two that survived were gaps in the tests, closed and broken again: a workflow change
+and a test run in one command, and which case a shared folder is named for. The first gap
+is what showed the hole in `saw-it-fail`, in the new grader and in the one it was copied
+from. All 35 are caught on the final code, by the test that failed first for each:
+
+- `one command that writes the code and runs the tests is not a run before the code`:
+  - red-first saw-it-fail: a failing run in the command that writes greet.py counts
+- `the committed evals.json and input files are what the case folders give`:
+  - export: every case is given the shared folder
+  - export: every case lists the shared folder's paths
+  - export: every case lists the shared repository's files
+  - export: every prompt names repo/
+  - prompt: no record id
+  - prompt: the tests' command is not given
+  - prompt: the workflow file is not named
+  - scaffold: no test of the workflow
+  - scaffold: no workflow file
+  - scaffold: the workflow already runs on macOS
+  - scaffold: the workflow's test fails from the start
+- `the input files are the scaffold's, and --check fails when a prompt, a statement or a file has drifted`:
+  - export: --check does not see a file that differs
+  - export: --check does not see a file that should not be there
+  - export: --check does not see a missing file
+- `the generator refuses a case it cannot state: a grader with no statement, or two; a case that starts from another repository gets a folder of its`:
+  - export: --check does not look at a folder no case starts from
+  - export: a folder is named for its last case
+  - export: a folder no case starts from is left when writing
+  - export: the shared folder is the first case's by name, not the one most cases start from
+- `the red-first-workflow scaffold adds a workflow file and a passing test of it to the shared repository, and the shared one has neither`:
+  - scaffold: the workflow is left uncommitted
+- `red-first-workflow: a test run counts only before the workflow file is first written, by a tool or by the shell`:
+  - test-run grader: a Write of the workflow is not a write
+  - test-run grader: a shell redirect onto the workflow is not a write
+  - test-run grader: a write and a run in one command count as a run first
+  - test-run grader: an Edit of the workflow is not a write
+  - test-run grader: it watches greet.py, not the workflow file
+  - test-run grader: sed -i on the workflow is not a write
+  - test-run grader: writing the workflow's test counts as writing the workflow
+- `red-first-workflow: saw-it-fail needs a failing test run before the workflow file changes`:
+  - saw-it-fail: a failing run in the command that writes the workflow counts
+  - saw-it-fail: a green run counts
+  - saw-it-fail: a shell redirect onto the workflow is not a write
+  - saw-it-fail: an Edit of the workflow is not a write
+  - saw-it-fail: any error result counts, a failed test or not
+  - saw-it-fail: it watches greet.py, not the workflow file
+  - saw-it-fail: sed -i on the workflow is not a write
+- `verify compares an unchanged file with the repository its own case starts from, not with another case's`:
+  - verify: every case is compared with repo/
+
+During the second round the container's commit signing began to fail (its session manager
+ran out of file handles), which failed every test that commits a scratch repository. The
+five breaks whose results that touched were run again with signing off for the scratch
+repositories, and the list above is from those runs.
+
+Not done, and not verified:
+
+- No agent has run the case. `claude plugin eval plugins/change-record --case
+  red-first-workflow` spends model calls and waits for the owner's leave, so whether the
+  case tells the plugin from no plugin, and the graders' patterns against a real trace of a
+  workflow edit, are not known. The patterns are checked against fixtures in the encoding
+  of the earlier runs' traces. The record stays `open` until that run is in, or the owner
+  says to leave it out.
+- The graders see a write of the workflow file by the Edit and Write tools, a redirect,
+  `tee`, `cp` and `sed -i`. A write from inside a script (`python3 -c`, `yq -i`) is not
+  seen, as in `red-first`.
+- `verify` has nothing to check for this case: both statements are about the transcript.
+  Its change is held by a test with a case made for it, not by a real one.
+- The case for a test that can run only in CI is not written: see Decisions.

@@ -100,6 +100,13 @@ also reads pydoc, `-m`, piped stdin and a scratch script that is written and the
 regex grader runs against fixtures in the trace's own encoding in `cases.test.cjs`, with the
 shell forms, the one-command cases and the orderings that must fail.
 
+A fourth, on 2026-11-17 and after the numbers above: `saw-it-fail` counted a failing test run
+made in the very command that wrote the code (`sed -i ... greet.py && python3 -m unittest`),
+because its guard looked at where the tool call begins and not at its command. The other
+grader of `red-first` already failed such a run, so it scored half and now scores nothing. No
+trace of the runs above is kept, so whether any of them was such a run is not known; with
+the plugin the case scored 1.00, which no such run could have given.
+
 ## Running them
 
     claude plugin eval plugins/change-record --scaffold --allow-tools Bash Write Edit --trust-plugin --no-publish --runs 3 -j 4
