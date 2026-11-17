@@ -1638,6 +1638,11 @@ has "$rep" "| $P2 | record-check | none |"; has "$rep" "| $P2 | probe-before-rec
 it "a proposal drafted before a step could name several cases, one case as a string, is still listed"
 py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["eval"]="red-first"; open(p,"w").write(json.dumps(d))' "$PAR/proposals/$P1/red-first/proposal.json"
 rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"
+it "a proposal whose list of cases holds something that is no name lists only the names, and the report does not stop"
+py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["eval"]=["red-first", None, 3, {"case": "x"}, "red-first-workflow"]; open(p,"w").write(json.dumps(d))' "$PAR/proposals/$P1/red-first/proposal.json"
+rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"; rc=$?; assert_eq 0 "$rc"; lacks "$rep" "Traceback"
+has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first, plugins/change-record/evals/red-first-workflow |"
+py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["eval"]="red-first"; open(p,"w").write(json.dumps(d))' "$PAR/proposals/$P1/red-first/proposal.json"
 (cd "$PREPO" && "$T" grade "$PAR" > /dev/null 2>&1)   # a folder with score rows takes the report's other path
 rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
 has "$rep" "Score rows from"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"; has "$rep" "| $P2 | record-check | none |"
