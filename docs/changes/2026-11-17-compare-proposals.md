@@ -68,6 +68,8 @@ grader that shows it.
   partial, or the runner exits other than 0 or 1.
 - It writes `compare.json` and `compare.md` beside the proposal and never writes the skill:
   keeping an edit stays a change of its own.
+- Two pull requests, one for each task: together they are over the 400-line aim, and the
+  map is of use on its own (a proposal names its cases) before `compare` exists.
 
 ## Tasks
 
@@ -85,4 +87,15 @@ path: a proposal whose diff no longer applies to the current skill.
 
 ## Outcome
 
-Nothing is built yet.
+Task 1, the map. Built test first: 11 assertions failing in `bin/transcripts-judge.test.sh`
+(the proposal page names one case, the proposal's `eval` is a string, a step whose case is
+one of the earlier eight names none, the report lists one case), then `propose.EVALS` as the
+table under Probed facts, the page and the report.
+
+```
+$ bash plugins/change-record/bin/transcripts-judge.test.sh | tail -1
+transcripts judge and report: 526 passed, 0 failed
+```
+
+A proposal drafted before this change holds its case as a string, and the report still lists
+it (a test holds that). Task 2, `transcripts compare`, follows in its own pull request.
