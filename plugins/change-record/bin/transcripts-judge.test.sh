@@ -1520,9 +1520,12 @@ has "$(cat "$PD/SKILL.diff" 2>&1)" "+2. Write a test and see it fail."; has "$(c
 note="$(cat "$PD/proposal.md" 2>&1)"
 has "$note" "$P1"; has "$note" "red-first"; has "$note" "Pat Example, 2026-11-16"; has "$note" "no test was run before greet.py was written"
 has "$note" "calls 1 and 2"; has "$note" "The skill never says to run a test before the code"; has "$note" "change-record:change"
-it "R7: the note names the eval case for the step, says to check that it shows this failure, and that the edit is kept only if the case improves with it"
-has "$note" "plugins/change-record/evals/red-first"; has "$note" "with and without"
-has "$note" "is the eval case for this step"; has "$note" "Check that it shows this failure"
+it "R7: the note names every eval case of the step and the graders that show it, says to check that they show this failure, and that the edit is kept only if they improve with it"
+has "$note" "plugins/change-record/evals/red-first\` (graders \`saw-it-fail\`, \`test-run-before-code-change\`)"
+has "$note" "plugins/change-record/evals/red-first-workflow\` (graders \`saw-it-fail\`, \`test-run-before-workflow-change\`)"
+has "$note" "with and without"; has "$note" "are the eval cases for this step"; has "$note" "Check that they show this failure"
+has "$note" "run with and without the proposed file"; lacks "$note" "transcripts compare"   # not in this version
+assert_eq '["red-first", "red-first-workflow"]' "$(py -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["eval"]))' "$PD/proposal.json")"
 it "it never writes to the skill: the repository's file and tree are as they were"
 assert_eq "$SKILL0" "$(cat "$PREPO/plugins/change-record/skills/change/SKILL.md")"; assert_eq "" "$(git -C "$PREPO" status --porcelain)"
 it "what is sent is redacted as for the store, to Claude Sonnet with no tools, and holds the skill, the step's rule, the label's reason and the session's calls"
@@ -1532,10 +1535,16 @@ has "$sentp" "claude sonnet ''"; lacks "$sentp" "$EMAIL"; has "$sentp" "<redacte
 lacks "$sentp" "skill-owner@example.org"; lacks "$(cat "$PD/proposal.md")" "$EMAIL"
 has "$sentp" "2. Write the code."; has "$sentp" "no test was run before greet.py was written"; has "$sentp" "a test run, before the first code"; has "$sentp" "greet.py"
 it "R7: a step no eval case shows says that none does, and that one is needed before the edit can be kept"
+plabel $P2 record-check fail "record-check fails on the session's commits"
+out="$(propose --session $P2 --step record-check)"; assert_eq 0 "$?"
+note="$(cat "$PAR/proposals/$P2/record-check/proposal.md" 2>&1)"
+has "$note" "No eval case shows this failure"; lacks "$note" "plugins/change-record/evals/"
+assert_eq '[]' "$(py -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["eval"]))' "$PAR/proposals/$P2/record-check/proposal.json")"
+it "R7: a step whose case is one of the earlier eight names it with its grader: probe-before-record and probed-facts-labelled"
 plabel $P2 probe-before-record fail "the record was written with nothing looked at"
 out="$(propose --session $P2 --step probe-before-record)"; assert_eq 0 "$?"
 note="$(cat "$PAR/proposals/$P2/probe-before-record/proposal.md" 2>&1)"
-has "$note" "No eval case shows this failure"; lacks "$note" "plugins/change-record/evals/"
+has "$note" "plugins/change-record/evals/probed-facts-labelled\` (grader \`probed-before-record\`) is the eval case for this step"
 it "an answer with no skill file in it, one that changes nothing, a refusal: each is said, exits 1 and leaves no proposal"
 plabel $P2 red-first fail "no test before greet.py"
 printf 'I would add a step.\n<why>x</why>\n' > "$PW/bad1.txt"; printf '<skill>\n%s\n</skill>\n<why>x</why>\n' "$SKILL0" > "$PW/bad2.txt"
@@ -1577,13 +1586,16 @@ out="$(propose --session $P3 --step red-first)"; assert_eq 1 "$?"; has "$out" "d
 it "a session whose index entry is gone from a damaged folder is said to be no session there, with no traceback"
 rm -f "$PAR/sessions/$P3.json"
 out="$(propose --session $P3 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"; lacks "$out" "Traceback"
-it "each eval case a proposal can name is a case the plugin has, a long session is cut to its end, and the calls are said as a person would"
-assert_eq "record-before-code red-first | True True | call 3 | calls 1, 2 and 9 | no call was named" "$(py - "$here/.." <<'PY'
+it "every step but record-check names its eval cases, each a case the plugin has with each grader named in it, a long session is cut to its end, and the calls are said as a person would"
+assert_eq "record-check 8 | True True | call 3 | calls 1, 2 and 9 | no call was named" "$(py - "$here/.." <<'PY'
 import os, sys
 sys.path.insert(0, sys.argv[1] + "/grade")
 import propose
 p = propose.prompt_for("s", "skill", "red-first", "reason", "x" * 100000 + "THE END OF THE SESSION", lambda s: s)
-print(" ".join(sorted(propose.EVALS.values())), "|", all(os.path.isdir(os.path.join(sys.argv[1], "evals", c)) for c in propose.EVALS.values()),
+import fields
+names = [c for s in fields.STEPS for c, _ in propose.EVALS.get(s, [])]
+there = all(os.path.isfile(os.path.join(sys.argv[1], "evals", c, "graders", g + ".md")) for s in propose.EVALS for c, gs in propose.EVALS[s] for g in gs)
+print(" ".join(s for s in fields.STEPS if s not in propose.EVALS), len(names), "|", there and all(propose.EVALS[s] for s in propose.EVALS),
       len(p) < 70000 and "THE END OF THE SESSION" in p, "|", propose.some([3]), "|", propose.some([1, 2, 9]), "|", propose.some([]))
 PY
 )"
@@ -1621,10 +1633,19 @@ PY
 )"
 it "the report lists the proposals a folder holds, each with its step and its eval case, and has no such section when there are none"
 rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
-has "$rep" "## Proposed edits"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"; has "$rep" "| $P2 | probe-before-record | none |"
+has "$rep" "## Proposed edits"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first, plugins/change-record/evals/red-first-workflow |"
+has "$rep" "| $P2 | record-check | none |"; has "$rep" "| $P2 | probe-before-record | plugins/change-record/evals/probed-facts-labelled |"
+it "a proposal drafted before a step could name several cases, one case as a string, is still listed"
+py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["eval"]="red-first"; open(p,"w").write(json.dumps(d))' "$PAR/proposals/$P1/red-first/proposal.json"
+rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"
+it "a proposal whose list of cases holds something that is no name lists only the names, and the report does not stop"
+py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["eval"]=["red-first", None, 3, {"case": "x"}, "red-first-workflow"]; open(p,"w").write(json.dumps(d))' "$PAR/proposals/$P1/red-first/proposal.json"
+rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"; rc=$?; assert_eq 0 "$rc"; lacks "$rep" "Traceback"
+has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first, plugins/change-record/evals/red-first-workflow |"
+py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["eval"]="red-first"; open(p,"w").write(json.dumps(d))' "$PAR/proposals/$P1/red-first/proposal.json"
 (cd "$PREPO" && "$T" grade "$PAR" > /dev/null 2>&1)   # a folder with score rows takes the report's other path
 rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
-has "$rep" "Score rows from"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"
+has "$rep" "Score rows from"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"; has "$rep" "| $P2 | record-check | none |"
 rm -rf "$PAR/proposals"; rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"; lacks "$rep" "Proposed edits"
 
 echo

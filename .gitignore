@@ -1,3 +1,7 @@
 .DS_Store
 evals/results/
 plugins/change-record/evals/results/
+
+# compiled Python, written when the plugin's scripts run
+__pycache__/
+*.pyc

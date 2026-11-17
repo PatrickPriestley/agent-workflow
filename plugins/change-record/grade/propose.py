@@ -25,8 +25,24 @@ BUDGET = 0.5      # dollars one call may spend
 TIMEOUT = 300     # seconds
 SHEET_CAP = 60000  # characters of the session's sheet that are sent: its end, where the calls are
 EVALS_DIR = "plugins/change-record/evals"
-# The eval case that shows a failure of each step, where there is one. A step that is not here has none.
-EVALS = {"red-first": "red-first", "record-before-code": "record-before-code"}
+# The eval cases that show a failure of each step, each with the graders that test the step's rule (record
+# docs/changes/2026-11-17-compare-proposals.md). A step that is not here has none: record-check runs on commits,
+# which the eval runner cannot make. A test holds each case to a folder the plugin has and each grader to a file in it.
+EVALS = {
+    "tier-declared": [("tier-0-no-record", ["declares-tier-0"]), ("tier-2-stops-before-code", ["record-is-tier-2"])],
+    "probe-before-record": [("probed-facts-labelled", ["probed-before-record"])],
+    "record-before-code": [("record-before-code", ["record-before-code"])],
+    "red-first": [("red-first", ["saw-it-fail", "test-run-before-code-change"]),
+                  ("red-first-workflow", ["saw-it-fail", "test-run-before-workflow-change"])],
+    "change-line": [("record-before-code", ["pr-body-names-record"])],
+    # asks more than the step: an Outcome that quotes a run, not only one that is there
+    "outcome-filled": [("outcome-has-real-output", ["outcome-quotes-main-path"])],
+}
+
+
+def cases(step):
+    """The names of the eval cases of a step, in order; none for a step no case shows."""
+    return [c for c, _ in EVALS.get(step, [])]
 # What each step asks, in the words of the README's table of steps (a test holds the two together).
 RULES = {
     "tier-declared": "the record at the session's last commit has tier 0, 1 or 2",
@@ -125,7 +141,9 @@ def some(numbers):
 
 def note(sid, step, skill_name, blob, by, reason, why, calls, got):
     """The proposal's own page: what it is drafted from, why, and the eval case that must show it helps (R7)."""
-    case = EVALS.get(step)
+    named = ", ".join(f"`{EVALS_DIR}/{c}` (grader{'s' if len(gs) > 1 else ''} {', '.join(f'`{g}`' for g in gs)})"
+                      for c, gs in EVALS.get(step, []))
+    many = len(EVALS.get(step, [])) > 1
     cost = f", ${got['cost_usd']:.2f}" if got.get("cost_usd") is not None else ""
     return "\n".join([
         f"# Proposed edit to {skill_name}", "",
@@ -138,10 +156,11 @@ def note(sid, step, skill_name, blob, by, reason, why, calls, got):
         f"- Drafted by: {got.get('served_model') or MODEL}{cost} ({PROPOSE})", "",
         "## Why this edit", "", why or "The answer gave no reason.", "",
         "## The eval case", "",
-        (f"`{EVALS_DIR}/{case}` is the eval case for this step. Check that it shows this failure, and extend it if it "
-         "does not: the case was chosen by the step, not by what this session did. The edit is kept only if the case "
-         "improves with it: run it with and without the proposed file, and keep the edit only when the comparison improves."
-         if case else
+        (f"{named} {'are the eval cases' if many else 'is the eval case'} for this step. Check that "
+         f"{'they show' if many else 'it shows'} this failure, and extend {'them' if many else 'it'} if not: "
+         f"{'they were' if many else 'it was'} chosen by the step, not by what this session did. The edit is kept only if "
+         "the step's graders pass more often with it, run with and without the proposed file."
+         if named else
          "No eval case shows this failure. Write one first (the incident-to-eval skill): until a case shows the failure, "
          "and improves when run with the edit and not without, the edit is not kept."), "",
         "## What to do with it", "",

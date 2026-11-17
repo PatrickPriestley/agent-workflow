@@ -449,14 +449,17 @@ def build(rows, entries, judges, checked=None, read=None, redact=None, skills_of
                 + claims.sections(answers or {}, checked["labels"], groups, label, red))
 
     def proposed():
-        """The edits `transcripts propose` drafted, as (session, step, eval case or None); nothing when there are none."""
+        """The edits `transcripts propose` drafted, as (session, step, eval cases); nothing when there are none. The
+        cases are a list, or one name or None in a proposal drafted before a step could name several."""
         if not proposals:
             return []
         return (["", "## Proposed edits", "",
                  "Each was drafted from a failure a person's label confirms, and is a file beside the transcripts "
                  "(`proposals/<session>/<step>/`), not a change to the skill. One is kept only if its eval case improves "
                  "with it.", "", "| Session | Step | Eval case |", "|---|---|---|"]
-                + [f"| {sid} | {step} | {'plugins/change-record/evals/' + case if case else 'none'} |" for sid, step, case in proposals])
+                + [f"| {sid} | {step} | {', '.join('plugins/change-record/evals/' + c for c in named) or 'none'} |"
+                   for sid, step, case in proposals
+                   for named in [[case] if isinstance(case, str) else [c for c in case or [] if isinstance(c, str)]]])
 
     if not rows:
         return red("\n".join(["# Change skill report", "",
