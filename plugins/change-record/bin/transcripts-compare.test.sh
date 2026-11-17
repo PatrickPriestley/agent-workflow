@@ -203,6 +203,15 @@ done
 it "a run with no result for one of the step's graders gives no verdict, naming the grader"
 export FAKE_EVAL="$(py -c 'import json,sys; g=json.loads(sys.argv[1]); e=dict(g); e["red-first"]=[{"saw-it-fail": True}]; print(json.dumps({"current": g, "edit": e}))' "$good")"
 out="$(compare --step red-first --run --runs 1)"; assert_eq 1 "$?"; has "$out" "a run has no test-run-before-code-change"
+it "an arm with fewer runs than were asked gives no verdict: raw counts of unequal runs are not compared"
+export FAKE_EVAL="$(py -c '
+import json, sys
+g = json.loads(sys.argv[1]); e = json.loads(sys.argv[1])
+g["red-first"] = [{"saw-it-fail": False, "test-run-before-code-change": True}]
+e["red-first"] = [{"saw-it-fail": False, "test-run-before-code-change": True}] * 2
+g["red-first-workflow"] = g["red-first-workflow"] * 2; e["red-first-workflow"] = e["red-first-workflow"] * 2
+print(json.dumps({"current": g, "edit": e}))' "$good")"
+out="$(compare --step red-first --run --runs 2)"; assert_eq 1 "$?"; has "$out" "no verdict"; has "$out" "red-first (current): 1 run of the 2 asked"
 it "a grader the runner does not score is not counted: failing it alone would have made the edit's case lower"
 export FAKE_EVAL="$(py -c '
 import json, sys
