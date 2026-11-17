@@ -2674,7 +2674,8 @@ def cmd_compare(args):
         return 0
     work = os.path.join(d, "compare", sid, step)
     copy = os.path.join(work, "plugin")
-    if not os.path.realpath(work).startswith(os.path.realpath(os.path.join(d, "compare")) + os.sep):
+    # anchored to DIR's own real path, so a link at DIR/compare or below it cannot carry the delete elsewhere
+    if not os.path.realpath(work).startswith(os.path.join(os.path.realpath(d), "compare") + os.sep):
         say(f"the comparison's folder {work} is not inside {os.path.join(d, 'compare')}: nothing was deleted or run")
         return 1
     shutil.rmtree(work, ignore_errors=True)
