@@ -18,7 +18,7 @@ guess a file name.
 | `outcome-has-real-output` | The Outcome quotes real runs, main path and error path |
 | `red-first` | The agent still sees the test fail before changing the code (the `agent-workflow` case, against this skill) |
 | `no-routine-questions` | Routine choices are decided and recorded, not asked |
-| `red-first-workflow` | The same as `red-first` where the code is a CI workflow file: a test of the workflow is seen failing before `.github/workflows/test.yml` changes. Added 2026-11-17 and not yet run, so it has no row in the results below |
+| `red-first-workflow` | The same as `red-first` where the code is a CI workflow file: a test of the workflow is seen failing before `.github/workflows/test.yml` changes |
 
 The `skill-fired` grader in each case is the activation indicator under with/without ablation,
 not part of the score. `evals/cases.test.cjs` checks that every case is well formed and that
@@ -106,6 +106,13 @@ because its guard looked at where the tool call begins and not at its command. T
 grader of `red-first` already failed such a run, so it scored half and now scores nothing. No
 trace of the runs above is kept, so whether any of them was such a run is not known; with
 the plugin the case scored 1.00, which no such run could have given.
+
+`red-first-workflow` was added later and run on its own, on 2026-11-17 with Claude Code
+2.1.326, two runs an arm, 0.44 USD: with the plugin 1.00 and 0.50, without 0.00 and 0.00, a
+delta of +0.75. The run with the plugin that scored half ran the tests green and then edited
+the workflow, without a failing test first. With two runs an arm, read it as showing that the
+case separates the arms, not by how much. Every verdict was checked against its trace by hand
+(record `2026-11-17-eval-workflow-red-first`).
 
 ## Running them
 

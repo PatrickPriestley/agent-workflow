@@ -1,7 +1,7 @@
 ---
 id: 2026-11-17-eval-workflow-red-first
 tier: 1
-status: open
+status: done
 requester: Patrick Priestley, in chat on 2026-11-16 ("What's left to implement for self improvement"; then "Run it" on the first proposal, whose record names this case as the next step)
 approvers: []
 ---
@@ -200,17 +200,47 @@ ran out of file handles), which failed every test that commits a scratch reposit
 five breaks whose results that touched were run again with signing off for the scratch
 repositories, and the list above is from those runs.
 
+The real use, with the owner's leave ("Yes", in chat on 2026-11-17), on the final code:
+
+```
+$ claude plugin eval plugins/change-record --case red-first-workflow --scaffold \
+    --allow-tools Bash Write Edit --trust-plugin --no-publish --runs 2 -j 4 --max-cost-usd 2
+Claude Code 2.1.326; 4 runs, $0.44, 24 seconds
+with the plugin:    1.00 and 0.50 (mean 0.75), the skill fired in both
+without:            0.00 and 0.00
+delta:              +0.75
+```
+
+Each of the eight verdicts read against its trace by hand, and each is right:
+
+| Run | Before the workflow changed | `test-run-before` | `saw-it-fail` |
+|---|---|---|---|
+| with 1 | added a test that `macos-latest` is in the workflow; `Ran 3 tests ... FAILED (failures=1)`; then the edit; then `Ran 3 tests ... OK` | pass | pass |
+| with 2 | ran the tests (2, OK), then the edit; no failing test | pass | fail |
+| without 1 | read the files, then the edit, then ran the tests | fail | fail |
+| without 2 | the edit at its third call, then ran the tests | fail | fail |
+
+So the case tells the plugin from no plugin, and the graders read real traces of a workflow
+edit as the fixtures said. The second run with the plugin is the failure the session behind
+the proposals showed: it treated a green run as enough before editing the workflow. That is
+the run an edit to the skill has to change.
+
+The error path, in the same run: every shell command in this runner version reported exit 1
+and `Read-only file system`, from the sandbox's own tracking of the working directory, after
+the command's real output. The graders did not take that for a failed test: a green run so
+flagged did not pass `saw-it-fail` (with 2), since it looks for unittest's own failure in
+the call's own result.
+
 Not done, and not verified:
 
-- No agent has run the case. `claude plugin eval plugins/change-record --case
-  red-first-workflow` spends model calls and waits for the owner's leave, so whether the
-  case tells the plugin from no plugin, and the graders' patterns against a real trace of a
-  workflow edit, are not known. The patterns are checked against fixtures in the encoding
-  of the earlier runs' traces. The record stays `open` until that run is in, or the owner
-  says to leave it out.
+- Two runs an arm. With so few, one run moves a mean by half; the result says the case
+  can separate the arms, not by how much.
 - The graders see a write of the workflow file by the Edit and Write tools, a redirect,
   `tee`, `cp` and `sed -i`. A write from inside a script (`python3 -c`, `yq -i`) is not
   seen, as in `red-first`.
 - `verify` has nothing to check for this case: both statements are about the transcript.
   Its change is held by a test with a case made for it, not by a real one.
 - The case for a test that can run only in CI is not written: see Decisions.
+- The comparison C5 asks for, the case run with each proposed edit in the skill and
+  without, is a change of its own: the edits were drafted on an older skill and must first
+  be made again on the current one.
