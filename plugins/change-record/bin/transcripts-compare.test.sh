@@ -67,8 +67,11 @@ arm = "edit" if "EDITED" in open(os.path.join(plugin, "skills", "change", "SKILL
 spec = json.loads(os.environ["FAKE_EVAL"])[arm][case]
 if isinstance(spec, str) and spec.startswith("exit:"):
     sys.exit(int(spec[5:]))
+if spec == "nojson":
+    sys.exit(0)
 runs = [{"error": "the agent timed out", "graders": []}] if spec == "error" else [
-    {"error": None, "costUsd": 0.1, "graders": [{"name": g, "passed": v, "scored": True} for g, v in run.items()]}
+    {"error": None, "costUsd": 0.1, "graders": [{"name": g.replace("unscored:", ""), "passed": v, "scored": not g.startswith("unscored:")}
+                                                for g, v in run.items()]}
     for run in (spec if isinstance(spec, list) else [])]
 names = sorted({g["name"] for r in runs for g in r["graders"]})
 graders = [{"name": n, "type": "tool_used", "config": {"tool": "Skill"}} if n == "skill-fired"
@@ -195,6 +198,22 @@ for bad in error partial exit:2; do
   out="$(compare --step red-first --run --runs 1)"; assert_eq 1 "$?"; has "$out" "no verdict"; has "$out" "red-first-workflow"
   assert_eq "none" "$(py -c 'import json,sys; print(json.load(open(sys.argv[1]))["verdict"])' "$cj")"
 done
+it "a run with no result for one of the step's graders gives no verdict, naming the grader"
+export FAKE_EVAL="$(py -c 'import json,sys; g=json.loads(sys.argv[1]); e=dict(g); e["red-first"]=[{"saw-it-fail": True}]; print(json.dumps({"current": g, "edit": e}))' "$good")"
+out="$(compare --step red-first --run --runs 1)"; assert_eq 1 "$?"; has "$out" "a run has no test-run-before-code-change"
+it "a grader the runner does not score is not counted: failing it alone would have made the edit's case lower"
+export FAKE_EVAL="$(py -c '
+import json, sys
+g = json.loads(sys.argv[1]); e = json.loads(sys.argv[1])
+g["red-first"] = [{"saw-it-fail": False, "test-run-before-code-change": True, "unscored:paid": True}]
+e["red-first"] = [{"saw-it-fail": True, "test-run-before-code-change": True, "unscored:paid": False}]
+print(json.dumps({"current": g, "edit": e}))' "$good")"
+out="$(compare --step red-first --run --runs 1)"; assert_eq 0 "$?"; has "$out" "keep"
+it "a runner that exits 0 and writes no result gives no verdict, even where an earlier run left one"
+export FAKE_EVAL="$(py -c 'import json,sys; g=json.loads(sys.argv[1]); print(json.dumps({"current": g, "edit": g}))' "$good")"
+compare --step red-first --run --runs 1 > /dev/null
+export FAKE_EVAL="$(py -c 'import json,sys; g=json.loads(sys.argv[1]); e=dict(g); e["red-first"]="nojson"; print(json.dumps({"current": g, "edit": e}))' "$good")"
+out="$(compare --step red-first --run --runs 1)"; assert_eq 1 "$?"; has "$out" "red-first (edit): no result"
 it "no claude to run gives no verdict, never a traceback"
 out="$(cd "$REPO" && PATH="/usr/bin:/bin" "$T" compare "$D" --session "$SID" --step red-first --run 2>&1)"; assert_eq 1 "$?"
 has "$out" "no verdict"; lacks "$out" "Traceback"
@@ -209,6 +228,12 @@ has "$copy" "A line added later."; has "$copy" "2. Write a test, see it fail. ED
 it "a skill that changed where the edit goes: it says the edit must be made again by hand, and runs nothing"
 printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write the code, then its tests.\n3. Open the pull request.\n' > "$P/skills/change/SKILL.md"
 : > "$FAKELOG"; out="$(compare --step red-first --run)"; assert_eq 1 "$?"; has "$out" "does not apply"; has "$out" "by hand"; assert_eq 0 "$(calls)"
+it "a part of the edit that stands more than once in the skill as it is now: it is not guessed at, and nothing runs"
+printf '%s\n\n%s\n' "$USED" "$USED" > "$P/skills/change/SKILL.md"   # the whole file twice: every part of the diff stands twice
+: > "$FAKELOG"; out="$(compare --step red-first --run)"; assert_eq 1 "$?"; has "$out" "more than once"; assert_eq 0 "$(calls)"
+it "an empty diff is no edit, and nothing runs"
+printf '%s\n\nA line added later.\n' "$USED" > "$P/skills/change/SKILL.md"; : > "$D/proposals/$SID/red-first/SKILL.diff"
+: > "$FAKELOG"; out="$(compare --step red-first --run)"; assert_eq 1 "$?"; has "$out" "holds no change"; assert_eq 0 "$(calls)"
 git -C "$REPO" checkout -q -- .
 
 echo
