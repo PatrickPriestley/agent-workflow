@@ -185,11 +185,13 @@ skill from one failure, and only from one a person's label confirms. It makes on
 Claude Sonnet with the skill text the session used, the step's rule, the labeller's reason
 and the session's calls, and writes the draft beside the transcripts; it never touches the
 skill. A draft enters the skill only as a change of its own, with its record, and only if
-the eval case for that failure scores better with the edit than without. The first pass
+the eval case for that failure scores better with the edit than without; `transcripts compare`
+runs that comparison from a proposal, and says what it would spend before it runs. The first pass
 through the whole loop: a labelled session edited a CI workflow before any test had failed;
 two drafted edits followed; a new eval case, `red-first-workflow`, reproduced the failure
 (with the skill 1.00 and 0.50 over two runs, without it 0.00 and 0.00); and the edit that
-matches the owner's ruling is being run against the current skill (record
+matches the owner's ruling was run against the current skill: a test was seen failing first in 6
+of 6 runs with it and 3 of 6 without, so it is in the skill (record
 `docs/changes/2026-11-17-skill-red-first-workflow.md`).
 
 What stays with people: labelling, choosing which sessions are sent to a model, approving
