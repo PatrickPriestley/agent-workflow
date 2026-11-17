@@ -1,0 +1,11 @@
+name: ci-probe
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  ci-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash ci-probe/ci-only.test.sh
