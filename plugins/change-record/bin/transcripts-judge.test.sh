@@ -1524,7 +1524,7 @@ it "R7: the note names every eval case of the step and the graders that show it,
 has "$note" "plugins/change-record/evals/red-first\` (graders \`saw-it-fail\`, \`test-run-before-code-change\`)"
 has "$note" "plugins/change-record/evals/red-first-workflow\` (graders \`saw-it-fail\`, \`test-run-before-workflow-change\`)"
 has "$note" "with and without"; has "$note" "are the eval cases for this step"; has "$note" "Check that they show this failure"
-has "$note" "transcripts compare"
+has "$note" "run with and without the proposed file"; lacks "$note" "transcripts compare"   # not in this version
 assert_eq '["red-first", "red-first-workflow"]' "$(py -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["eval"]))' "$PD/proposal.json")"
 it "it never writes to the skill: the repository's file and tree are as they were"
 assert_eq "$SKILL0" "$(cat "$PREPO/plugins/change-record/skills/change/SKILL.md")"; assert_eq "" "$(git -C "$PREPO" status --porcelain)"
