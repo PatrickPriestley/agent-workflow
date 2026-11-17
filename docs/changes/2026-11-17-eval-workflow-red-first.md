@@ -150,7 +150,7 @@ The two that survived were gaps in the tests, closed and broken again: a workflo
 and a test run in one command, and which case a shared folder is named for. The first gap
 is what showed the hole in `saw-it-fail`, in the new grader and in the one it was copied
 from. All 35 are caught on the final code, by the test that failed first for each, with
-four more added after the review below:
+eight more added after the reviews below:
 
 - `one command that writes the code and runs the tests is not a run before the code`:
   - red-first saw-it-fail: a failing run in the command that writes greet.py counts
@@ -180,6 +180,8 @@ four more added after the review below:
 - `red-first-workflow: a test run counts only before the workflow file is first written, by a tool or by the shell`:
   - test-run grader: a write by the repository's absolute path is not a write
   - test-run grader: any absolute path is the workflow, a scratch copy too
+  - test-run grader: a write from inside `.github/` is not a write
+  - test-run grader: a Write or Edit of a scratch copy is a write of the workflow
   - test-run grader: a Write of the workflow is not a write
   - test-run grader: a shell redirect onto the workflow is not a write
   - test-run grader: a write and a run in one command count as a run first
@@ -190,6 +192,8 @@ four more added after the review below:
 - `red-first-workflow: saw-it-fail needs a failing test run before the workflow file changes`:
   - saw-it-fail: a write by the repository's absolute path is not a write
   - saw-it-fail: any absolute path is the workflow, a scratch copy too
+  - saw-it-fail: a write from inside `.github/` is not a write
+  - saw-it-fail: a Write or Edit of a scratch copy is a write of the workflow
   - saw-it-fail: a failing run in the command that writes the workflow counts
   - saw-it-fail: a green run counts
   - saw-it-fail: a shell redirect onto the workflow is not a write
@@ -208,6 +212,14 @@ was missing was a fixture for each side of it in this case: a write by the repos
 absolute path fails both graders, and a scratch copy does not. Each was broken by hand both
 ways: with the `/cwd/` path taken out, and with any absolute path counted, as the review
 proposed.
+
+Its third pass found two more, both real and both fixed test first in the two graders:
+`cd .github && sed -i ... workflows/test.yml` was not seen as a write of the workflow, and a
+Write or Edit of a scratch copy (`/tmp/try/.github/workflows/test.yml`) was, which the shell's
+rule above does not count. A tool's write now counts only at the repository's own path, and
+the shell's at `workflows/test.yml` too. Each of the two pieces was put back in each grader
+and caught. The four real traces were scored again with the changed graders: the same eight
+verdicts.
 
 During the second round the container's commit signing began to fail (its session manager
 ran out of file handles), which failed every test that commits a scratch repository. The
@@ -255,6 +267,9 @@ Not done, and not verified:
 - `verify` has nothing to check for this case: both statements are about the transcript.
   Its change is held by a test with a case made for it, not by a real one.
 - The case for a test that can run only in CI is not written: see Decisions.
+- `red-first`'s graders still count a Write or Edit of a scratch copy of `greet.py` as a write
+  of the code, unlike its shell rule. That fails a run, never passes one, and no earlier trace
+  is kept to say whether any run did it; it is left to a change of its own.
 - The comparison C5 asks for, the case run with each proposed edit in the skill and
   without, is a change of its own: the edits were drafted on an older skill and must first
   be made again on the current one.
