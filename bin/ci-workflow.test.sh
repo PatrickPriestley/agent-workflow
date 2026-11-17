@@ -43,6 +43,17 @@ it "the Linux runner is given a PostgreSQL before the store's schema suite, whic
 pg="$(printf '%s\n' "$w" | sed -n "/name: A PostgreSQL for the store's schema (Linux)/,/name: red-check/p")"
 has "$pg" "if: \${{ runner.os == 'Linux' }}"; has "$pg" "apt-get install -y -q postgresql"; has "$pg" 'echo "SCHEMA_TEST_REQUIRED=1" >> "$GITHUB_ENV"'
 has "$w" "run: bash plugins/change-record/store/schema.test.sh"
+it "both suite jobs ask git to sign with a program that always fails, before their first suite, so a suite that signs in a scratch repository fails (record 2026-11-17-unsigned-scratch-commits)"
+for job in "test:/change-record:" "change-record:/pr-size:"; do
+  j="$(printf '%s\n' "$w" | sed -n "/^  ${job%%/*}\$/,/^  ${job##*/}\$/p")"
+  step="$(printf '%s\n' "$j" | sed -n '/name: A signing program that always fails/,/- name:/p')"
+  has "$step" 'git config --global commit.gpgsign true'; has "$step" 'git config --global tag.gpgsign true'
+  has "$step" 'git config --global gpg.program "$RUNNER_TEMP/signer"'; has "$step" 'exit 1'
+  at="$(printf '%s\n' "$j" | grep -n 'name: A signing program that always fails' | cut -d: -f1)"
+  first="$(printf '%s\n' "$j" | grep -n 'run: \(bash\|node\|for t\)' | head -n1 | cut -d: -f1)"
+  [ -n "$at" ] && [ -n "$first" ] && [ "$at" -lt "$first" ] && ok || bad "${job%%/*} the step is at line [$at], the first suite at [$first]"
+done
+
 it "this test runs in CI"
 has "$w" "run: bash bin/ci-workflow.test.sh"
 

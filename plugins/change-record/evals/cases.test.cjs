@@ -43,6 +43,37 @@ test('the shared scaffold builds a committed repository with docs/changes/ from 
     assert.equal(t.status,0,t.stderr);
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
+// A machine may sign every commit (commit.gpgsign), and the suites make thousands; a signing
+// service that ran out of file handles once failed every test that commits (record
+// 2026-11-17-unsigned-scratch-commits). So no scaffold signs: here the global configuration
+// asks for signing with a program that records each call and fails.
+test('no scaffold signs a commit or a tag, whatever the global configuration asks',()=>{
+  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cr-sign-'));
+  try{
+    const calls=path.join(tmp,'calls'), signer=path.join(tmp,'signer'), config=path.join(tmp,'gitconfig');
+    fs.writeFileSync(signer,`#!/bin/sh\necho "$*" >> '${calls}'\nexit 1\n`,{mode:0o755});
+    fs.writeFileSync(config,['[user]','\tname = Signer','\temail = signer@example.com','\tsigningkey = /no/such/key.pub',
+      '[commit]','\tgpgsign = true','[tag]','\tgpgsign = true',`[gpg]`,`\tprogram = ${signer}`,`[gpg "ssh"]`,`\tprogram = ${signer}`,''].join('\n'));
+    const env={...process.env,GIT_CONFIG_GLOBAL:config};
+    const plugin=path.join(root,'..');
+    const scaffolds=[
+      ...cases.map(c=>[c,path.join(root,c,'scaffold.sh'),[]]),
+      ...fs.readdirSync(path.join(plugin,'outcome-evals/tasks')).filter(t=>fs.existsSync(path.join(plugin,'outcome-evals/tasks',t,'scaffold.sh')))
+        .map(t=>[`outcome task ${t}`,path.join(plugin,'outcome-evals/tasks',t,'scaffold.sh'),[]]),
+      ['ci/scratch.sh',path.join(plugin,'ci/scratch.sh'),['repo']],
+    ];
+    assert.ok(scaffolds.length>=14,scaffolds.map(s=>s[0]).join(','));
+    for(const [name,script,args] of scaffolds){
+      const scratch=fs.mkdtempSync(path.join(tmp,'s-'));
+      const r=spawnSync('bash',[script,...args],{cwd:scratch,env,encoding:'utf8'});
+      assert.equal(r.status,0,`${name}: ${r.stderr}`);
+      const repo=args.length?path.join(scratch,args[0]):scratch;
+      const n=spawnSync('git',['-C',repo,'rev-list','--count','--all'],{env,encoding:'utf8'});
+      assert.ok(Number(n.stdout)>=1,`${name}: no commit was made (${n.stderr})`);
+    }
+    assert.equal(fs.existsSync(calls)?fs.readFileSync(calls,'utf8'):'','','the signing program was called');
+  } finally { fs.rmSync(tmp,{recursive:true,force:true}); }
+});
 
 // The regex graders, run against fixtures in the trace's own encoding (one JSON object per
 // tool call, as trace.jsonl holds them), so a grader that recognises a record only when the
