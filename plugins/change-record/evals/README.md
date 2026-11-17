@@ -114,6 +114,14 @@ the workflow, without a failing test first. With two runs an arm, read it as sho
 case separates the arms, not by how much. Every verdict was checked against its trace by hand
 (record `2026-11-17-eval-workflow-red-first`).
 
+The case then measured an edit to step 3 of the skill, drafted by `transcripts propose` from
+a labelled failure (record `2026-11-17-skill-red-first-workflow`): six runs with the current
+skill and six with the edit, no arm without the plugin. A test was seen failing before the
+workflow changed in 3 of 6 runs with the current skill and 6 of 6 with the edit (scored
+mean 0.75 and 1.00), so the edit is in the skill. In the misses, the agent appended a test
+that never ran, saw the old tests pass, and edited the workflow; with the edit, the same slip
+was followed by a fixed test, a red run, and only then the edit.
+
 ## Running them
 
     claude plugin eval plugins/change-record --scaffold --allow-tools Bash Write Edit --trust-plugin --no-publish --runs 3 -j 4

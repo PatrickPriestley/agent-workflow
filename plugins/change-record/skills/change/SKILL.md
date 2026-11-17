@@ -44,7 +44,11 @@ For each task:
    `references/splitting.md`.
 3. **Red, then green.** Write the test, run it, see it fail on an assertion about the
    missing behaviour (a test that fails on an import or compile error has not run, and shows
-   nothing), commit the test, make it pass, run the whole suite, commit. Where the repository
+   nothing), commit the test, make it pass, run the whole suite, commit. Code is any file
+   outside docs, tests and fixtures, a CI workflow file included: no such file is edited
+   until a test run has reported a failed test. Reading and searching are not a run. When the
+   test can only run in CI, push the test or job alone as a draft, read its red log, and only
+   then write the fix. Where the repository
    runs `red-check`, locally or in CI, it verifies this with verdicts: red, green on the base
    (fails), inconclusive (did not run), no tests (a helper, not judged).
 4. **Guards.** Run the language's mutation tool on the changed files where one exists;
