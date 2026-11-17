@@ -115,6 +115,12 @@ py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["skill"]="change-
 rm "$P/skills/linked"
 assert_eq "$USED" "$(cat "$VICTIM/SKILL.md")"; assert_eq "no" "$([ -e "$D/compare" ] && echo yes || echo no)"
 cp "$TMPROOT/proposal.keep" "$D/proposals/$SID/red-first/proposal.json"
+it "a session that is a path, not one id, is refused before anything is read, run or deleted"
+ELSE="$TMPROOT/elsewhere"; mkdir -p "$ELSE/red-first"; cp "$D/proposals/$SID/red-first/"* "$ELSE/red-first/"; printf 'keep me\n' > "$ELSE/red-first/unrelated.txt"
+for bad in "$ELSE" "../../elsewhere" "a/b" "." ".."; do
+  : > "$FAKELOG"; out="$(cd "$REPO" && "$T" compare "$D" --session "$bad" --step red-first --run 2>&1)"; assert_eq 2 "$?"; has "$out" "not one session id"; assert_eq 0 "$(calls)"
+done
+assert_eq "keep me" "$(cat "$ELSE/red-first/unrelated.txt" 2>&1)"
 it "a step no eval case shows says that one is written first, and runs nothing"
 proposal "$SID" record-check
 out="$(compare --step record-check)"; assert_eq 1 "$?"; has "$out" "no eval case shows a failure of record-check"; assert_eq 0 "$(calls)"
