@@ -45,7 +45,6 @@ it than without, as concern C5 of record `2026-11-12-session-quality` asks.
   ends `abandoned` with the numbers. Rejected: keeping it on a tie, which C5 does not allow.
 - The edit's arm runs the same plugin with only `SKILL.md` changed, from a copy outside the
   repository, so the two arms differ by that file alone.
-
 - The root README gains a section on the whole loop (tracking, judgement, self-improvement),
   and the plugin README's Transcripts section an outline of how its parts fit, as the owner
   asked in chat on 2026-11-17 ("update the readme to include details about the transcription
