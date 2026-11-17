@@ -695,6 +695,8 @@ const sedAbsWorkflow=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu
 const scratchWorkflow=call('Bash',{command:`mkdir -p /tmp/try/.github/workflows && cp ${wf} /tmp/try/${wf} && sed -i 's/ubuntu-latest/macos-latest/' /tmp/try/${wf}`});
 // a write from inside .github/ names the file workflows/test.yml
 const cdGithubSed=call('Bash',{command:"cd .github && sed -i 's/ubuntu-latest/macos-latest/' workflows/test.yml"});
+// and from another folder of the repository, ../.github/workflows/test.yml
+const cdTestsSed=call('Bash',{command:"cd tests && sed -i 's/ubuntu-latest/macos-latest/' ../.github/workflows/test.yml"});
 // Write and Edit of a scratch copy outside the repository, as the shell's scratch copy above
 const writeScratchWf=call('Write',{file_path:`/tmp/try/${wf}`,content:'name: test\n'});
 const editScratchWf=call('Edit',{file_path:`/tmp/try/${wf}`,old_string:'os: [ubuntu-latest]',new_string:'os: [ubuntu-latest, macos-latest]'});
@@ -730,6 +732,7 @@ test('red-first-workflow: a test run counts only before the workflow file is fir
   assert.ok(!trb.test(sedAbsWorkflow+unittest),'the workflow written by the absolute path of the repository, then a run');
   assert.ok(trb.test(scratchWorkflow+unittest+editWorkflow),'a scratch copy outside the repository is not the workflow');
   assert.ok(!trb.test(cdGithubSed+unittest),'the workflow written from inside .github/, then a run');
+  assert.ok(!trb.test(cdTestsSed+unittest),'the workflow written from inside tests/, then a run');
   for(const s of [writeScratchWf,editScratchWf]) assert.ok(trb.test(s+unittest+editWorkflow),`a scratch copy by ${JSON.parse(s).message.content[0].name} is not the workflow`);
   assert.ok(!trb.test(writeWorkflowTest+sedAndRun),'the workflow changed and the tests run in one command is not a run before the change');
 });
@@ -742,6 +745,7 @@ test('red-first-workflow: saw-it-fail needs a failing test run before the workfl
   assert.ok(!re.test(writeWorkflowTest+sedAbsWorkflow+unittest+failed),'the workflow written by the absolute path of the repository, then red');
   assert.ok(re.test(writeWorkflowTest+scratchWorkflow+unittest+failed+editWorkflow),'a scratch copy, then red, then the edit');
   assert.ok(!re.test(writeWorkflowTest+cdGithubSed+unittest+failed),'the workflow written from inside .github/, then red');
+  assert.ok(!re.test(writeWorkflowTest+cdTestsSed+unittest+failed),'the workflow written from inside tests/, then red');
   for(const s of [writeScratchWf,editScratchWf]) assert.ok(re.test(writeWorkflowTest+s+unittest+failed+editWorkflow),`a scratch copy by ${JSON.parse(s).message.content[0].name}, then red, then the edit`);
   assert.ok(!re.test(writeWorkflowTest+sedAndRun+failed),'the workflow changed and the tests run in one command: the failure is not before the change');
   assert.ok(!re.test(writeWorkflowTest+unittest+passed+call('Bash',{command:'python3 -c "assert 0"'},'toolu_02')+result('Exit code 1\nAssertionError',true,'toolu_02')+editWorkflow),'the failure of another command is not the test run\'s');
