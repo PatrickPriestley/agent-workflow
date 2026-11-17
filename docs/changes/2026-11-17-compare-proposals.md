@@ -123,12 +123,14 @@ names no command, and task 2 names it.
 Task 2, `transcripts compare`. Built test first: the suite of `compare` against a stand-in
 for the eval runner (61 failing with no such command), then `grade/compare.py` and the
 command; then tests for five guards the first tests left open, before any break was tried.
+With the command here, the proposal page names it again, as `transcripts compare --session
+<id> --step <step>`: a test asking for that line failed first, then the page gave it.
 
 ```
 $ bash plugins/change-record/bin/transcripts-compare.test.sh | tail -1
 transcripts compare: 89 passed, 0 failed
 $ bash plugins/change-record/bin/transcripts-judge.test.sh | tail -1
-transcripts judge and report: 526 passed, 0 failed
+transcripts judge and report: 530 passed, 0 failed
 ```
 
 The other suites that read what changed:
