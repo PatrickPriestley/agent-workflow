@@ -146,6 +146,7 @@ test('one command that writes the code and runs the tests is not a run before th
   const trb=grader('red-first','test-run-before-code-change.md').re;
   const both=call('Bash',{command:"cat > greet.py <<'EOF'\nimport sys\nEOF\npython3 -m unittest discover -s tests -t ."});
   assert.ok(!trb.test(writeTest+both),'write and run in one command');
+  assert.ok(!grader('red-first','saw-it-fail.md').re.test(writeTest+both+failed),'write and run in one command, and the run failed: the failure is not before the code');
   assert.ok(trb.test(writeTest+unittest+failed+writeGreet),'run, then write');
   const pbr=grader('probed-facts-labelled','probed-before-record.md').re;
   const probeAndRecord=call('Bash',{command:`python3 -c "import fileinput" && cat > docs/changes/2026-11-08-names-file.md <<'EOF'\n---\nEOF`});
@@ -457,6 +458,12 @@ test('the generator refuses a case it cannot state: a grader with no statement, 
     assert.equal(run().status,0);
     const again=JSON.parse(fs.readFileSync(path.join(out,'evals.json'),'utf8')).evals;
     assert.ok(again.find(e=>e.name==='decisions-record-alternatives').files.includes('evals/files/repo-decisions-record-alternatives/first.txt'));
+    // two cases that start from the same other repository share a folder, named for the first of them
+    fs.copyFileSync(path.join(dir,'decisions-record-alternatives','scaffold.sh'),path.join(dir,'tier-0-no-record','scaffold.sh'));
+    assert.equal(run().status,0);
+    const shared=JSON.parse(fs.readFileSync(path.join(out,'evals.json'),'utf8')).evals.find(e=>e.name==='tier-0-no-record');
+    assert.ok(shared.files.includes('evals/files/repo-decisions-record-alternatives/first.txt'),shared.files.join(','));
+    assert.ok(!fs.existsSync(path.join(out,'files','repo-tier-0-no-record')));
     assert.ok(again.find(e=>e.name==='red-first').files.every(f=>f.startsWith('evals/files/repo/')));
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
@@ -682,6 +689,7 @@ const sedWorkflow=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu-la
 const cdWorkflow=call('Bash',{command:`cd .github/workflows && cat > test.yml <<'EOF'\nname: test\nEOF`});
 const readWorkflow=call('Bash',{command:`cat ${wf}; ls .github/workflows`})+call('Read',{file_path:`${cwd}${wf}`});
 const writeWorkflowTest=call('Write',{file_path:`${cwd}tests/test_workflow.py`,content:'import unittest\n'});
+const sedAndRun=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu-latest, macos-latest]/' ${wf} && python3 -m unittest discover -s tests -t .`});
 test('the red-first-workflow scaffold adds a workflow file and a passing test of it to the shared repository, and the shared one has neither',()=>{
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'cr-eval-wf-'));
   try{
@@ -710,6 +718,7 @@ test('red-first-workflow: a test run counts only before the workflow file is fir
   assert.ok(trb.test(readWorkflow+writeWorkflowTest+unittest+writeWorkflow),'reading the workflow and writing its test are not writing it');
   for(const w of [editWorkflow,writeWorkflow,heredocWorkflow,sedWorkflow,cdWorkflow]) assert.ok(!trb.test(w+unittest),`the workflow first: ${w.slice(60,140)}`);
   assert.ok(trb.test(writeGreet+unittest+editWorkflow),'greet.py is not the code of this case');
+  assert.ok(!trb.test(writeWorkflowTest+sedAndRun),'the workflow changed and the tests run in one command is not a run before the change');
 });
 test('red-first-workflow: saw-it-fail needs a failing test run before the workflow file changes',()=>{
   const re=grader('red-first-workflow','saw-it-fail.md').re;
@@ -717,6 +726,8 @@ test('red-first-workflow: saw-it-fail needs a failing test run before the workfl
   assert.ok(!re.test(writeWorkflowTest+unittest+passed+editWorkflow+unittest+failed),'green, the edit, then red');
   for(const w of [editWorkflow,heredocWorkflow,sedWorkflow,cdWorkflow]) assert.ok(!re.test(writeWorkflowTest+w+unittest+failed),`the workflow first, then red: ${w.slice(60,140)}`);
   assert.ok(!re.test(writeWorkflowTest+unittest+result('Exit code 1\nTraceback\nSyntaxError: invalid syntax',true)+editWorkflow),'a run that did not reach the tests is not a failing test');
+  assert.ok(!re.test(writeWorkflowTest+sedAndRun+failed),'the workflow changed and the tests run in one command: the failure is not before the change');
+  assert.ok(!re.test(writeWorkflowTest+unittest+passed+call('Bash',{command:'python3 -c "assert 0"'},'toolu_02')+result('Exit code 1\nAssertionError',true,'toolu_02')+editWorkflow),'the failure of another command is not the test run\'s');
 });
 test('verify compares an unchanged file with the repository its own case starts from, not with another case\'s',()=>{
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'cr-verify-own-'));
