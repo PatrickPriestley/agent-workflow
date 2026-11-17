@@ -18,10 +18,16 @@ guess a file name.
 | `outcome-has-real-output` | The Outcome quotes real runs, main path and error path |
 | `red-first` | The agent still sees the test fail before changing the code (the `agent-workflow` case, against this skill) |
 | `no-routine-questions` | Routine choices are decided and recorded, not asked |
+| `red-first-workflow` | The same as `red-first` where the code is a CI workflow file: a test of the workflow is seen failing before `.github/workflows/test.yml` changes. Added 2026-11-17 and not yet run, so it has no row in the results below |
 
 The `skill-fired` grader in each case is the activation indicator under with/without ablation,
 not part of the score. `evals/cases.test.cjs` checks that every case is well formed and that
 the scaffold builds, without running an agent.
+
+`red-first-workflow` starts from a repository of its own: its `scaffold.sh` runs the shared
+scaffold and then commits a workflow file and a test that reads it. The workflow is not in
+the shared scaffold because `outcome-evals/` builds its tasks on that scaffold too, and its
+checks count the files a task may touch.
 
 ## Results
 
@@ -119,10 +125,10 @@ or left behind. What each entry holds:
 
 | Field | From |
 |---|---|
-| `id`, `name` | 1 to 8 in the folders' alphabetical order, and the folder's name (`name` is outside the guide; the tools read so far accept it) |
-| `prompt` | `prompt.md`, after one sentence saying that the repository is the input files' `repo/` folder |
+| `id`, `name` | 1 to 9 in the folders' alphabetical order, and the folder's name (`name` is outside the guide; the tools read so far accept it) |
+| `prompt` | `prompt.md`, after one sentence saying which folder of the input files is the repository |
 | `expected_output` | the `description` in `case.yaml` |
-| `files` | the six files `_scaffold/greet.sh` writes, kept in `skills/change/evals/files/repo/` |
+| `files` | the files the case's `scaffold.sh` commits. Cases that start from the same repository share a folder: `skills/change/evals/files/repo/` for the one most cases start from (the six files of `_scaffold/greet.sh`), and `files/repo-<case>/` for any other, named after the first case that starts from it |
 | `assertions` | one per scored grader: the `# assertion:` line in the grader's top block |
 
 Every scored grader carries its statement on that line, so a new grader without one fails the
@@ -130,16 +136,16 @@ tests. `skill-fired` has none: it asks whether Claude's Skill tool was called.
 
 What does not carry over, and what to expect from another runner:
 
-- **The graders become statements.** Claude's runner checks 22 of the 29 with a pattern, a
-  file test or a count of tool calls; in `evals.json` all 29 are sentences. The guide does not
+- **The graders become statements.** Claude's runner checks 24 of the 31 with a pattern, a
+  file test or a count of tool calls; in `evals.json` all 31 are sentences. The guide does not
   say a model must judge them all: for what code can check (a file exists, a line is there) it
   says to use a verification script, as more reliable than a model. `verify`, below, is that
-  script. It covers 15 of the 29; a runner that follows only `evals.json` and does not call it
-  hands all 29 to its judge.
-- **Seven statements are about what the agent did**, and in what order (a test seen failing
+  script. It covers 15 of the 31; a runner that follows only `evals.json` and does not call it
+  hands all 31 to its judge.
+- **Nine statements are about what the agent did**, and in what order (a test seen failing
   before the code, a probe before the record). They begin "The transcript shows". The guide
   grades a run's outputs and calls an assertion that cannot be checked from the output alone
-  one to fix. These seven are kept because the order of work is most of what the skill adds;
+  one to fix. These nine are kept because the order of work is most of what the skill adds;
   a runner has to give its judge the run's transcript for them, and one that does not cannot
   grade them.
 - **Some statements pass with and without the skill.** The guide says to remove those, since
@@ -192,7 +198,7 @@ run. `not_checked` is not in the guide's `grading.json`: it is what is left for 
 |---|---|---|
 | the files | 13 | a file is there (5), a file holds the grader's pattern (6), `docs/changes/` holds only what it started with (1), `greet.py` is the input file (1) |
 | the final message, if given | 2 | the message holds the grader's pattern |
-| not checked | 14 | 7 need a judge, 7 need the transcript |
+| not checked | 16 | 7 need a judge, 9 need the transcript |
 
 What it checks is `evals/checks.json`, which `export-evals-json` writes from the graders: the
 path of a `file_exists` grader, and the pattern and flags of a `regex` grader that reads a
