@@ -131,7 +131,9 @@ ci-only, run 44078468742:
 ok   ci-probe/fix.txt says fixed (run 44078468742 on Linux)
 ```
 
-The draft was then closed unmerged and its branch deleted. So an agent in this repository
+The draft was then closed unmerged. Its branch could not be deleted from the session (the
+push was refused, as every push outside the session's own branch is), so it is left for the
+owner to delete from the closed pull request. So an agent in this repository
 can push a test alone as a draft, have CI run it, read the red log and then fix: each part
 the clause names works. What it does not show is an agent choosing to do it unprompted;
 no eval case can, since the runner cannot push.
