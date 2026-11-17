@@ -115,6 +115,11 @@ py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["skill"]="change-
 rm "$P/skills/linked"
 assert_eq "$USED" "$(cat "$VICTIM/SKILL.md")"; assert_eq "no" "$([ -e "$D/compare" ] && echo yes || echo no)"
 cp "$TMPROOT/proposal.keep" "$D/proposals/$SID/red-first/proposal.json"
+it "a proposal naming a skill the plugin does not have says where it looked, and runs nothing"
+py -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["skill"]="change-record:nosuch"; json.dump(d, open(p, "w"))' "$D/proposals/$SID/red-first/proposal.json"
+: > "$FAKELOG"; out="$(compare --step red-first --run)"; assert_eq 1 "$?"; has "$out" "no skill file at $P/skills/nosuch/SKILL.md"; has "$out" "--repo-dir"; assert_eq 0 "$(calls)"
+assert_eq "no" "$([ -e "$D/compare" ] && echo yes || echo no)"
+cp "$TMPROOT/proposal.keep" "$D/proposals/$SID/red-first/proposal.json"
 it "a session that is a path, not one id, is refused before anything is read, run or deleted"
 ELSE="$TMPROOT/elsewhere"; mkdir -p "$ELSE/red-first"; cp "$D/proposals/$SID/red-first/"* "$ELSE/red-first/"; printf 'keep me\n' > "$ELSE/red-first/unrelated.txt"
 for bad in "$ELSE" "../../elsewhere" "a/b" "." ".."; do
