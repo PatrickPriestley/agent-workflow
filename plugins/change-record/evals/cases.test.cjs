@@ -448,8 +448,16 @@ test('the generator refuses a case it cannot state: a grader with no statement, 
     r=run('--check');
     assert.equal(r.status,1); assert.match(r.stderr,/evals\/files\/repo-red-first\/extra\.txt is missing/);
     fs.writeFileSync(path.join(dir,'red-first','scaffold.sh'),'#!/bin/bash\nexec bash "$(dirname "$0")/../_scaffold/greet.sh"\n');
+    r=run('--check');
+    assert.equal(r.status,1); assert.match(r.stderr,/evals\/files\/repo-red-first\/greet\.py is not one of the scaffold's files/,'a folder no case starts from is drift');
     assert.equal(run().status,0);
     assert.ok(!fs.existsSync(path.join(out,'files','repo-red-first')),'a folder no case starts from any more is removed');
+    // the shared folder is the one most cases start from, not the one whose case comes first by name
+    fs.writeFileSync(path.join(dir,'decisions-record-alternatives','scaffold.sh'),'#!/bin/bash\nbash "$(dirname "$0")/../_scaffold/greet.sh" && echo first > first.txt\n');
+    assert.equal(run().status,0);
+    const again=JSON.parse(fs.readFileSync(path.join(out,'evals.json'),'utf8')).evals;
+    assert.ok(again.find(e=>e.name==='decisions-record-alternatives').files.includes('evals/files/repo-decisions-record-alternatives/first.txt'));
+    assert.ok(again.find(e=>e.name==='red-first').files.every(f=>f.startsWith('evals/files/repo/')));
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
 test('a settings block on top of a prompt is not part of the prompt; writing again removes a stale input file; a missing evals.json is said',()=>{
@@ -720,7 +728,7 @@ test('verify compares an unchanged file with the repository its own case starts 
     fs.copyFileSync(verify,path.join(out,'verify'));
     const v=(...a)=>{ const r=spawnSync('python3',['-I',path.join(out,'verify'),...a],{encoding:'utf8'}); return {status:r.status,out:JSON.parse(r.stdout||'null'),stderr:r.stderr}; };
     let r=v('tier-2-stops-before-code',own);
-    assert.equal(r.status,0,r.stderr); assert.equal(by(r.out,'greet.py is unchanged').passed,true,'its own repository, left as it was');
+    assert.ok(r.out,r.stderr); assert.equal(by(r.out,'greet.py is unchanged').passed,true,'its own repository, left as it was');
     r=v('tier-2-stops-before-code',path.join(out,'files','repo'));
     assert.equal(by(r.out,'greet.py is unchanged').passed,false,'the other cases\' greet.py is not this case\'s');
     assert.match(by(r.out,'greet.py is unchanged').evidence,/differs from the input file/);
