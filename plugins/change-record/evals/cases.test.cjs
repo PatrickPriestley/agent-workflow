@@ -349,7 +349,7 @@ test('every scored grader states what it checks in one plain sentence; skill-fir
     }
     assert.equal(statements(c,'skill-fired.md').length,0,`${c}/skill-fired.md is an indicator, not an assertion`);
   }
-  assert.equal(n,29);
+  assert.equal(n,31);
 });
 test('a statement about what the agent did says it needs the transcript',()=>{
   for(const c of cases) for(const g of scored(c)){
@@ -379,8 +379,11 @@ test('evals.json has the guide\'s shape: one entry per case, its prompt, its des
     const described=fs.readFileSync(path.join(root,e.name,'case.yaml'),'utf8').match(/^description: "(.*)"$/m)[1];
     assert.equal(e.expected_output,described,e.name);
     assert.deepEqual(e.assertions,scored(e.name).map(g=>statements(e.name,g)[0]),e.name);
-    assert.deepEqual(e.files,['evals/files/repo/README.md','evals/files/repo/docs/changes/README.md','evals/files/repo/docs/changes/TEMPLATE.md',
-      'evals/files/repo/greet.py','evals/files/repo/tests/__init__.py','evals/files/repo/tests/test_greet.py'],e.name);
+    const base=['README.md','docs/changes/README.md','docs/changes/TEMPLATE.md','greet.py','tests/__init__.py','tests/test_greet.py'];
+    // red-first-workflow starts from a repository with a CI workflow file and a test of it, in a folder of its own
+    const [folder,names]=e.name==='red-first-workflow'?['repo-red-first-workflow',['.github/workflows/test.yml',...base,'tests/test_workflow.py']]:['repo',base];
+    assert.deepEqual(e.files,names.map(f=>`evals/files/${folder}/${f}`),e.name);
+    assert.ok(e.prompt.startsWith(`The repository for this task is the folder \`${folder}/\` of the input files`),e.name);
     for(const f of e.files) assert.ok(fs.existsSync(path.join(skillDir,f)),`${e.name}: ${f} is in the skill folder`);
   }
 });
@@ -418,7 +421,7 @@ const copyOfCases=scratch=>{
   fs.cpSync(path.join(root,'..','templates'),path.join(plugin,'templates'),{recursive:true});
   return {dir:path.join(plugin,'evals'),run:(...args)=>spawnSync('python3',[path.join(plugin,'evals','export-evals-json'),'--skill-dir',path.join(scratch,'skill'),...args],{encoding:'utf8'})};
 };
-test('the generator refuses a case it cannot state: a grader with no statement, or two, and cases from different repositories',()=>{
+test('the generator refuses a case it cannot state: a grader with no statement, or two; a case that starts from another repository gets a folder of its own',()=>{
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'cr-export-'));
   try{
     const {dir,run}=copyOfCases(scratch);
@@ -434,7 +437,20 @@ test('the generator refuses a case it cannot state: a grader with no statement, 
     assert.equal(run().status,0,'a line outside the top block is not read');
     fs.writeFileSync(path.join(dir,'red-first','scaffold.sh'),'#!/bin/bash\nbash "$(dirname "$0")/../_scaffold/greet.sh" && echo extra > extra.txt\n');
     r=run();
-    assert.equal(r.status,2); assert.match(r.stderr,/the cases start from different repositories/);
+    assert.equal(r.status,0,r.stderr);
+    const out=path.join(scratch,'skill','evals'), doc=JSON.parse(fs.readFileSync(path.join(out,'evals.json'),'utf8'));
+    const own=doc.evals.find(e=>e.name==='red-first'), other=doc.evals.find(e=>e.name==='record-before-code');
+    assert.ok(own.files.includes('evals/files/repo-red-first/extra.txt')&&own.files.every(f=>f.startsWith('evals/files/repo-red-first/')),own.files.join(','));
+    assert.ok(other.files.every(f=>f.startsWith('evals/files/repo/')),'the others keep the folder they share');
+    assert.match(own.prompt,/the folder `repo-red-first\/` of the input files/); assert.match(other.prompt,/the folder `repo\/` of the input files/);
+    assert.equal(fs.readFileSync(path.join(out,'files','repo-red-first','extra.txt'),'utf8'),'extra\n');
+    assert.equal(run('--check').status,0,'what was written is what the cases give');
+    fs.rmSync(path.join(out,'files','repo-red-first','extra.txt'));
+    r=run('--check');
+    assert.equal(r.status,1); assert.match(r.stderr,/evals\/files\/repo-red-first\/extra\.txt is missing/);
+    fs.writeFileSync(path.join(dir,'red-first','scaffold.sh'),'#!/bin/bash\nexec bash "$(dirname "$0")/../_scaffold/greet.sh"\n');
+    assert.equal(run().status,0);
+    assert.ok(!fs.existsSync(path.join(out,'files','repo-red-first')),'a folder no case starts from any more is removed');
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
 test('a settings block on top of a prompt is not part of the prompt; writing again removes a stale input file; a missing evals.json is said',()=>{
@@ -635,7 +651,7 @@ test('verify: a case by its number, one with nothing to check, and what it refus
     const why={}; let checked=0;
     for(const c of [...cases].sort()){ const v=vrun(c,out); checked+=v.out.assertion_results.length; for(const n of v.out.not_checked) why[n.why]=(why[n.why]||0)+1; }
     assert.equal(checked,13);
-    assert.deepEqual(why,{'needs a judge':7,'needs the run\'s transcript':7,'needs the run\'s final message (--final-message FILE)':2});
+    assert.deepEqual(why,{'needs a judge':7,'needs the run\'s transcript':9,'needs the run\'s final message (--final-message FILE)':2});
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
 test('verify stands alone: a copy of the skill\'s evals folder works with nothing else of the plugin',()=>{
@@ -659,7 +675,7 @@ const sedWorkflow=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu-la
 const cdWorkflow=call('Bash',{command:`cd .github/workflows && cat > test.yml <<'EOF'\nname: test\nEOF`});
 const readWorkflow=call('Bash',{command:`cat ${wf}; ls .github/workflows`})+call('Read',{file_path:`${cwd}${wf}`});
 const writeWorkflowTest=call('Write',{file_path:`${cwd}tests/test_workflow.py`,content:'import unittest\n'});
-test('the red-first-workflow scaffold adds a workflow file and a passing test of it to the shared repository',()=>{
+test('the red-first-workflow scaffold adds a workflow file and a passing test of it to the shared repository, and the shared one has neither',()=>{
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'cr-eval-wf-'));
   try{
     const r=spawnSync('bash',[path.join(root,'red-first-workflow','scaffold.sh')],{cwd:scratch,encoding:'utf8'});
@@ -668,9 +684,11 @@ test('the red-first-workflow scaffold adds a workflow file and a passing test of
     assert.match(fs.readFileSync(path.join(scratch,wf),'utf8'),/os: \[ubuntu-latest\]/);
     assert.doesNotMatch(fs.readFileSync(path.join(scratch,wf),'utf8'),/macos/);
     assert.equal(spawnSync('git',['-C',scratch,'status','--porcelain'],{encoding:'utf8'}).stdout,'','everything is committed');
+    assert.match(spawnSync('git',['-C',scratch,'log','--oneline'],{encoding:'utf8'}).stdout,/^\w+ ci: run the tests on push, and test the workflow\n\w+ greet: initial\n$/);
     const t=spawnSync('python3',['-m','unittest','discover','-s','tests','-t','.'],{cwd:scratch,encoding:'utf8'});
     assert.equal(t.status,0,t.stderr);
     assert.match(t.stderr,/Ran 2 tests/);
+    assert.doesNotMatch(fs.readFileSync(path.join(root,'_scaffold','greet.sh'),'utf8'),/workflows|test_workflow/,'the other cases, and the outcome evals, start as they did');
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
 test('red-first-workflow names its record id and asks for the workflow change, with the tests\' command',()=>{
