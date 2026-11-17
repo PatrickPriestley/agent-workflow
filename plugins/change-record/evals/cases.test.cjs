@@ -648,3 +648,48 @@ test('verify stands alone: a copy of the skill\'s evals folder works with nothin
     assert.equal(JSON.parse(r.stdout).assertion_results.length,1);
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
+
+// red-first-workflow (record docs/changes/2026-11-17-eval-workflow-red-first.md): the two graders of
+// red-first, with a CI workflow file in the place of greet.py.
+const wf='.github/workflows/test.yml';
+const editWorkflow=call('Edit',{file_path:`${cwd}${wf}`,old_string:'os: [ubuntu-latest]',new_string:'os: [ubuntu-latest, macos-latest]'});
+const writeWorkflow=call('Write',{file_path:`${cwd}${wf}`,content:'name: test\n'});
+const heredocWorkflow=call('Bash',{command:`cat > ${wf} <<'EOF'\nname: test\nEOF`});
+const sedWorkflow=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu-latest, macos-latest]/' ${wf}`});
+const cdWorkflow=call('Bash',{command:`cd .github/workflows && cat > test.yml <<'EOF'\nname: test\nEOF`});
+const readWorkflow=call('Bash',{command:`cat ${wf}; ls .github/workflows`})+call('Read',{file_path:`${cwd}${wf}`});
+const writeWorkflowTest=call('Write',{file_path:`${cwd}tests/test_workflow.py`,content:'import unittest\n'});
+test('the red-first-workflow scaffold adds a workflow file and a passing test of it to the shared repository',()=>{
+  const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'cr-eval-wf-'));
+  try{
+    const r=spawnSync('bash',[path.join(root,'red-first-workflow','scaffold.sh')],{cwd:scratch,encoding:'utf8'});
+    assert.equal(r.status,0,r.stderr);
+    for(const f of ['greet.py',wf,'tests/test_workflow.py','docs/changes/TEMPLATE.md']) assert.ok(fs.existsSync(path.join(scratch,f)),f);
+    assert.match(fs.readFileSync(path.join(scratch,wf),'utf8'),/os: \[ubuntu-latest\]/);
+    assert.doesNotMatch(fs.readFileSync(path.join(scratch,wf),'utf8'),/macos/);
+    assert.equal(spawnSync('git',['-C',scratch,'status','--porcelain'],{encoding:'utf8'}).stdout,'','everything is committed');
+    const t=spawnSync('python3',['-m','unittest','discover','-s','tests','-t','.'],{cwd:scratch,encoding:'utf8'});
+    assert.equal(t.status,0,t.stderr);
+    assert.match(t.stderr,/Ran 2 tests/);
+  } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
+});
+test('red-first-workflow names its record id and asks for the workflow change, with the tests\' command',()=>{
+  const prompt=fs.readFileSync(path.join(root,'red-first-workflow','prompt.md'),'utf8');
+  assert.match(prompt,/`2026-11-08-ci-macos`/);
+  assert.match(prompt,/\.github\/workflows\/test\.yml/);
+  assert.match(prompt,/python3 -m unittest discover -s tests -t \./);
+});
+test('red-first-workflow: a test run counts only before the workflow file is first written, by a tool or by the shell',()=>{
+  const trb=grader('red-first-workflow','test-run-before-workflow-change.md').re;
+  assert.ok(trb.test(writeWorkflowTest+unittest+failed+editWorkflow),'test, run, then the edit');
+  assert.ok(trb.test(readWorkflow+writeWorkflowTest+unittest+writeWorkflow),'reading the workflow and writing its test are not writing it');
+  for(const w of [editWorkflow,writeWorkflow,heredocWorkflow,sedWorkflow,cdWorkflow]) assert.ok(!trb.test(w+unittest),`the workflow first: ${w.slice(60,140)}`);
+  assert.ok(trb.test(writeGreet+unittest+editWorkflow),'greet.py is not the code of this case');
+});
+test('red-first-workflow: saw-it-fail needs a failing test run before the workflow file changes',()=>{
+  const re=grader('red-first-workflow','saw-it-fail.md').re;
+  assert.ok(re.test(writeWorkflowTest+unittest+failed+editWorkflow+unittest+passed),'red then green');
+  assert.ok(!re.test(writeWorkflowTest+unittest+passed+editWorkflow+unittest+failed),'green, the edit, then red');
+  for(const w of [editWorkflow,heredocWorkflow,sedWorkflow,cdWorkflow]) assert.ok(!re.test(writeWorkflowTest+w+unittest+failed),`the workflow first, then red: ${w.slice(60,140)}`);
+  assert.ok(!re.test(writeWorkflowTest+unittest+result('Exit code 1\nTraceback\nSyntaxError: invalid syntax',true)+editWorkflow),'a run that did not reach the tests is not a failing test');
+});
