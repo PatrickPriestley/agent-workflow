@@ -36,9 +36,13 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-REPO = "evals/files/repo"
-PREFACE = ("The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and "
-           "docs/changes/). Work in a copy of it, with that copy as the working directory.\n\n")
+FILES = "evals/files"
+REPO = "repo"  # the folder of the repository most cases start from; another starting repository is repo-<its first case>
+
+
+def preface(folder):
+    return (f"The repository for this task is the folder `{folder}/` of the input files (greet.py, tests/ and "
+            "docs/changes/). Work in a copy of it, with that copy as the working directory.\n\n")
 INDICATOR = "skill-fired.md"
 
 
@@ -139,19 +143,21 @@ def build():
     if not names:
         raise Unreadable(f"no case folders in {HERE}")
     cases = [(n, case(n)) for n in names]
-    trees = {}
+    # The cases are grouped by the repository their scaffold leaves. The one most cases start from (the first
+    # by name on a tie) is `repo`; each other is a folder of its own, named for its first case.
+    trees, built = {}, {}
     for n, c in cases:
-        trees.setdefault(json.dumps(sorted((p, b.hex()) for p, b in scaffold_files(c["scaffold"]).items())), []).append(n)
-    if len(trees) != 1:
-        raise Unreadable("the cases start from different repositories (" + "; ".join(", ".join(v) for v in trees.values())
-                         + "): this writes one evals/files/repo/ for all of them")
-    files = scaffold_files(cases[0][1]["scaffold"])
-    listed = [f"{REPO}/{p}" for p in sorted(files)]
+        built[n] = scaffold_files(c["scaffold"])
+        trees.setdefault(json.dumps(sorted((p, b.hex()) for p, b in built[n].items())), []).append(n)
+    groups = sorted(trees.values(), key=lambda v: (-len(v), v[0]))
+    folder = {n: REPO if g is groups[0] else f"{REPO}-{g[0]}" for g in groups for n in g}
+    repos = {folder[g[0]]: built[g[0]] for g in groups}
     doc = {"skill_name": "change", "evals": [
-        {"id": i, "name": n, "prompt": PREFACE + c["prompt"], "expected_output": c["description"],
-         "files": listed, "assertions": c["assertions"]} for i, (n, c) in enumerate(cases, 1)]}
+        {"id": i, "name": n, "prompt": preface(folder[n]) + c["prompt"], "expected_output": c["description"],
+         "files": [f"{FILES}/{folder[n]}/{p}" for p in sorted(built[n])], "assertions": c["assertions"]}
+        for i, (n, c) in enumerate(cases, 1)]}
     checks = {"skill_name": "change", "checks": {n: c["checks"] for n, c in cases}}
-    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n", json.dumps(checks, indent=2, ensure_ascii=False) + "\n", files
+    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n", json.dumps(checks, indent=2, ensure_ascii=False) + "\n", repos
 
 
 def main(argv):
@@ -166,11 +172,15 @@ def main(argv):
             say("usage: export-evals-json [--check] [--skill-dir DIR]")
             return 2
     try:
-        text, checks, files = build()
+        text, checks, repos = build()
     except (Unreadable, OSError) as e:
         say(str(e))
         return 2
-    json_path, repo = os.path.join(skill, "evals", "evals.json"), os.path.join(skill, *REPO.split("/"))
+    json_path, files_dir = os.path.join(skill, "evals", "evals.json"), os.path.join(skill, *FILES.split("/"))
+    try:  # the repository folders that are there now: one that no case starts from any more is stale
+        there_now = sorted(n for n in os.listdir(files_dir) if (n == REPO or n.startswith(REPO + "-")) and os.path.isdir(os.path.join(files_dir, n)))
+    except OSError:
+        there_now = []
     generated = [("evals/evals.json", json_path, text), ("evals/checks.json", os.path.join(skill, "evals", "checks.json"), checks)]
     if check:
         problems = []
@@ -180,30 +190,33 @@ def main(argv):
                     problems.append(f"{shown} is not what the case folders give")
             except OSError:
                 problems.append(f"{shown} is missing")
-        there = set()
-        for root, _, names in os.walk(repo):
-            there |= {os.path.relpath(os.path.join(root, n), repo).replace(os.sep, "/") for n in names}
-        for p in sorted(files):
-            if p not in there:
-                problems.append(f"{REPO}/{p} is missing")
-            elif open(os.path.join(repo, p), "rb").read() != files[p]:
-                problems.append(f"{REPO}/{p} differs from what the scaffold writes")
-        problems += [f"{REPO}/{p} is not one of the scaffold's files" for p in sorted(there - set(files))]
+        for name in sorted(set(repos) | set(there_now)):
+            repo, files, there = os.path.join(files_dir, name), repos.get(name, {}), set()
+            for root, _, names in os.walk(repo):
+                there |= {os.path.relpath(os.path.join(root, n), repo).replace(os.sep, "/") for n in names}
+            for p in sorted(files):
+                if p not in there:
+                    problems.append(f"{FILES}/{name}/{p} is missing")
+                elif open(os.path.join(repo, p), "rb").read() != files[p]:
+                    problems.append(f"{FILES}/{name}/{p} differs from what the scaffold writes")
+            problems += [f"{FILES}/{name}/{p} is not one of the scaffold's files" for p in sorted(there - set(files))]
         for p in problems:
             say(p)
         if problems:
             say("run export-evals-json to write them again")
         return 1 if problems else 0
-    shutil.rmtree(repo, ignore_errors=True)
-    for p, data in files.items():
-        os.makedirs(os.path.dirname(os.path.join(repo, p)), exist_ok=True)
-        with open(os.path.join(repo, p), "wb") as f:
-            f.write(data)
+    for name in set(repos) | set(there_now):
+        shutil.rmtree(os.path.join(files_dir, name), ignore_errors=True)
+    for name, files in repos.items():
+        for p, data in files.items():
+            os.makedirs(os.path.dirname(os.path.join(files_dir, name, p)), exist_ok=True)
+            with open(os.path.join(files_dir, name, p), "wb") as f:
+                f.write(data)
     for _, path, want in generated:
         with open(path, "w", encoding="utf-8") as f:
             f.write(want)
     n = sum(len(v) for v in json.loads(checks)["checks"].values())
-    print(f"export-evals-json: wrote {len(json.loads(text)['evals'])} cases to {os.path.normpath(json_path)}, {n} checks for evals/verify and {len(files)} input files")
+    print(f"export-evals-json: wrote {len(json.loads(text)['evals'])} cases to {os.path.normpath(json_path)}, {n} checks for evals/verify and {sum(len(f) for f in repos.values())} input files")
     return 0
 
 

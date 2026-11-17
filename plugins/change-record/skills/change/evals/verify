@@ -4,7 +4,7 @@
   verify EVAL OUTPUTS [--final-message FILE]
 
 EVAL is an eval's name or number in evals.json, beside this script. OUTPUTS is the folder the
-run left: its copy of the repository (the `repo/` of the input files) after the agent worked
+run left: its copy of the repository (the eval's folder of the input files, `repo/` for most) after the agent worked
 in it. FILE holds the agent's final message, when the runner kept it.
 
 It prints what the open Agent Skills guide calls grading.json: for each statement it could
@@ -42,7 +42,7 @@ def found(pattern, flags, text):
     return line.strip()[:120]
 
 
-def run_check(c, outputs, message):
+def run_check(c, outputs, message, folder="repo"):
     """(passed, evidence) for one check, or None when it cannot be made here."""
     kind = c["kind"]
     if kind == "message_matches":
@@ -67,7 +67,7 @@ def run_check(c, outputs, message):
     if kind == "file_exists":
         return True, f"{c['path']} is there ({os.path.getsize(path)} bytes)"
     if kind == "unchanged":
-        with open(path, "rb") as f, open(os.path.join(HERE, "files", "repo", c["path"]), "rb") as g:
+        with open(path, "rb") as f, open(os.path.join(HERE, "files", folder, c["path"]), "rb") as g:
             same = f.read() == g.read()
         return (True, f"{c['path']} is the same as the input file ({os.path.getsize(path)} bytes)") if same else \
                (False, f"{c['path']} differs from the input file")
@@ -111,10 +111,12 @@ def main(argv):
             say(f"cannot read the final message ({e})")
             return 2
     how = {c["assertion"]: c for c in checks.get(ev["name"], [])}
+    # The input files of this eval: evals/files/<folder>/..., the repository its case starts from.
+    folder = ev["files"][0].split("/")[2]
     results, skipped = [], []
     try:
         for text in ev["assertions"]:
-            got = run_check(how[text], outputs, message) if text in how else None
+            got = run_check(how[text], outputs, message, folder) if text in how else None
             if got is not None:
                 results.append({"text": text, "passed": got[0], "evidence": got[1]})
             elif text in how:

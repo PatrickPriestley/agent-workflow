@@ -18,10 +18,16 @@ guess a file name.
 | `outcome-has-real-output` | The Outcome quotes real runs, main path and error path |
 | `red-first` | The agent still sees the test fail before changing the code (the `agent-workflow` case, against this skill) |
 | `no-routine-questions` | Routine choices are decided and recorded, not asked |
+| `red-first-workflow` | The same as `red-first` where the code is a CI workflow file: a test of the workflow is seen failing before `.github/workflows/test.yml` changes |
 
 The `skill-fired` grader in each case is the activation indicator under with/without ablation,
 not part of the score. `evals/cases.test.cjs` checks that every case is well formed and that
 the scaffold builds, without running an agent.
+
+`red-first-workflow` starts from a repository of its own: its `scaffold.sh` runs the shared
+scaffold and then commits a workflow file and a test that reads it. The workflow is not in
+the shared scaffold because `outcome-evals/` builds its tasks on that scaffold too, and its
+checks count the files a task may touch.
 
 ## Results
 
@@ -94,6 +100,20 @@ also reads pydoc, `-m`, piped stdin and a scratch script that is written and the
 regex grader runs against fixtures in the trace's own encoding in `cases.test.cjs`, with the
 shell forms, the one-command cases and the orderings that must fail.
 
+A fourth, on 2026-11-17 and after the numbers above: `saw-it-fail` counted a failing test run
+made in the very command that wrote the code (`sed -i ... greet.py && python3 -m unittest`),
+because its guard looked at where the tool call begins and not at its command. The other
+grader of `red-first` already failed such a run, so it scored half and now scores nothing. No
+trace of the runs above is kept, so whether any of them was such a run is not known; with
+the plugin the case scored 1.00, which no such run could have given.
+
+`red-first-workflow` was added later and run on its own, on 2026-11-17 with Claude Code
+2.1.326, two runs an arm, 0.44 USD: with the plugin 1.00 and 0.50, without 0.00 and 0.00, a
+delta of +0.75. The run with the plugin that scored half ran the tests green and then edited
+the workflow, without a failing test first. With two runs an arm, read it as showing that the
+case separates the arms, not by how much. Every verdict was checked against its trace by hand
+(record `2026-11-17-eval-workflow-red-first`).
+
 ## Running them
 
     claude plugin eval plugins/change-record --scaffold --allow-tools Bash Write Edit --trust-plugin --no-publish --runs 3 -j 4
@@ -119,10 +139,10 @@ or left behind. What each entry holds:
 
 | Field | From |
 |---|---|
-| `id`, `name` | 1 to 8 in the folders' alphabetical order, and the folder's name (`name` is outside the guide; the tools read so far accept it) |
-| `prompt` | `prompt.md`, after one sentence saying that the repository is the input files' `repo/` folder |
+| `id`, `name` | 1 to 9 in the folders' alphabetical order, and the folder's name (`name` is outside the guide; the tools read so far accept it) |
+| `prompt` | `prompt.md`, after one sentence saying which folder of the input files is the repository |
 | `expected_output` | the `description` in `case.yaml` |
-| `files` | the six files `_scaffold/greet.sh` writes, kept in `skills/change/evals/files/repo/` |
+| `files` | the files the case's `scaffold.sh` commits. Cases that start from the same repository share a folder: `skills/change/evals/files/repo/` for the one most cases start from (the six files of `_scaffold/greet.sh`), and `files/repo-<case>/` for any other, named after the first case that starts from it |
 | `assertions` | one per scored grader: the `# assertion:` line in the grader's top block |
 
 Every scored grader carries its statement on that line, so a new grader without one fails the
@@ -130,16 +150,16 @@ tests. `skill-fired` has none: it asks whether Claude's Skill tool was called.
 
 What does not carry over, and what to expect from another runner:
 
-- **The graders become statements.** Claude's runner checks 22 of the 29 with a pattern, a
-  file test or a count of tool calls; in `evals.json` all 29 are sentences. The guide does not
+- **The graders become statements.** Claude's runner checks 24 of the 31 with a pattern, a
+  file test or a count of tool calls; in `evals.json` all 31 are sentences. The guide does not
   say a model must judge them all: for what code can check (a file exists, a line is there) it
   says to use a verification script, as more reliable than a model. `verify`, below, is that
-  script. It covers 15 of the 29; a runner that follows only `evals.json` and does not call it
-  hands all 29 to its judge.
-- **Seven statements are about what the agent did**, and in what order (a test seen failing
+  script. It covers 15 of the 31; a runner that follows only `evals.json` and does not call it
+  hands all 31 to its judge.
+- **Nine statements are about what the agent did**, and in what order (a test seen failing
   before the code, a probe before the record). They begin "The transcript shows". The guide
   grades a run's outputs and calls an assertion that cannot be checked from the output alone
-  one to fix. These seven are kept because the order of work is most of what the skill adds;
+  one to fix. These nine are kept because the order of work is most of what the skill adds;
   a runner has to give its judge the run's transcript for them, and one that does not cannot
   grade them.
 - **Some statements pass with and without the skill.** The guide says to remove those, since
@@ -192,7 +212,7 @@ run. `not_checked` is not in the guide's `grading.json`: it is what is left for 
 |---|---|---|
 | the files | 13 | a file is there (5), a file holds the grader's pattern (6), `docs/changes/` holds only what it started with (1), `greet.py` is the input file (1) |
 | the final message, if given | 2 | the message holds the grader's pattern |
-| not checked | 14 | 7 need a judge, 7 need the transcript |
+| not checked | 16 | 7 need a judge, 9 need the transcript |
 
 What it checks is `evals/checks.json`, which `export-evals-json` writes from the graders: the
 path of a `file_exists` grader, and the pattern and flags of a `regex` grader that reads a

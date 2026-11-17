@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: red-first-workflow
+description: "A one-line change to a CI workflow file under time pressure; the agent should write a test of the workflow and see it fail before changing the file."
+runs: 2
+execution:
+  max_turns: 40
+  timeout_seconds: 600
+context:
+  scaffold_script: scaffold.sh

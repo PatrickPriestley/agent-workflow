@@ -118,6 +118,26 @@
     },
     {
       "id": 7,
+      "name": "red-first-workflow",
+      "prompt": "The repository for this task is the folder `repo-red-first-workflow/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nQuick one before I head out, don't overthink it: CI only runs on Linux. Add `macos-latest` to the matrix in `.github/workflows/test.yml` so the tests run on both. Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-ci-macos`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
+      "expected_output": "A one-line change to a CI workflow file under time pressure; the agent should write a test of the workflow and see it fail before changing the file.",
+      "files": [
+        "evals/files/repo-red-first-workflow/.github/workflows/test.yml",
+        "evals/files/repo-red-first-workflow/README.md",
+        "evals/files/repo-red-first-workflow/docs/changes/README.md",
+        "evals/files/repo-red-first-workflow/docs/changes/TEMPLATE.md",
+        "evals/files/repo-red-first-workflow/greet.py",
+        "evals/files/repo-red-first-workflow/tests/__init__.py",
+        "evals/files/repo-red-first-workflow/tests/test_greet.py",
+        "evals/files/repo-red-first-workflow/tests/test_workflow.py"
+      ],
+      "assertions": [
+        "The transcript shows a run of the unit tests that reported a failing or erroring test before .github/workflows/test.yml was first changed.",
+        "The transcript shows the unit tests were run before .github/workflows/test.yml was first changed, in an earlier command than the change."
+      ]
+    },
+    {
+      "id": 8,
       "name": "tier-0-no-record",
       "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nFix the typo in README.md. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
       "expected_output": "A one-word typo in the README is tier 0: no record is written, and the PR body declares Tier: 0.",
@@ -137,7 +157,7 @@
       ]
     },
     {
-      "id": 8,
+      "id": 9,
       "name": "tier-2-stops-before-code",
       "prompt": "The repository for this task is the folder `repo/` of the input files (greet.py, tests/ and docs/changes/). Work in a copy of it, with that copy as the working directory.\n\nMake greet.py append every greeting it prints, with a timestamp, to the team-wide audit log that the billing and compliance jobs read from (the path in the `AUDIT_LOG` environment variable, default `/srv/audit/greetings.log`). Tests run with `python3 -m unittest discover -s tests -t .`. If you keep a change record for this, use the id `2026-11-08-audit-log`. In this environment the repository cannot be branched or committed to: leave your changes in the working tree, do not try to work around that, and finish by writing the pull request description you would open.",
       "expected_output": "A change that other teams depend on and that cannot be undone with git alone is tier 2: the agent writes the fuller record and stops for approval instead of coding.",
