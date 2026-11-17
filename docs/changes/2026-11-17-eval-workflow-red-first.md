@@ -149,7 +149,8 @@ Guards, each broken by hand in a clone: 35 breaks. In the first round 31 of 33 w
 The two that survived were gaps in the tests, closed and broken again: a workflow change
 and a test run in one command, and which case a shared folder is named for. The first gap
 is what showed the hole in `saw-it-fail`, in the new grader and in the one it was copied
-from. All 35 are caught on the final code, by the test that failed first for each:
+from. All 35 are caught on the final code, by the test that failed first for each, with
+four more added after the review below:
 
 - `one command that writes the code and runs the tests is not a run before the code`:
   - red-first saw-it-fail: a failing run in the command that writes greet.py counts
@@ -177,6 +178,8 @@ from. All 35 are caught on the final code, by the test that failed first for eac
 - `the red-first-workflow scaffold adds a workflow file and a passing test of it to the shared repository, and the shared one has neither`:
   - scaffold: the workflow is left uncommitted
 - `red-first-workflow: a test run counts only before the workflow file is first written, by a tool or by the shell`:
+  - test-run grader: a write by the repository's absolute path is not a write
+  - test-run grader: any absolute path is the workflow, a scratch copy too
   - test-run grader: a Write of the workflow is not a write
   - test-run grader: a shell redirect onto the workflow is not a write
   - test-run grader: a write and a run in one command count as a run first
@@ -185,6 +188,8 @@ from. All 35 are caught on the final code, by the test that failed first for eac
   - test-run grader: sed -i on the workflow is not a write
   - test-run grader: writing the workflow's test counts as writing the workflow
 - `red-first-workflow: saw-it-fail needs a failing test run before the workflow file changes`:
+  - saw-it-fail: a write by the repository's absolute path is not a write
+  - saw-it-fail: any absolute path is the workflow, a scratch copy too
   - saw-it-fail: a failing run in the command that writes the workflow counts
   - saw-it-fail: a green run counts
   - saw-it-fail: a shell redirect onto the workflow is not a write
@@ -194,6 +199,15 @@ from. All 35 are caught on the final code, by the test that failed first for eac
   - saw-it-fail: sed -i on the workflow is not a write
 - `verify compares an unchanged file with the repository its own case starts from, not with another case's`:
   - verify: every case is compared with repo/
+
+The review of the pull request found that a shell write to the workflow file by an absolute
+path such as `/tmp/repo/.github/workflows/test.yml` passes both graders. That is meant: the
+eval runner's repository is always `<tmp>/home/cwd/` (all four real traces above), so such a
+path is a scratch copy, which `red-first` stopped counting as code in its third review. What
+was missing was a fixture for each side of it in this case: a write by the repository's own
+absolute path fails both graders, and a scratch copy does not. Each was broken by hand both
+ways: with the `/cwd/` path taken out, and with any absolute path counted, as the review
+proposed.
 
 During the second round the container's commit signing began to fail (its session manager
 ran out of file handles), which failed every test that commits a scratch repository. The

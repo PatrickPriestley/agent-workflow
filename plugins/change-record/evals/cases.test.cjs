@@ -689,6 +689,10 @@ const sedWorkflow=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu-la
 const cdWorkflow=call('Bash',{command:`cd .github/workflows && cat > test.yml <<'EOF'\nname: test\nEOF`});
 const readWorkflow=call('Bash',{command:`cat ${wf}; ls .github/workflows`})+call('Read',{file_path:`${cwd}${wf}`});
 const writeWorkflowTest=call('Write',{file_path:`${cwd}tests/test_workflow.py`,content:'import unittest\n'});
+// the runner's repository is always <tmp>/home/cwd/: a write there by its absolute path is a write of the
+// workflow; a same-named file elsewhere is a scratch copy, as in red-first
+const sedAbsWorkflow=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu-latest, macos-latest]/' ${cwd}${wf}`});
+const scratchWorkflow=call('Bash',{command:`mkdir -p /tmp/try/.github/workflows && cp ${wf} /tmp/try/${wf} && sed -i 's/ubuntu-latest/macos-latest/' /tmp/try/${wf}`});
 const sedAndRun=call('Bash',{command:`sed -i 's/\\[ubuntu-latest\\]/[ubuntu-latest, macos-latest]/' ${wf} && python3 -m unittest discover -s tests -t .`});
 test('the red-first-workflow scaffold adds a workflow file and a passing test of it to the shared repository, and the shared one has neither',()=>{
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'cr-eval-wf-'));
@@ -718,6 +722,8 @@ test('red-first-workflow: a test run counts only before the workflow file is fir
   assert.ok(trb.test(readWorkflow+writeWorkflowTest+unittest+writeWorkflow),'reading the workflow and writing its test are not writing it');
   for(const w of [editWorkflow,writeWorkflow,heredocWorkflow,sedWorkflow,cdWorkflow]) assert.ok(!trb.test(w+unittest),`the workflow first: ${w.slice(60,140)}`);
   assert.ok(trb.test(writeGreet+unittest+editWorkflow),'greet.py is not the code of this case');
+  assert.ok(!trb.test(sedAbsWorkflow+unittest),'the workflow written by the absolute path of the repository, then a run');
+  assert.ok(trb.test(scratchWorkflow+unittest+editWorkflow),'a scratch copy outside the repository is not the workflow');
   assert.ok(!trb.test(writeWorkflowTest+sedAndRun),'the workflow changed and the tests run in one command is not a run before the change');
 });
 test('red-first-workflow: saw-it-fail needs a failing test run before the workflow file changes',()=>{
@@ -726,6 +732,8 @@ test('red-first-workflow: saw-it-fail needs a failing test run before the workfl
   assert.ok(!re.test(writeWorkflowTest+unittest+passed+editWorkflow+unittest+failed),'green, the edit, then red');
   for(const w of [editWorkflow,heredocWorkflow,sedWorkflow,cdWorkflow]) assert.ok(!re.test(writeWorkflowTest+w+unittest+failed),`the workflow first, then red: ${w.slice(60,140)}`);
   assert.ok(!re.test(writeWorkflowTest+unittest+result('Exit code 1\nTraceback\nSyntaxError: invalid syntax',true)+editWorkflow),'a run that did not reach the tests is not a failing test');
+  assert.ok(!re.test(writeWorkflowTest+sedAbsWorkflow+unittest+failed),'the workflow written by the absolute path of the repository, then red');
+  assert.ok(re.test(writeWorkflowTest+scratchWorkflow+unittest+failed+editWorkflow),'a scratch copy, then red, then the edit');
   assert.ok(!re.test(writeWorkflowTest+sedAndRun+failed),'the workflow changed and the tests run in one command: the failure is not before the change');
   assert.ok(!re.test(writeWorkflowTest+unittest+passed+call('Bash',{command:'python3 -c "assert 0"'},'toolu_02')+result('Exit code 1\nAssertionError',true,'toolu_02')+editWorkflow),'the failure of another command is not the test run\'s');
 });
