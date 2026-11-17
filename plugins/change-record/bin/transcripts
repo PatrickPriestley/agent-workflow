@@ -2672,7 +2672,7 @@ def cmd_compare(args):
         for arm, at in (("current", plugin), ("edit", copy)):
             out = os.path.join(work, f"{case}.{arm}.json")
             why = compare.run_eval(at, case, runs, ceiling, out, work)
-            row[arm] = {"problem": why} if why else compare.tally(read_json(out), case, graders)
+            row[arm] = {"problem": why} if why else compare.tally(read_json(out), case, graders, runs)
         rows.append(row)
     outcome, why = compare.verdict(rows)
     write_atomic(os.path.join(where, "compare.json"), (json.dumps({

@@ -75,9 +75,10 @@ def run_eval(plugin, case, runs, ceiling, out, cwd):
     return None
 
 
-def tally(result, case, step_graders):
+def tally(result, case, step_graders, asked):
     """One arm of one case from the runner's --json: the step's graders passed, out of how many, and the mean over
-    the runs of the share of scored graders passed. skill-fired, the runner's sign that the skill was loaded, is not
+    the runs of the share of scored graders passed. An arm with other than the runs asked has no result: the verdict
+    compares counts, which mean the same only over the same number of runs. skill-fired, the runner's sign that the skill was loaded, is not
     counted: under --ablation none the runner scores it, and it measures the plugin, not the edit."""
     c = next((c for c in (result or {}).get("cases") or [] if isinstance(c, dict) and c.get("name") == case), None)
     if c is None:
@@ -87,8 +88,8 @@ def tally(result, case, step_graders):
     shown = {g.get("name") for g in c.get("graders") or []
              if g.get("type") == "tool_used" and (g.get("config") or {}).get("tool") == "Skill"}
     runs = (c.get("arms") or {}).get("with") or []
-    if not runs:
-        return {"problem": "no runs"}
+    if len(runs) != asked:
+        return {"problem": f"{len(runs)} run{'' if len(runs) == 1 else 's'} of the {asked} asked"}
     passed = total = 0
     means = []
     for r in runs:
