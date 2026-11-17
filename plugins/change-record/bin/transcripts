@@ -2656,7 +2656,7 @@ def cmd_compare(args):
     runs = runs or compare.RUNS
     ceiling = compare.CEILING if ceiling is None else ceiling
     cases = propose.EVALS[step]
-    print(compare.plan(skill, sid, step, how, cases, runs, ceiling, propose.EVALS_DIR))
+    print(compare.plan(skill, sid, step, how, cases, runs, ceiling, propose.EVALS_DIR, go))
     if not go:
         print("Nothing was run: add --run to run it.")
         return 0

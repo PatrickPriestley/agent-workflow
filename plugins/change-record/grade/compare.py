@@ -126,13 +126,13 @@ def verdict(rows):
     return "keep", counts + ", and no case scores lower"
 
 
-def plan(skill, sid, step, how, cases, runs, ceiling, evals_dir):
+def plan(skill, sid, step, how, cases, runs, ceiling, evals_dir, go=False):
     """What `compare` would run, and the most it could spend."""
     lines = [f"transcripts compare: the edit to {skill} proposed from session {sid} at step {step}, the edit {how}.",
-             "It would run, with no arm without the plugin:"]
+             f"It {'runs' if go else 'would run'}, with no arm without the plugin:"]
     for case, graders in cases:
         lines.append(f"  {evals_dir}/{case} (grader{'s' if len(graders) > 1 else ''} {', '.join(graders)}): "
-                     f"{runs} runs with the skill as it is and {runs} with the edit")
+                     f"{runs} run{'' if runs == 1 else 's'} with the skill as it is and {runs} with the edit")
     lines.append(f"Each arm of each case stops at ${ceiling:.2f}, so at most ${2 * len(cases) * ceiling:.2f} in all.")
     return "\n".join(lines)
 
