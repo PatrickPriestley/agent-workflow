@@ -98,4 +98,25 @@ transcripts judge and report: 526 passed, 0 failed
 ```
 
 A proposal drafted before this change holds its case as a string, and the report still lists
-it (a test holds that). Task 2, `transcripts compare`, follows in its own pull request.
+it (a test holds that). On the real folder `materialize` rebuilt from the store, which holds the
+proposal drafted for session `bf01bd72` on 2026-11-16 (`"eval": "red-first"`), on the final code:
+
+```
+$ transcripts report <folder> | sed -n '/## Proposed edits/,$p'
+## Proposed edits
+...
+| Session | Step | Eval case |
+|---|---|---|
+| bf01bd72... | red-first | plugins/change-record/evals/red-first |
+exit 0
+$ transcripts propose <folder> --session bf01bd72... --step change-line        (the error path)
+transcripts: no label confirms that bf01bd72... failed change-line: a proposal is drafted only from a failure a person has labelled (transcripts sheet, then the session's file in <repo>/plugins/change-record/grade/labels)
+exit 1
+```
+
+Not run: `propose` drafting a new proposal on the final code, which is one call to Claude
+Sonnet and waits for the owner's leave; the page and `proposal.json` it writes are held by the
+suite, against a stand-in for `claude`. The review of task 1 also found that the page named
+`transcripts compare` before that command exists; it now says how the comparison is made and
+names no command, and task 2 names it. Task 2, `transcripts compare`, follows in its own pull
+request.
