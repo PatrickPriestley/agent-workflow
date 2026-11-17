@@ -46,11 +46,20 @@ it than without, as concern C5 of record `2026-11-12-session-quality` asks.
 - The edit's arm runs the same plugin with only `SKILL.md` changed, from a copy outside the
   repository, so the two arms differ by that file alone.
 
+- The root README gains a section on the whole loop (tracking, judgement, self-improvement),
+  and the plugin README's Transcripts section an outline of how its parts fit, as the owner
+  asked in chat on 2026-11-17 ("update the readme to include details about the transcription
+  tracking, judgement and self improvement"). It goes in this change because this change is
+  the loop's last step, which the section describes. Rejected: repeating the plugin README's
+  detail in the root README; the root says what each part is for and points to the detail.
+
 ## Tasks
 
 1. The comparison, then, if the edit wins, the edit in `skills/change/SKILL.md` and its row
    in `evals/README.md`. Test: `claude plugin eval` on the case, both arms. Red today: the
    current skill's arm has runs that edit the workflow without seeing a test fail.
+2. The README sections above. Test: the suites that read the root README
+   (`install.test.sh`, `pr-agent/workflow.test.sh`, `pr-agent/pr-agent.test.sh`) stay green.
 
 ## Checks
 

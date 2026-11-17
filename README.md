@@ -137,6 +137,65 @@ may run locally or in CI. The design is in
 `docs/design/2026-11-07-one-record-sdlc.md`; the plugin's own README says how to install it
 (`claude plugin install change-record@agent-workflow`).
 
+### Transcripts, judgement and self-improvement
+
+The change-record plugin also measures whether agents actually follow the skill, and turns
+the failures a person confirms into tested edits to the skill. One command,
+`plugins/change-record/bin/transcripts`, does each step; the plugin's README has every
+option, field and rule ("Transcripts" there). The loop:
+
+    capture ──> store ──> grade and judge ──> a person labels ──> accuracy and report
+                                                     │
+                                                     └─> propose an edit ──> eval case ──> with and without ──> keep or drop
+
+**Tracking.** A hook on `Stop` and `SessionEnd` copies each session's new transcript lines
+into a local archive, with an index entry per session: repository, branch and commits, the
+skills it loaded (with each skill file's git blob, so a session is tied to the exact skill
+text it ran), and the record it wrote. It is opt-in (`AGENT_TRANSCRIPTS` names the archive,
+which must be outside every working tree), never fails or holds up a session, and in your
+other repositories keeps only those on a scope list you write
+(`~/.config/agent-transcripts/scope`). With `AGENT_TRANSCRIPTS_URL` and an insert-only key,
+each stop also sends what is new to a shared Supabase store in the background. Everything is
+redacted before it leaves the machine (keys, tokens, email addresses, account ids), and the
+local archive keeps the original. The store holds gzip chunks, an index row per session
+version, and a `messages` table with a `transcript` view, so a session can be read in the
+dashboard. Only the owner's read key can read it back; `transcripts materialize` rebuilds a
+folder in Claude Code's own layout from it.
+
+**Judgement.** Three kinds of measure, each checked against people before it is trusted:
+
+- `transcripts grade`: seven deterministic graders, one per step of the skill (tier
+  declared, probe before record, record before code, red first, the `Change:` line,
+  `record-check`, Outcome filled). Each gives pass, fail or not applicable with its
+  evidence, read from what the session's calls actually did: a denied or refused call did
+  nothing.
+- `transcripts judge`: a model judges what no pattern settles (whether Decisions name a
+  rejected alternative, whether the Outcome quotes real output). Claude Haiku is asked each
+  question three times with no tools, and two agreeing votes make a verdict. `--repeats`
+  (prose said twice) and `--review` (defects a reviewer reproduced with a script the tool
+  reruns itself) produce claims, not verdicts, and a person rules each claim.
+- `transcripts sheet`, `accuracy` and `report`: a person labels sessions by hand from a sheet
+  that shows the calls and none of the graders' conclusions. `accuracy` scores every grader
+  against those labels, and `report` gives each step's pass rate per skill version, beside
+  the grader's measured error. Two rubric judges that were wrong against people more often than
+  one time in five were taken out rather than tuned.
+
+**Self-improvement.** `transcripts propose --session ID --step STEP` drafts an edit to the
+skill from one failure, and only from one a person's label confirms. It makes one call to
+Claude Sonnet with the skill text the session used, the step's rule, the labeller's reason
+and the session's calls, and writes the draft beside the transcripts; it never touches the
+skill. A draft enters the skill only as a change of its own, with its record, and only if
+the eval case for that failure scores better with the edit than without. The first pass
+through the whole loop: a labelled session edited a CI workflow before any test had failed;
+two drafted edits followed; a new eval case, `red-first-workflow`, reproduced the failure
+(with the skill 1.00 and 0.50 over two runs, without it 0.00 and 0.00); and the edit that
+matches the owner's ruling is being run against the current skill (record
+`docs/changes/2026-11-17-skill-red-first-workflow.md`).
+
+What stays with people: labelling, choosing which sessions are sent to a model, approving
+any run that spends money, and merging a skill edit. Not built yet: a scheduled job that
+rebuilds, grades and reports on its own and lists the failures waiting for a label.
+
 ## Commit hooks, per repository
 
     commit-gate enable                              # conventional + no-attribution checks

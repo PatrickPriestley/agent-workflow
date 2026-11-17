@@ -180,6 +180,20 @@ turns of reading the repository and 3.62 dollars.
 
 ### Transcripts
 
+How the parts fit together, in the order a session passes through them:
+
+1. **Capture**: `archive` (the hook, at every stop) and `import` keep each session in a
+   local archive with an index entry; `scope` decides which repositories count.
+2. **Store**: `push` sends it, redacted, to the shared store; `messages` fills the readable
+   table; `materialize` rebuilds a folder from the store with the read key.
+3. **Grade and judge**: `grade` (seven deterministic step graders) and `judge` (a model for
+   what no pattern settles, and the claims of `--repeats` and `--review`).
+4. **Check the measures against people**: `sheet` builds what a person labels from;
+   `accuracy` scores the graders against the labels; `report` puts pass rates per skill
+   version beside each grader's error.
+5. **Improve the skill**: `propose` drafts an edit from a failure a label confirms; the edit
+   is kept only if the step's eval case (under `evals/`) scores better with it than without.
+
     transcripts archive [--scoped] [--transcript PATH]
     transcripts import [--claude-home DIR] [--repo URL]... [--evals]
     transcripts import [--claude-home DIR] --scoped
