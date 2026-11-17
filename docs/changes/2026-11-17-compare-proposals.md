@@ -250,6 +250,12 @@ begin with a step's name), so the judge suite had one failure that the suites ru
 the README change did not show. The test now reads the grading table by its heading, and
 still fails when a rule there is changed.
 
+The review of task 2 found that an arm with fewer runs than were asked, in a result not
+marked partial, was still compared on raw counts, so one run against two could keep an edit
+with the same pass rate. A test showed it (`keep` on 5 of 6 against 6 of 6, from one run and
+two), then `tally` was given the runs asked and an arm with any other number has no result.
+With the check put back as it was, the test fails.
+
 Not done, and not verified:
 
 - No comparison has been run with `--run` against the real eval runner: that spends model
