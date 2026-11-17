@@ -121,6 +121,11 @@ for bad in "$ELSE" "../../elsewhere" "a/b" "." ".."; do
   : > "$FAKELOG"; out="$(cd "$REPO" && "$T" compare "$D" --session "$bad" --step red-first --run 2>&1)"; assert_eq 2 "$?"; has "$out" "not one session id"; assert_eq 0 "$(calls)"
 done
 assert_eq "keep me" "$(cat "$ELSE/red-first/unrelated.txt" 2>&1)"
+it "a comparison folder that is a link to somewhere else is not deleted through"
+export FAKE_EVAL="$(py -c 'import json,sys; g=json.loads(sys.argv[1]); print(json.dumps({"current": g, "edit": g}))' "$(py -c 'import json; print(json.dumps({"red-first": [{"saw-it-fail": True, "test-run-before-code-change": True}], "red-first-workflow": [{"saw-it-fail": True, "test-run-before-workflow-change": True}]}))')")"
+rm -rf "$D/compare/$SID"; mkdir -p "$D/compare"; ln -s "$ELSE" "$D/compare/$SID"
+: > "$FAKELOG"; out="$(compare --step red-first --run --runs 1)"; assert_eq 1 "$?"; has "$out" "is not inside"; assert_eq 0 "$(calls)"
+assert_eq "keep me" "$(cat "$ELSE/red-first/unrelated.txt" 2>&1)"; rm "$D/compare/$SID"; rmdir "$D/compare"
 it "a step no eval case shows says that one is written first, and runs nothing"
 proposal "$SID" record-check
 out="$(compare --step record-check)"; assert_eq 1 "$?"; has "$out" "no eval case shows a failure of record-check"; assert_eq 0 "$(calls)"

@@ -2612,6 +2612,9 @@ def cmd_compare(args):
     if not sid or not step:
         say(COMPARE_USAGE)
         return 2
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", sid):  # it names folders below DIR, so never a path
+        say(f"--session {sid!r} is not one session id")
+        return 2
     fields, _, _ = load_grade_modules()
     import compare
     import propose
@@ -2671,6 +2674,9 @@ def cmd_compare(args):
         return 0
     work = os.path.join(d, "compare", sid, step)
     copy = os.path.join(work, "plugin")
+    if not os.path.realpath(work).startswith(os.path.realpath(os.path.join(d, "compare")) + os.sep):
+        say(f"the comparison's folder {work} is not inside {os.path.join(d, 'compare')}: nothing was deleted or run")
+        return 1
     shutil.rmtree(work, ignore_errors=True)
     old = {os.path.join(plugin, "evals", "results"), os.path.join(plugin, "outcome-evals", "results")}
     shutil.copytree(plugin, copy, ignore=lambda at, names: [n for n in names if os.path.join(at, n) in old])
