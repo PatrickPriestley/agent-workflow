@@ -720,6 +720,14 @@ assert_eq 0 "$rc"; has "$out" "inserted 0 rows"; has "$out" "4 chunks needed non
 it "an unknown argument is a usage error, and nothing is asked of the store"
 before="$(wc -l < "$LOG")"; out="$(messages --all)"; rc=$?
 assert_eq 2 "$rc"; has "$out" "usage: transcripts messages"; assert_eq "$before" "$(wc -l < "$LOG")"
+it "push, materialize and messages refuse a session that is a path, not one id, before anything is read, sent or written (record 2026-11-17-session-is-one-id)"
+for bad in "$TMPROOT/elsewhere" "../../elsewhere" "a/b" "." ".." "$SID"$'\n'; do
+  before="$(wc -l < "$LOG")"
+  out="$(cd "$REPO" && AGENT_TRANSCRIPTS="$TMPROOT/ar-m1" AGENT_TRANSCRIPTS_URL="$URL" "$T" push --session "$bad" 2>&1)"; assert_eq 2 "$?"; has "$out" "is not one session id"
+  out="$(mat "$TMPROOT/mat-bad" --session "$bad")"; assert_eq 2 "$?"; has "$out" "is not one session id"
+  out="$(messages --session "$bad")"; assert_eq 2 "$?"; has "$out" "is not one session id"
+  assert_eq "$before" "$(wc -l < "$LOG")"; assert_eq "no" "$([ -e "$TMPROOT/mat-bad" ] && echo yes || echo no)"
+done
 
 filled m2
 c1="$(chunk_of main 1)"

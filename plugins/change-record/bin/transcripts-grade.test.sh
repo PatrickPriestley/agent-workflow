@@ -219,6 +219,13 @@ row="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(len(r)
 assert_eq "7 ['evidence', 'graded_at', 'grader', 'session_id', 'skill', 'skill_blob', 'step', 'verdict']" "$row"
 it "the summary names each session's verdicts"
 has "$out" "da1017af red-first pass"
+it "grade and sheet refuse a session that is a path, not one id, before anything is read or written (record 2026-11-17-session-is-one-id)"
+touch "$TMPROOT/before-bad"; sleep 1
+for bad in "$TMPROOT/elsewhere" "../../elsewhere" "a/b" "." ".." "$D1"$'\n'; do
+  out="$(grade --session "$bad")"; assert_eq 2 "$?"; has "$out" "is not one session id"
+  out="$("$T" sheet "$AR" --session "$bad" --repo-dir "$REPO" --labels "$TMPROOT/labels-bad" 2>&1)"; assert_eq 2 "$?"; has "$out" "is not one session id"
+done
+assert_eq "" "$(find "$AR" -newer "$TMPROOT/before-bad" -type f)"; assert_eq "no" "$([ -e "$TMPROOT/labels-bad" ] && echo yes || echo no)"
 
 echo "R8: failures from the flag or from the text, in either key order; denials and missing results do not run"
 mkcase() { mk "$W/$1.jsonl" "$1"; add "$W/$1.jsonl" > /dev/null; setstops "$1" "$A" "$C"; }

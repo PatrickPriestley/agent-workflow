@@ -1226,6 +1226,18 @@ out="$(repeats --transcript "$RW/$R1.jsonl" --out "$REPO/out")"; assert_eq 2 "$?
 out="$(repeats --transcript "$RW/$R1.jsonl")"; assert_eq 2 "$?"; has "$out" "--out DIR"
 it "the record judge is as it was: it still runs with neither --session nor --limit"
 RAR2="$TMPROOT/rar2"; fresh "$RAR2" $J1; out="$(judge "$RAR2" --repo-dir "$REPO")"; assert_eq 0 "$?"; has "$out" "judged 1 sessions"
+it "judge and judge --repeats refuse a session that is a path, not one id, before anything is read, sent or written (record 2026-11-17-session-is-one-id)"
+touch "$TMPROOT/before-bad"; sleep 1; rm -f "$COUNTER"; : > "$FAKELOG"
+for bad in "$TMPROOT/elsewhere" "../../elsewhere" "a/b" "." ".." "$J1"$'\n'; do
+  out="$(judge "$RAR2" --repo-dir "$REPO" --session "$bad")"; assert_eq 2 "$?"; has "$out" "is not one session id"
+  out="$(repeats "$RAR" --session "$bad")"; assert_eq 2 "$?"; has "$out" "is not one session id"
+done
+assert_eq "0" "$(calls)"; assert_eq "" "$(find "$RAR" "$RAR2" -newer "$TMPROOT/before-bad" -type f)"
+it "a transcript whose sessionId is a path is answered under its file's name, inside --out, not where the id leads"
+py -c 'import json,sys; print("\n".join(json.dumps(dict(json.loads(l), sessionId="../../escape"), separators=(",", ":")) for l in open(sys.argv[1]) if l.strip()))' "$RW/$R1.jsonl" > "$RW/odd-id.jsonl"
+out="$(repeats --transcript "$RW/odd-id.jsonl" --out "$TMPROOT/rout2/inner")"; rc=$?
+assert_eq "0 counted" "$rc $(rj "$TMPROOT/rout2/inner/repeats/odd-id.json" 'd["status"]' 2>&1)"
+assert_eq "" "$(find "$TMPROOT" -maxdepth 2 -name 'escape*')"
 
 echo "judge --review: the defects a reviewer that runs the code can show (record 2026-11-15-checkable-judges, R2, R3, R6, R7)"
 # A repository: a base commit, the session's commit (a crash when no name is given), a later fix the
@@ -1316,6 +1328,11 @@ NOBOX="$TMPROOT/nobox"; mkdir -p "$NOBOX"; printf '#!/bin/sh\nexit 1\n' > "$NOBO
 it "R6: with neither --session nor --limit no call is made, and it says which two options choose the sessions"
 out="$(review "$VAR" --repo-dir "$RV")"; rc=$?
 assert_eq "2 0" "$rc $(rcalls)"; has "$out" "--session ID or --limit N"
+it "a session that is a path, not one id, is refused before anything is read or run (record 2026-11-17-session-is-one-id)"
+for bad in "$TMPROOT/elsewhere" "../../elsewhere" "a/b" "." ".." "$V1"$'\n'; do
+  out="$(review "$VAR" --repo-dir "$RV" --session "$bad" --local)"; assert_eq 2 "$?"; has "$out" "is not one session id"
+done
+assert_eq "0" "$(rcalls)"; assert_eq "no" "$([ -e "$VAR/reviews" ] && echo yes || echo no)"
 it "R7: where no box can be started for the scripts it refuses before any call, unless --local is given"
 out="$(PATH="$NOBOX:$PATH" review "$VAR" --repo-dir "$RV" --session $V1)"; rc=$?
 assert_eq "2 0" "$rc $(rcalls)"; has "$out" "--local"; has "$out" "with your own access"
@@ -1563,6 +1580,14 @@ out="$(propose --session $P1 --step red-first --frobnicate)"; assert_eq 2 "$?"; 
 out="$(propose --session $P1 --step tidy-code)"; assert_eq 2 "$?"; has "$out" "tier-declared"
 out="$(cd "$PREPO" && "$T" propose "$PREPO/inside" --session $P1 --step red-first 2>&1)"; assert_eq 2 "$?"; has "$out" "inside the working tree"
 out="$(propose --session 99999999-2222-3333-4444-555555555555 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"
+it "a session that is a path, not one id, is refused before anything is read or written (record 2026-11-17-session-is-one-id)"
+# a session's entry and transcript outside the folder, where an absolute or ../ session leads the reads today
+ELSE="$PW/elsewhere"; mkdir -p "$ELSE/x"; cp "$PAR/sessions/$P1.json" "$ELSE/x.json"; cp -R "$PAR/parts/$P1/main" "$ELSE/x/main"
+touch "$PW/before-bad"; sleep 1; : > "$FAKELOG"
+for bad in "$ELSE/x" "../../elsewhere/x" "a/b" "." ".." "$P1"$'\n'; do
+  out="$(propose --session "$bad" --step red-first)"; assert_eq 2 "$?"; has "$out" "is not one session id"; lacks "$out" "no label confirms"
+done
+assert_eq "0" "$(asked)"; assert_eq "" "$(find "$PW" -newer "$PW/before-bad" -type f)"
 it "the skill file is the version the session used, by its blob: from the repository, or the folder's copy when that is the same blob; another version is never taken for it"
 PBLOB="$(git -C "$PREPO" hash-object plugins/change-record/skills/change/SKILL.md)"
 mkdir -p "$PAR/skills/change-record:change"; printf -- '---\nname: change\n---\n# Change, a later version\n' > "$PAR/skills/change-record:change/SKILL.md"
