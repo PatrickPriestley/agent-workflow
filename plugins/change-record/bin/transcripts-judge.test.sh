@@ -1461,6 +1461,172 @@ print(one(False), "/", one(True), "| small" if tracemalloc.get_traced_memory()[1
 it "more than ten sessions are not reviewed in one run"
 out="$(review "$VAR" --repo-dir "$RV" --limit 11)"; assert_eq 2 "$?"; has "$out" "at most 10"
 
+echo "session-quality R6 and R7: transcripts propose drafts a skill edit from a failure a label confirms (record 2026-11-12-session-quality, task 3)"
+PW="$TMPROOT/propose"; PREPO="$PW/repo"; PAR="$PW/archive"; PLAB="$PW/labels"; mkdir -p "$PREPO/plugins/change-record/skills/change" "$PLAB"
+SKILL0="$(printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write the code.\n\nAsk skill-owner@example.org if unsure.\n')"
+( cd "$PREPO" && git init -q -b work && git config user.email t@example.com && git config user.name t && git config core.hooksPath /dev/null
+  printf '%s\n' "$SKILL0" > plugins/change-record/skills/change/SKILL.md
+  git add -A && git commit -qm "feat: base" && git remote add origin https://github.com/Owner/Repo ) > /dev/null 2>&1
+P1=91000000-2222-3333-4444-555555555555; P2=92000000-2222-3333-4444-555555555555
+pline() { printf '{"sessionId":"%s","timestamp":"%s","cwd":"%s","gitBranch":"work","type":"%s","message":{"role":"%s","content":%s}}\n' "$1" "$2" "$PREPO" "$3" "$3" "$4"; }
+# psession ID: a session that loaded the skill and wrote code with no test run before it
+psession() {
+  { pline "$1" 2026-11-10T10:00:00.000Z user '"Add --shout. Mail '"$EMAIL"' when done."'
+    pline "$1" 2026-11-10T10:00:05.000Z assistant '[{"type":"tool_use","id":"t1","name":"Skill","input":{"skill":"change-record:change"}}]'
+    pline "$1" 2026-11-10T10:00:09.000Z user '[{"type":"tool_result","tool_use_id":"t1","content":"loaded"}]'
+    pline "$1" 2026-11-10T10:00:20.000Z assistant '[{"type":"tool_use","id":"t2","name":"Write","input":{"file_path":"'"$PREPO"'/greet.py","content":"print(1)"}}]'
+    pline "$1" 2026-11-10T10:00:21.000Z user '[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]'
+    pline "$1" 2026-11-10T10:00:30.000Z assistant '[{"type":"text","text":"Done."}]'
+  } > "$PW/$1.jsonl"
+  (cd "$PREPO" && AGENT_TRANSCRIPTS="$PAR" "$T" archive --transcript "$PW/$1.jsonl" < /dev/null > /dev/null 2>&1); }
+psession $P1; psession $P2
+(cd "$PREPO" && "$T" sheet "$PAR" --labels "$PLAB" > /dev/null 2>&1)
+# plabel ID STEP VERDICT REASON [BY]: a person's verdict for one step, written into the session's label file
+plabel() { python3 - "$PLAB/$1.txt" "$2" "$3" "$4" "${5-Pat Example, 2026-11-16}" <<'PY'
+import re, sys
+p, step, verdict, reason, by = sys.argv[1:6]
+t = open(p).read()
+t = re.sub(r"(?m)^labelled-by:.*$", "labelled-by: " + by, t)
+t = re.sub(r"(?m)^%s:.*$" % re.escape(step), f"{step}: {verdict} | {reason}", t)
+open(p, "w").write(t)
+PY
+}
+PROPOSED="$(printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write a test and see it fail.\n3. Write the code.\n')"
+printf 'Here is the edit.\n<skill>\n%s\n</skill>\n<why>The skill never says to run a test before the code, and at call 2 the session wrote greet.py with none.</why>\n<calls>2, 1</calls>\n' "$PROPOSED" > "$PW/answer.txt"
+propose() { (cd "$PREPO" && FAKE_ANSWER_FILE="${ANSWER-$PW/answer.txt}" "$T" propose "$PAR" --labels "$PLAB" "$@" 2>&1); }
+asked() { wc -l < "$FAKELOG" | tr -d ' '; }
+it "a failure no label confirms is refused: exit 1, nothing written, nothing sent to a model"
+: > "$FAKELOG"
+out="$(propose --session $P1 --step red-first)"; rc=$?
+assert_eq 1 "$rc"; has "$out" "no label confirms"; assert_eq "0" "$(asked)"; [ ! -e "$PAR/proposals" ] && ok || bad "a proposals folder was written"
+it "a label that passes the step, or one of another step, confirms nothing"
+plabel $P1 red-first pass "a test was run first"
+out="$(propose --session $P1 --step red-first)"; assert_eq 1 "$?"; has "$out" "no label confirms"
+plabel $P1 red-first "" ""; plabel $P1 change-line fail "no Change line"
+out="$(propose --session $P1 --step red-first)"; assert_eq 1 "$?"; assert_eq "0" "$(asked)"
+it "a label with no person's name is no label, and neither is one of another version of the transcript"
+plabel $P2 red-first fail "no test before greet.py" ""
+out="$(propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "no label confirms"
+plabel $P2 red-first fail "no test before greet.py"; sed -i.bak -E 's/^transcript: sha256:[0-9a-f]{4}/transcript: sha256:0000/' "$PLAB/$P2.txt"
+out="$(propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "another version of the transcript"; assert_eq "0" "$(asked)"
+mv "$PLAB/$P2.txt.bak" "$PLAB/$P2.txt"; plabel $P2 red-first "" ""
+it "a confirmed failure gives a proposal: the proposed skill file, its diff, and a note citing the session, the step, the label and the calls"
+plabel $P1 red-first fail "no test was run before greet.py was written; $EMAIL was told"
+out="$(propose --session $P1 --step red-first)"; rc=$?
+PD="$PAR/proposals/$P1/red-first"
+assert_eq 0 "$rc"; has "$out" "$PD"
+assert_eq "$PROPOSED" "$(cat "$PD/SKILL.md" 2>&1)"
+has "$(cat "$PD/SKILL.diff" 2>&1)" "+2. Write a test and see it fail."; has "$(cat "$PD/SKILL.diff" 2>&1)" "-2. Write the code."
+note="$(cat "$PD/proposal.md" 2>&1)"
+has "$note" "$P1"; has "$note" "red-first"; has "$note" "Pat Example, 2026-11-16"; has "$note" "no test was run before greet.py was written"
+has "$note" "calls 1 and 2"; has "$note" "The skill never says to run a test before the code"; has "$note" "change-record:change"
+it "R7: the note names the eval case for the step, says to check that it shows this failure, and that the edit is kept only if the case improves with it"
+has "$note" "plugins/change-record/evals/red-first"; has "$note" "with and without"
+has "$note" "is the eval case for this step"; has "$note" "Check that it shows this failure"
+it "it never writes to the skill: the repository's file and tree are as they were"
+assert_eq "$SKILL0" "$(cat "$PREPO/plugins/change-record/skills/change/SKILL.md")"; assert_eq "" "$(git -C "$PREPO" status --porcelain)"
+it "what is sent is redacted as for the store, to Claude Sonnet with no tools, and holds the skill, the step's rule, the label's reason and the session's calls"
+assert_eq "1" "$(asked)"
+sentp="$(py -c 'import json,sys; r=json.loads(open(sys.argv[1]).read().splitlines()[-1]); print(r["kind"], r["argv"][r["argv"].index("--model")+1], repr(r["argv"][r["argv"].index("--tools")+1])); print(r["prompt"])' "$FAKELOG")"
+has "$sentp" "claude sonnet ''"; lacks "$sentp" "$EMAIL"; has "$sentp" "<redacted:email>"
+lacks "$sentp" "skill-owner@example.org"; lacks "$(cat "$PD/proposal.md")" "$EMAIL"
+has "$sentp" "2. Write the code."; has "$sentp" "no test was run before greet.py was written"; has "$sentp" "a test run, before the first code"; has "$sentp" "greet.py"
+it "R7: a step no eval case shows says that none does, and that one is needed before the edit can be kept"
+plabel $P2 probe-before-record fail "the record was written with nothing looked at"
+out="$(propose --session $P2 --step probe-before-record)"; assert_eq 0 "$?"
+note="$(cat "$PAR/proposals/$P2/probe-before-record/proposal.md" 2>&1)"
+has "$note" "No eval case shows this failure"; lacks "$note" "plugins/change-record/evals/"
+it "an answer with no skill file in it, one that changes nothing, a refusal: each is said, exits 1 and leaves no proposal"
+plabel $P2 red-first fail "no test before greet.py"
+printf 'I would add a step.\n<why>x</why>\n' > "$PW/bad1.txt"; printf '<skill>\n%s\n</skill>\n<why>x</why>\n' "$SKILL0" > "$PW/bad2.txt"
+printf '<skill>\n\n</skill>\n<why>x</why>\n' > "$PW/bad3.txt"
+out="$(ANSWER="$PW/bad1.txt" propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "no proposed skill file"
+out="$(ANSWER="$PW/bad3.txt" propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "no proposed skill file"
+rm -f "$COUNTER"; out="$(FAKE_SCRIPT=haiku propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "not Sonnet"
+rm -f "$COUNTER"; out="$(FAKE_SCRIPT=iserror propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "gave no answer"
+out="$(ANSWER="$PW/bad2.txt" propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "changes nothing"
+rm -f "$COUNTER"; out="$(FAKE_SCRIPT=refused propose --session $P2 --step red-first)"; assert_eq 1 "$?"; has "$out" "refused"
+[ ! -e "$PAR/proposals/$P2/red-first" ] && ok || bad "a proposal was left"
+it "usage: a session and a step are both needed, the step is one of the seven, and the folder is outside every working tree"
+out="$(propose --session $P1)"; assert_eq 2 "$?"; has "$out" "usage: transcripts propose"
+out="$(propose --step red-first)"; assert_eq 2 "$?"; has "$out" "usage: transcripts propose"
+out="$(propose --session $P1 --step red-first --frobnicate)"; assert_eq 2 "$?"; has "$out" "usage: transcripts propose"
+out="$(propose --session $P1 --step tidy-code)"; assert_eq 2 "$?"; has "$out" "tier-declared"
+out="$(cd "$PREPO" && "$T" propose "$PREPO/inside" --session $P1 --step red-first 2>&1)"; assert_eq 2 "$?"; has "$out" "inside the working tree"
+out="$(propose --session 99999999-2222-3333-4444-555555555555 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"
+it "the skill file is the version the session used, by its blob: from the repository, or the folder's copy when that is the same blob; another version is never taken for it"
+PBLOB="$(git -C "$PREPO" hash-object plugins/change-record/skills/change/SKILL.md)"
+mkdir -p "$PAR/skills/change-record:change"; printf -- '---\nname: change\n---\n# Change, a later version\n' > "$PAR/skills/change-record:change/SKILL.md"
+: > "$FAKELOG"; out="$(propose --session $P1 --step red-first)"; assert_eq 0 "$?"
+sentp="$(py -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["prompt"])' "$FAKELOG")"
+has "$sentp" "2. Write the code."; lacks "$sentp" "a later version"
+has "$(cat "$PAR/proposals/$P1/red-first/proposal.md")" "blob ${PBLOB:0:12}"
+out="$(propose --session $P1 --step red-first --repo-dir "$TMPROOT")"; assert_eq 1 "$?"; has "$out" "is neither in"
+cp "$PREPO/plugins/change-record/skills/change/SKILL.md" "$PAR/skills/change-record:change/SKILL.md"
+: > "$FAKELOG"; out="$(propose --session $P1 --step red-first --repo-dir "$TMPROOT")"; assert_eq 0 "$?"; assert_eq "1" "$(asked)"
+rm -rf "$PAR/skills"; : > "$FAKELOG"
+out="$(propose --session $P1 --step red-first --repo-dir "$TMPROOT")"; assert_eq 1 "$?"; has "$out" "is neither in"; assert_eq "0" "$(asked)"
+it "a session that never loaded the skill gets no proposal: an edit to the skill would not have reached it"
+P3=93000000-2222-3333-4444-555555555555
+{ pline $P3 2026-11-10T11:00:00.000Z user '"Add --shout."'
+  pline $P3 2026-11-10T11:00:20.000Z assistant '[{"type":"tool_use","id":"t2","name":"Write","input":{"file_path":"'"$PREPO"'/greet.py","content":"print(1)"}}]'
+  pline $P3 2026-11-10T11:00:21.000Z user '[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]'; } > "$PW/$P3.jsonl"
+(cd "$PREPO" && AGENT_TRANSCRIPTS="$PAR" "$T" archive --transcript "$PW/$P3.jsonl" < /dev/null > /dev/null 2>&1; "$T" sheet "$PAR" --labels "$PLAB" > /dev/null 2>&1)
+plabel $P3 red-first fail "no test before greet.py"; : > "$FAKELOG"
+out="$(propose --session $P3 --step red-first)"; assert_eq 1 "$?"; has "$out" "did not load"; assert_eq "0" "$(asked)"
+it "a session whose index entry is gone from a damaged folder is said to be no session there, with no traceback"
+rm -f "$PAR/sessions/$P3.json"
+out="$(propose --session $P3 --step red-first)"; assert_eq 1 "$?"; has "$out" "no such session"; lacks "$out" "Traceback"
+it "each eval case a proposal can name is a case the plugin has, a long session is cut to its end, and the calls are said as a person would"
+assert_eq "record-before-code red-first | True True | call 3 | calls 1, 2 and 9 | no call was named" "$(py - "$here/.." <<'PY'
+import os, sys
+sys.path.insert(0, sys.argv[1] + "/grade")
+import propose
+p = propose.prompt_for("s", "skill", "red-first", "reason", "x" * 100000 + "THE END OF THE SESSION", lambda s: s)
+print(" ".join(sorted(propose.EVALS.values())), "|", all(os.path.isdir(os.path.join(sys.argv[1], "evals", c)) for c in propose.EVALS.values()),
+      len(p) < 70000 and "THE END OF THE SESSION" in p, "|", propose.some([3]), "|", propose.some([1, 2, 9]), "|", propose.some([]))
+PY
+)"
+it "the call itself: output that is no object, no output at all, a run that does not end, and no claude to run each give an error with its reason, never a traceback"
+assert_eq "error: not claude -p JSON | error: not claude -p JSON | error: not claude -p JSON | error: no answer in 1 s | error: claude did not start" "$(py - "$here/.." "$PW" <<'PY'
+import os, stat, sys
+sys.path.insert(0, sys.argv[1] + "/grade")
+import propose
+bindir = sys.argv[2] + "/askbin"; os.makedirs(bindir, exist_ok=True)
+def claude(script):
+    path = bindir + "/claude"
+    open(path, "w").write("#!/bin/sh\n" + script + "\n"); os.chmod(path, 0o755)
+os.environ["PATH"] = bindir + ":/usr/bin:/bin"
+propose.TIMEOUT = 1
+out = []
+for script in ("echo '[]'", "echo 'this is not JSON'", "true", "sleep 5"):
+    claude(script)
+    got = propose.ask("a prompt")
+    out.append(got["status"] + ": " + ("not claude -p JSON" if "not claude -p JSON" in (got["detail"] or "") else got["detail"] or ""))
+os.remove(bindir + "/claude")
+got = propose.ask("a prompt")
+out.append(got["status"] + ": " + (got["detail"] or "").split(" (")[0])
+print(" | ".join(out))
+PY
+)"
+it "the rule a proposal states for each of the seven steps is in the README's row for that step"
+assert_eq "7 steps, each rule in its row" "$(py - "$here/../README.md" <<'PY'
+import re, sys
+sys.path.insert(0, sys.argv[1].rsplit("/", 1)[0] + "/grade")
+import fields, propose
+rows = dict(re.findall(r"^\| `([a-z-]+)` \| (.*) \|$", open(sys.argv[1]).read(), re.M))
+missing = [s for s in fields.STEPS if propose.RULES.get(s, "no rule") not in rows.get(s, "")]
+print(f"{len(fields.STEPS)} steps, " + ("each rule in its row" if not missing else f"not in the README: {missing}"))
+PY
+)"
+it "the report lists the proposals a folder holds, each with its step and its eval case, and has no such section when there are none"
+rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
+has "$rep" "## Proposed edits"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"; has "$rep" "| $P2 | probe-before-record | none |"
+(cd "$PREPO" && "$T" grade "$PAR" > /dev/null 2>&1)   # a folder with score rows takes the report's other path
+rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"
+has "$rep" "Score rows from"; has "$rep" "| $P1 | red-first | plugins/change-record/evals/red-first |"
+rm -rf "$PAR/proposals"; rep="$(cd "$PREPO" && "$T" report "$PAR" --labels "$PLAB" 2>&1)"; lacks "$rep" "Proposed edits"
+
 echo
 echo "transcripts judge and report: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
