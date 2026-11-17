@@ -75,6 +75,7 @@
       }
     ],
     "red-first": [],
+    "red-first-workflow": [],
     "tier-0-no-record": [
       {
         "grader": "declares-tier-0",

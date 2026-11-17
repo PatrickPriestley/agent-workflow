@@ -375,7 +375,6 @@ test('evals.json has the guide\'s shape: one entry per case, its prompt, its des
     assert.deepEqual(Object.keys(e),['id','name','prompt','expected_output','files','assertions'],e.name);
     const prompt=fs.readFileSync(path.join(root,e.name,'prompt.md'),'utf8').trim();
     assert.ok(e.prompt.endsWith(prompt),`${e.name}: the case's own prompt, whole`);
-    assert.match(e.prompt,/^The repository for this task is the folder `repo\/` of the input files/,e.name);
     const described=fs.readFileSync(path.join(root,e.name,'case.yaml'),'utf8').match(/^description: "(.*)"$/m)[1];
     assert.equal(e.expected_output,described,e.name);
     assert.deepEqual(e.assertions,scored(e.name).map(g=>statements(e.name,g)[0]),e.name);
@@ -710,4 +709,20 @@ test('red-first-workflow: saw-it-fail needs a failing test run before the workfl
   assert.ok(!re.test(writeWorkflowTest+unittest+passed+editWorkflow+unittest+failed),'green, the edit, then red');
   for(const w of [editWorkflow,heredocWorkflow,sedWorkflow,cdWorkflow]) assert.ok(!re.test(writeWorkflowTest+w+unittest+failed),`the workflow first, then red: ${w.slice(60,140)}`);
   assert.ok(!re.test(writeWorkflowTest+unittest+result('Exit code 1\nTraceback\nSyntaxError: invalid syntax',true)+editWorkflow),'a run that did not reach the tests is not a failing test');
+});
+test('verify compares an unchanged file with the repository its own case starts from, not with another case\'s',()=>{
+  const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'cr-verify-own-'));
+  try{
+    const {dir,run}=copyOfCases(scratch);
+    fs.writeFileSync(path.join(dir,'tier-2-stops-before-code','scaffold.sh'),'#!/bin/bash\nbash "$(dirname "$0")/../_scaffold/greet.sh" && echo "# a line only this case starts with" >> greet.py\n');
+    assert.equal(run().status,0);
+    const out=path.join(scratch,'skill','evals'), own=path.join(out,'files','repo-tier-2-stops-before-code');
+    fs.copyFileSync(verify,path.join(out,'verify'));
+    const v=(...a)=>{ const r=spawnSync('python3',['-I',path.join(out,'verify'),...a],{encoding:'utf8'}); return {status:r.status,out:JSON.parse(r.stdout||'null'),stderr:r.stderr}; };
+    let r=v('tier-2-stops-before-code',own);
+    assert.equal(r.status,0,r.stderr); assert.equal(by(r.out,'greet.py is unchanged').passed,true,'its own repository, left as it was');
+    r=v('tier-2-stops-before-code',path.join(out,'files','repo'));
+    assert.equal(by(r.out,'greet.py is unchanged').passed,false,'the other cases\' greet.py is not this case\'s');
+    assert.match(by(r.out,'greet.py is unchanged').evidence,/differs from the input file/);
+  } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 });
