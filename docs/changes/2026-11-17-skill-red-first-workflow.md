@@ -30,6 +30,12 @@ it than without, as concern C5 of record `2026-11-12-session-quality` asks.
   2026-11-17, Claude Code 2.1.326): `evals/red-first-workflow` with the current skill scored
   1.00 and 0.50 in two runs; the run at 0.50 ran the tests green and then edited the
   workflow, the failure the drafts were made from.
+- Verified against the real system (`docs/changes/2026-11-15-suites-on-macos.md`): the
+  procedure the edit prescribes for a test that can run only in CI has been followed in this
+  repository's own CI. Failures that showed only on the macOS runner were pushed, their red
+  logs read (runs 43712625701 and 43714085731, each made to print more), and only then fixed;
+  that record says the cause was not found by reading, but by those two runs. They ran in a
+  pull request, not a draft of the test alone, which is the one part not exercised.
 - Assumed, not probed: how the case scores with the edit. That is the measurement below.
 
 ## Decisions
@@ -115,7 +121,8 @@ Not done, and not verified:
 
 - The clause for a test that can run only in CI (push the test or job alone as a draft, read
   its red log) is in the skill as the owner ruled, but no eval case exercises it: the eval
-  runner can neither push nor run CI.
+  runner can neither push nor run CI. The procedure itself was followed in this repository's
+  CI on 2026-11-15 (Probed facts), in a pull request rather than a draft of the test alone.
 - The other eight cases were not run with the edit. It changes step 3 only, but a case such
   as `red-first` could move with it; a run of the whole suite with the edit and without
   would show that, and spends model calls.
