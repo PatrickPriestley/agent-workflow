@@ -12,13 +12,13 @@ assert_has() { printf '%s' "$2" | grep -qF -- "$1" && ok || bad "expected [$1] i
 
 repo() {  # a repo whose "tests" pass when ./status says pass
   r="$TMPROOT/$1"; git init -q "$r"
-  git -C "$r" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: init"
+  git -C "$r" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: init"
   printf 'pass\n' > "$r/status"
   printf '#!/bin/sh\n[ "$(cat status)" = pass ] || { echo "tests failed" >&2; exit 1; }\necho "tests passed"\n' > "$r/check.sh"
   chmod +x "$r/check.sh"
   printf '%s' "$r"
 }
-commit() { git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: ${2:-x}" 2>&1; }
+commit() { git -C "$1" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: ${2:-x}" 2>&1; }
 
 it "enable records the command and installs the hook"
 R=$(repo basic)
@@ -40,12 +40,12 @@ assert_has "./check.sh" "$out"
 assert_eq "chore: ok" "$(git -C "$R" log -1 --format=%s)"
 
 it "--no-verify still bypasses"
-out=$(git -C "$R" -c user.name=t -c user.email=t@t commit -q --no-verify --allow-empty -m bypass 2>&1); rc=$?
+out=$(git -C "$R" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --no-verify --allow-empty -m bypass 2>&1); rc=$?
 assert_eq 0 "$rc"
 
 it "the hook runs from the repository root, wherever the commit starts"
 printf 'pass\n' > "$R/status"; mkdir -p "$R/sub"
-out=$(cd "$R/sub" && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: fromsub" 2>&1); rc=$?
+out=$(cd "$R/sub" && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: fromsub" 2>&1); rc=$?
 assert_eq 0 "$rc"
 
 it "a worktree is gated by the same hook and command"
@@ -92,7 +92,7 @@ it "a missing commit-gate refuses the commit instead of skipping the check"
 R7=$(repo missing); mkdir -p "$TMPROOT/g"; cp "$GATE" "$TMPROOT/g/commit-gate"
 (cd "$R7" && "$TMPROOT/g/commit-gate" enable --tests "./check.sh" >/dev/null 2>&1)
 rm -rf "$TMPROOT/g"
-out=$(cd "$R7" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: gone" 2>&1); rc=$?
+out=$(cd "$R7" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: gone" 2>&1); rc=$?
 [ "$rc" != 0 ] && ok || bad "commit went through with commit-gate missing"
 assert_has "commit-gate" "$out"
 
@@ -100,26 +100,26 @@ it "a moved checkout falls back to commit-gate on PATH and still gates"
 R11=$(repo moved); mkdir -p "$TMPROOT/old" "$TMPROOT/newbin"; cp "$GATE" "$TMPROOT/old/commit-gate"
 (cd "$R11" && "$TMPROOT/old/commit-gate" enable --tests "./check.sh" >/dev/null 2>&1)
 rm -rf "$TMPROOT/old"; cp "$GATE" "$TMPROOT/newbin/commit-gate"
-out=$(cd "$R11" && PATH="$TMPROOT/newbin:/usr/bin:/bin" git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: viapath" 2>&1); rc=$?
+out=$(cd "$R11" && PATH="$TMPROOT/newbin:/usr/bin:/bin" git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: viapath" 2>&1); rc=$?
 assert_eq 0 "$rc"
 printf 'fail\n' > "$R11/status"
-out=$(cd "$R11" && PATH="$TMPROOT/newbin:/usr/bin:/bin" git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: viapathfail" 2>&1); rc=$?
+out=$(cd "$R11" && PATH="$TMPROOT/newbin:/usr/bin:/bin" git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: viapathfail" 2>&1); rc=$?
 [ "$rc" != 0 ] && ok || bad "fallback commit-gate did not gate"
 
 it "a checkout path with an apostrophe still produces a working hook"
 R12=$(repo apostrophe); mkdir -p "$TMPROOT/Pat's tools"; cp "$GATE" "$TMPROOT/Pat's tools/commit-gate"
 (cd "$R12" && "$TMPROOT/Pat's tools/commit-gate" enable --tests "./check.sh" >/dev/null 2>&1)
-out=$(cd "$R12" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: quote" 2>&1); rc=$?
+out=$(cd "$R12" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: quote" 2>&1); rc=$?
 assert_eq 0 "$rc"
 printf 'fail\n' > "$R12/status"
-out=$(cd "$R12" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: quotefail" 2>&1); rc=$?
+out=$(cd "$R12" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: quotefail" 2>&1); rc=$?
 [ "$rc" != 0 ] && ok || bad "apostrophe path hook did not gate"
 
 it "a file removed from the commit but left on disk refuses the commit"
 R13=$(repo rmcached)
 (cd "$R13" && "$GATE" enable --tests "sh check.sh" >/dev/null 2>&1)
 printf 'x\n' > "$R13/required"; git -C "$R13" add check.sh status required
-git -C "$R13" -c user.name=t -c user.email=t@t commit -q --no-verify -m base
+git -C "$R13" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --no-verify -m base
 git -C "$R13" rm -q --cached required
 out=$(commit "$R13" dropreq); rc=$?
 [ "$rc" != 0 ] && ok || bad "a staged deletion still on disk was committed unchecked"
@@ -130,13 +130,13 @@ R14=$(repo disabledshared); mkdir -p "$TMPROOT/sh2" "$TMPROOT/g2"; cp "$GATE" "$
 git -C "$R14" config core.hooksPath "$TMPROOT/sh2"
 (cd "$R14" && "$TMPROOT/g2/commit-gate" enable --tests "./check.sh" >/dev/null 2>&1 && "$TMPROOT/g2/commit-gate" disable >/dev/null 2>&1)
 rm -rf "$TMPROOT/g2"
-out=$(cd "$R14" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: off" 2>&1); rc=$?
+out=$(cd "$R14" && PATH=/usr/bin:/bin git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m "chore: off" 2>&1); rc=$?
 assert_eq 0 "$rc"
 
 it "unstaged edits to tracked files refuse the commit, since tests would not see the commit"
 R8=$(repo unstaged)
 (cd "$R8" && "$GATE" enable --tests "sh check.sh" >/dev/null 2>&1)
-git -C "$R8" add check.sh status; git -C "$R8" -c user.name=t -c user.email=t@t commit -q --no-verify -m base
+git -C "$R8" add check.sh status; git -C "$R8" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --no-verify -m base
 printf '#!/bin/sh
 exit 1
 ' > "$R8/check.sh"; git -C "$R8" add check.sh
@@ -150,7 +150,7 @@ it "commit -a stages everything first, so it is checked normally"
 printf '#!/bin/sh
 exit 0
 ' > "$R8/check.sh"
-out=$(git -C "$R8" -c user.name=t -c user.email=t@t commit -q -am "chore: all" 2>&1); rc=$?
+out=$(git -C "$R8" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -am "chore: all" 2>&1); rc=$?
 assert_eq 0 "$rc"
 
 it "enable is idempotent and status reports the state"
@@ -193,7 +193,7 @@ assert_eq 0 "$rc"
 assert_eq "chore: usesgit" "$(git -C "$RG" log -1 --format=%s)"
 
 # ---- commit messages: conventional format and no attribution trailers ----
-msgcommit() { git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -F - 2>&1; }
+msgcommit() { git -C "$1" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -F - 2>&1; }
 
 it "enable installs a commit-msg hook too"
 RM=$(repo msgs)
@@ -280,7 +280,7 @@ out=$(printf 'docs: add notes\n' | msgcommit "$RM"); rc=$?
 [ "$rc" != 0 ] && ok || bad "a plain Generated with footer was committed"
 it "an attribution line already in the file, untouched by this commit, is not blamed"
 printf 'Co-Authored-By: Old <o@l.d>\n' > "$RM/LEGACY.md"; git -C "$RM" add LEGACY.md
-git -C "$RM" -c user.name=t -c user.email=t@t commit -q --no-verify -m "chore: legacy"
+git -C "$RM" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --no-verify -m "chore: legacy"
 printf 'Co-Authored-By: Old <o@l.d>\nnew line\n' > "$RM/LEGACY.md"; git -C "$RM" add LEGACY.md
 out=$(printf 'docs: extend legacy\n' | msgcommit "$RM"); rc=$?
 assert_eq 0 "$rc"

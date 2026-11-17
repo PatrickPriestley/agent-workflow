@@ -40,7 +40,7 @@ REPO="$TMPROOT/repo"; mkdir -p "$REPO/docs/changes" "$REPO/src"; (
   git config core.hooksPath /dev/null
   printf -- '---\nid: 2026-01-01-ledger\ntier: 2\nstatus: open\nrequester: someone\napprovers: []\n---\n# Move the ledger\n\n## Problem\nUNIQUE-PROBLEM-TEXT\n\n## Decisions\n- D1\n' > docs/changes/2026-01-01-ledger.md
   printf 'print(1)\n' > src/app.py
-  git add -A && git commit -qm "docs: a record" )
+  git add -A && git -c commit.gpgsign=false commit -qm "docs: a record" )
 REC=docs/changes/2026-01-01-ledger.md
 good="$TMPROOT/good.txt"; printf 'important: Decisions, D1 names no rejected alternative.\n\n%s\n\n' "$END" > "$good"
 # review [ARGS]: the tool in the repository with the stand-in, both streams

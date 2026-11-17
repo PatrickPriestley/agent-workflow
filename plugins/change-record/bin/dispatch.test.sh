@@ -30,7 +30,7 @@ rm -f .brief-seen.md
 printf 'built %s\n' "$name" > "feature-$name.txt"
 mkdir -p tests
 printf '#!/usr/bin/env bash\n[ -f feature-%s.txt ] && echo "ok 1 - feature present" || { echo "not ok 1 - feature-%s.txt missing"; exit 1; }\n' "$name" "$name" > "tests/$name.test.sh"
-git add -A; git commit -qm "feat: $name"
+git add -A; git -c commit.gpgsign=false commit -qm "feat: $name"
 printf '{"type":"result","subtype":"success","is_error":false,"num_turns":4,"total_cost_usd":0.0123,"result":"Change: docs/changes/%s.md\\n\\nBuilt task %s as the record says."}\n' "$id" "$name"
 AGENT
 # An agent that reads the brief and commits nothing.
@@ -47,12 +47,14 @@ repo() {
   mkdir -p "$r/work/docs/changes" "$r/work/plugins/cr"; cd "$r/work" || exit 1
   git init -q -b main; git config user.email t@example.com; git config user.name t
   git config core.hooksPath /dev/null
+  # dispatch commits the done marker itself, as it must in a real repository: this scratch one never signs
+  git config commit.gpgsign false
   printf 'hello\n' > lib.txt; printf '# Changes\n' > docs/changes/README.md; printf '{}\n' > plugins/cr/plugin.json
-  git add -A; git commit -qm "feat: base"
+  git add -A; git -c commit.gpgsign=false commit -qm "feat: base"
   git remote add origin "$r/remote.git"; git push -q -u origin main 2>/dev/null
   WT="$r/worktrees"
 }
-commit_main() { git add -A; git commit -qm "$1"; git push -q origin main 2>/dev/null; }
+commit_main() { git add -A; git -c commit.gpgsign=false commit -qm "$1"; git push -q origin main 2>/dev/null; }
 # record PATH TIER STATUS TASKS-YAML: a record whose Tasks section has three numbered items.
 record() {
   { printf -- '---\nid: %s\ntier: %s\nstatus: %s\nrequester: me\napprovers: [me]\nplugin: plugins/cr\n%s---\n# Build the thing\n' "$(basename "$1" .md)" "$2" "$3" "$4"
@@ -116,7 +118,7 @@ out="$(dispatch docs/changes/2026-11-08-t.md --task beta --agent "$TMPROOT/agent
 assert_eq 2 "$rc"; has "$out" "alpha"
 
 it "once the first task's branch has squash-merged into main (and been deleted), the next task runs"
-git fetch -q origin; git checkout -q main; git merge -q --squash origin/thing/alpha; git commit -qm "feat: alpha (#1)"; git push -q origin main 2>/dev/null; git push -q origin --delete thing/alpha 2>/dev/null
+git fetch -q origin; git checkout -q main; git -c commit.gpgsign=false merge -q --squash origin/thing/alpha; git -c commit.gpgsign=false commit -qm "feat: alpha (#1)"; git push -q origin main 2>/dev/null; git push -q origin --delete thing/alpha 2>/dev/null
 out="$(dispatch docs/changes/2026-11-08-t.md --agent "$TMPROOT/agent.sh")"; rc=$?
 assert_eq 0 "$rc"; has "$out" "beta"; has "$out" "pushed"; lacks "$out" "waiting for alpha"
 assert_eq "2026-11-08-t/beta main " "$(remote_heads)"
@@ -126,7 +128,7 @@ has "$out" "gamma"; has "$out" "waiting"
 
 it "the worktree is cut from the base, not from whatever the controller has checked out"
 repo head; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; commit_main "docs(change): t"
-printf 'local only\n' > local.txt; git add -A; git commit -qm "wip: not pushed"
+printf 'local only\n' > local.txt; git add -A; git -c commit.gpgsign=false commit -qm "wip: not pushed"
 out="$(dispatch docs/changes/2026-11-08-t.md --agent "$TMPROOT/agent.sh")"; rc=$?
 assert_eq 0 "$rc"; git fetch -q origin
 git cat-file -e origin/thing/alpha:local.txt 2>/dev/null && bad "the branch carries the controller's unpushed commit" || ok
@@ -147,7 +149,7 @@ cat > "$TMPROOT/green.sh" <<'AGENT'
 #!/usr/bin/env bash
 set -eu; cat > /dev/null; mkdir -p tests
 printf '#!/usr/bin/env bash\necho "ok 1 - always"\n' > tests/alpha.test.sh; printf 'x\n' > feature-alpha.txt
-git add -A; git commit -qm "feat: alpha"
+git add -A; git -c commit.gpgsign=false commit -qm "feat: alpha"
 printf '{"type":"result","result":"Change: docs/changes/2026-11-08-t.md\\n\\nDone.","num_turns":2,"total_cost_usd":0.002}\n'
 AGENT
 chmod +x "$TMPROOT/green.sh"
@@ -168,7 +170,7 @@ assert_eq 0 "$rc"; has "$out" "pushed"
 it "a PR description without the Change: line gets it as its first line, and the push proceeds"
 cat > "$TMPROOT/noline.sh" <<'AGENT'
 #!/usr/bin/env bash
-set -eu; cat > /dev/null; printf 'x\n' > feature-alpha.txt; git add -A; git commit -qm "feat: alpha"
+set -eu; cat > /dev/null; printf 'x\n' > feature-alpha.txt; git add -A; git -c commit.gpgsign=false commit -qm "feat: alpha"
 printf '{"type":"result","result":"Built alpha. See the record for details.","num_turns":2,"total_cost_usd":0.002}\n'
 AGENT
 chmod +x "$TMPROOT/noline.sh"
@@ -182,7 +184,7 @@ cat > "$TMPROOT/breaker.sh" <<'AGENT'
 #!/usr/bin/env bash
 set -eu; cat > /dev/null; printf 'x\n' > feature-alpha.txt
 sed -i.bak 's/^## Checks$/## Cheques/' docs/changes/2026-11-08-t.md; rm -f docs/changes/2026-11-08-t.md.bak
-git add -A; git commit -qm "feat: alpha"
+git add -A; git -c commit.gpgsign=false commit -qm "feat: alpha"
 printf '{"type":"result","result":"Change: docs/changes/2026-11-08-t.md\\n\\nDone.","num_turns":2,"total_cost_usd":0.002}\n'
 AGENT
 chmod +x "$TMPROOT/breaker.sh"
@@ -209,7 +211,7 @@ cat > "$TMPROOT/renamer.sh" <<'AGENT'
 #!/usr/bin/env bash
 set -eu; cat > /dev/null; printf 'x\n' > feature-alpha.txt
 sed -i.bak 's/- name: alpha/- name: alfa/' docs/changes/2026-11-08-t.md; rm -f docs/changes/2026-11-08-t.md.bak
-git add -A; git commit -qm "feat: alpha"
+git add -A; git -c commit.gpgsign=false commit -qm "feat: alpha"
 printf '{"type":"result","result":"Change: docs/changes/2026-11-08-t.md\\n\\nDone.","num_turns":2,"total_cost_usd":0.002}\n'
 AGENT
 chmod +x "$TMPROOT/renamer.sh"
@@ -246,7 +248,7 @@ git config core.hooksPath /dev/null
 # Second review round.
 it "a local branch with unpushed commits and no worktree is not force-deleted without --fresh"
 repo stale; record docs/changes/2026-11-08-t.md 2 approved "$TASKS"; commit_main "docs(change): t"
-git checkout -qb thing/alpha; printf 'kept\n' > kept.txt; git add -A; git commit -qm "wip: unpushed"; git checkout -q main
+git checkout -qb thing/alpha; printf 'kept\n' > kept.txt; git add -A; git -c commit.gpgsign=false commit -qm "wip: unpushed"; git checkout -q main
 out="$(dispatch docs/changes/2026-11-08-t.md --agent "$TMPROOT/agent.sh")"; rc=$?
 assert_eq 1 "$rc"; has "$out" "--fresh"; has "$out" "thing/alpha"; assert_eq "main " "$(remote_heads)"
 git cat-file -e thing/alpha:kept.txt 2>/dev/null && ok || bad "the unpushed branch was deleted"
@@ -274,7 +276,7 @@ out="$(dispatch docs/changes/2026-11-08-t.md --task alpha --agent "$TMPROOT/agen
 assert_eq 0 "$rc"; has "$out" "pushed=yes"
 out="$(dispatch docs/changes/2026-11-08-t.md --task alpha --agent "$TMPROOT/agent.sh")"; rc=$?
 assert_eq 0 "$rc"; has "$out" "already dispatched"; lacks "$out" "no task named"
-git fetch -q origin; git checkout -q main; git merge -q --squash origin/thing/alpha; git commit -qm "feat: alpha (#1)"; git push -q origin main 2>/dev/null; git push -q origin --delete thing/alpha 2>/dev/null
+git fetch -q origin; git checkout -q main; git -c commit.gpgsign=false merge -q --squash origin/thing/alpha; git -c commit.gpgsign=false commit -qm "feat: alpha (#1)"; git push -q origin main 2>/dev/null; git push -q origin --delete thing/alpha 2>/dev/null
 out="$(dispatch docs/changes/2026-11-08-t.md --task alpha --agent "$TMPROOT/agent.sh")"; rc=$?
 assert_eq 0 "$rc"; has "$out" "done on"; lacks "$out" "no task named"
 out="$(dispatch docs/changes/2026-11-08-t.md --task nope --agent "$TMPROOT/agent.sh")"; rc=$?

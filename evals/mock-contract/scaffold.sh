@@ -163,4 +163,4 @@ Controller actions for hostd. Tests: `python3 -m unittest discover -s tests -t .
 MD
 git init -q -b main
 git -c user.name=Owner -c user.email=owner@example.com add -A
-git -c user.name=Owner -c user.email=owner@example.com commit -q -m "pad: initial"
+git -c user.name=Owner -c user.email=owner@example.com -c commit.gpgsign=false commit -q -m "pad: initial"

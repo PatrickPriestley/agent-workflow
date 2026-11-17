@@ -24,7 +24,7 @@ printf 'hello\n' > lib.txt
 printf 'check hello\n' > tests/test_hello.sh
 printf '# Changes\n' > docs/changes/README.md
 printf '# scratch\n\nA greating.\n' > README.md
-git add -A; git commit -qm "feat: base"
+git add -A; git -c commit.gpgsign=false commit -qm "feat: base"
 
 record() {  # PATH TIER STATUS [extra sections...]
   { printf -- '---\nid: %s\ntier: %s\nstatus: %s\nrequester: probe\napprovers: []\n---\n# Probe\n' "$(basename "$1" .md)" "$2" "$3"
@@ -38,14 +38,14 @@ printf 'bye\n' >> lib.txt
 printf 'check bye\n' > tests/test_red.sh                                  # red on main
 printf 'check hello\n' > tests/test_green.sh                              # green on main
 printf 'echo "ModuleNotFoundError: No module named x"; exit 1\n' > tests/test_broken.sh   # cannot run
-git add -A; git commit -qm "feat: code with a record"
+git add -A; git -c commit.gpgsign=false commit -qm "feat: code with a record"
 
 git checkout -q main; git checkout -qb approval
 record docs/changes/2026-11-08-big.md 2 approved "Problem" "Requirements" "Options and concerns"
-git add -A; git commit -qm "docs(change): big, approved"
+git add -A; git -c commit.gpgsign=false commit -qm "docs(change): big, approved"
 
 git checkout -q main; git checkout -qb tier0
 sed -i.bak 's/greating/greeting/' README.md; rm -f README.md.bak
-git add -A; git commit -qm "docs: fix a typo"
+git add -A; git -c commit.gpgsign=false commit -qm "docs: fix a typo"
 git checkout -q main
 echo "scratch repository at $dir: branches main, code, approval, tier0"

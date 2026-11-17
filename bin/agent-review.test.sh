@@ -40,9 +40,9 @@ done
 
 repo() {  # main with one commit, feature branch with one more
   r="$TMPROOT/$1"; git init -q -b main "$r"
-  printf 'print("hi")\n' > "$r/greet.py"; git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t commit -q -m "chore: init"
+  printf 'print("hi")\n' > "$r/greet.py"; git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m "chore: init"
   git -C "$r" checkout -q -b feature
-  printf 'print("hello")\n' > "$r/greet.py"; git -C "$r" -c user.name=t -c user.email=t@t commit -q -am "feat: hello"
+  printf 'print("hello")\n' > "$r/greet.py"; git -C "$r" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -am "feat: hello"
   printf '%s' "$r"
 }
 run() {  # run in repo $1 as caller $2 (claude|codex|none) with remaining args
@@ -159,9 +159,9 @@ ST=$(repo stale); O="$TMPROOT/stale-origin.git"; git clone -q --bare "$ST" "$O"
 git -C "$O" symbolic-ref HEAD refs/heads/main
 git -C "$ST" remote add origin "$O"
 git -C "$ST" checkout -q main; printf 'merged by someone else\n' > "$ST/other.txt"
-git -C "$ST" add -A; git -C "$ST" -c user.name=t -c user.email=t@t commit -q -m "feat: other"
+git -C "$ST" add -A; git -C "$ST" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat: other"
 git -C "$ST" push -q origin main; git -C "$ST" reset -q --hard HEAD~1; git -C "$ST" fetch -q origin
-git -C "$ST" checkout -q feature; git -C "$ST" -c user.name=t -c user.email=t@t merge -q --no-edit origin/main
+git -C "$ST" checkout -q feature; git -C "$ST" -c user.name=t -c user.email=t@t -c commit.gpgsign=false merge -q --no-edit origin/main
 [ -f "$ST/other.txt" ] || bad "the setup did not merge origin/main into feature"
 out=$(run "$ST" claude code 2>&1)
 dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
@@ -210,7 +210,7 @@ assert_has ".env (looks like a secret: do not open)" "$(cat "$dir/untracked.txt"
 git -C "$R" checkout -q greet.py; rm -f "$R/.env" "$R/new.py"
 
 it "tracked secret files are named, never diffed: committed, staged, modified, renamed, deleted (#4)"
-S=$(repo secrets); g() { git -C "$S" -c user.name=t -c user.email=t@t "$@"; }
+S=$(repo secrets); g() { git -C "$S" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 printf 'OLD=CANARY_DELETED\n' > "$S/old.pem"; printf 'plain\n' > "$S/notes.txt"; printf 'K=CANARY_RENAMED_AWAY\n' > "$S/deploy.key"; printf 'K=CANARY_STAGED_RENAME\n' > "$S/wip.key"
 mkdir -p "$S/config"; printf 'K=CANARY_MODIFIED_BASE\n' > "$S/config/app.key"
 g add -A; g commit -q -m "chore: base secrets"; g checkout -q main; g merge -q --ff-only feature; g checkout -q feature
@@ -230,7 +230,7 @@ assert_has "excluded.txt" "$(cat "$dir/prompt.md")"
 
 it "run from a subdirectory, secret files there are still left out"
 SD=$(repo subdir); mkdir -p "$SD/sub"; printf 'K=CANARY_SUBDIR\n' > "$SD/sub/.env"; printf 'x = 1\n' > "$SD/sub/app.py"
-git -C "$SD" add -A; git -C "$SD" -c user.name=t -c user.email=t@t commit -q -m "feat: sub"
+git -C "$SD" add -A; git -C "$SD" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat: sub"
 out=$(run "$SD/sub" claude code main..feature 2>&1)
 dir=$(grep -o '/[^ ]*/agent-review/[^ /]*' "$LOG" | head -1)
 grep -rq CANARY_SUBDIR "$dir" && bad "the subdirectory's secret reached the review folder" || ok

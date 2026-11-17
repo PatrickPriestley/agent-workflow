@@ -40,4 +40,4 @@ cp "$here/../../templates/docs-changes/README.md" docs/changes/README.md
 cp "$here/../../templates/docs-changes/TEMPLATE.md" docs/changes/TEMPLATE.md
 git init -q -b main
 git -c user.name=Owner -c user.email=owner@example.com add -A
-git -c user.name=Owner -c user.email=owner@example.com commit -q -m "greet: initial"
+git -c user.name=Owner -c user.email=owner@example.com -c commit.gpgsign=false commit -q -m "greet: initial"

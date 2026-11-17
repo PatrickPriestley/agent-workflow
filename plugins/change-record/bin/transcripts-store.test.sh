@@ -46,7 +46,7 @@ REPO="$TMPROOT/checkout"; mkdir -p "$REPO/plugins/change-record/skills/change"; 
   cd "$REPO" && git init -q -b work && git config user.email t@example.com && git config user.name t
   git config core.hooksPath /dev/null
   printf -- '---\nname: change\n---\n# Change v1\n' > plugins/change-record/skills/change/SKILL.md
-  git add -A && git commit -qm "feat: base" && git remote add origin https://github.com/Owner/Repo )
+  git add -A && git -c commit.gpgsign=false commit -qm "feat: base" && git remote add origin https://github.com/Owner/Repo )
 BLOB="$(git -C "$REPO" hash-object plugins/change-record/skills/change/SKILL.md)"
 SID=aaaaaaaa-2222-3333-4444-555555555555
 PROJ="$TMPROOT/claude/projects/-checkout"; mkdir -p "$PROJ/$SID/subagents"
@@ -279,7 +279,7 @@ import os,sys,datetime
 print(" ".join(datetime.datetime.fromtimestamp(os.path.getmtime(p), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") for p in sys.argv[1:]))' \
   "$OUT/projects/github-com-owner-repo/$SID.jsonl" "$OUT/projects/github-com-owner-repo/$SID/subagents/agent-a1.jsonl" 2>&1)"
 it "the skills folder holds each skill under its plugin-qualified name, at the version the session used"
-(cd "$REPO" && printf -- '---\nname: change\n---\n# Change v2\n' > plugins/change-record/skills/change/SKILL.md && git commit -qam "feat: v2")
+(cd "$REPO" && printf -- '---\nname: change\n---\n# Change v2\n' > plugins/change-record/skills/change/SKILL.md && git -c commit.gpgsign=false commit -qam "feat: v2")
 rm -rf "$OUT"; out="$(mat "$OUT")"
 assert_eq "$(git -C "$REPO" cat-file blob "$BLOB")" "$(cat "$OUT/skills/change-record:change/SKILL.md" 2>&1)"
 it "the session's index entry is written beside them"

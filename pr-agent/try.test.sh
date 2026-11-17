@@ -35,9 +35,9 @@ new_repo() {  # a repository with main, a feature branch checked out, and a late
   r="$TMPROOT/$1"; mkdir -p "$r"; cd "$r" || exit 1
   git init -q -b main; git config user.email t@example.com; git config user.name t
   git config core.hooksPath /dev/null
-  echo base > app.txt; git add app.txt; git commit -qm "feat: base"
-  git checkout -qb feature; echo feature-change >> app.txt; git commit -qam "feat: change"
-  git checkout -q main; echo main-only > later.txt; git add later.txt; git commit -qm "feat: later"
+  echo base > app.txt; git add app.txt; git -c commit.gpgsign=false commit -qm "feat: base"
+  git checkout -qb feature; echo feature-change >> app.txt; git -c commit.gpgsign=false commit -qam "feat: change"
+  git checkout -q main; echo main-only > later.txt; git add later.txt; git -c commit.gpgsign=false commit -qm "feat: later"
   git checkout -q feature
   printf '%s' "$r"
 }
@@ -96,7 +96,7 @@ g="$(envvar IGNORE__GLOB)"
 has "$g" '**/.[eE][nN][vV]*'; has "$g" 'vendor/**'
 
 it "adds the repository's own .pr_agent.toml globs to them"
-printf '[ignore]\nglob = ["fixtures/**"]\n' > .pr_agent.toml; git add .pr_agent.toml; git commit -qm "chore: config"
+printf '[ignore]\nglob = ["fixtures/**"]\n' > .pr_agent.toml; git add .pr_agent.toml; git -c commit.gpgsign=false commit -qm "chore: config"
 reset_log; try >/dev/null 2>&1
 g="$(envvar IGNORE__GLOB)"
 has "$g" 'fixtures/**'; has "$g" '*[tT][oO][kK][eE][nN]*'
@@ -165,7 +165,7 @@ out=$(try --bogus 2>&1); assert_eq 2 "$?"
 
 it "refuses to run when agent-workflow's config has no ignore globs"
 X="$TMPROOT/emptycfg"; mkdir -p "$X/pr-agent"; cp "$here/try.sh" "$here/check-model.sh" "$X/pr-agent/"; : > "$X/.pr_agent.toml"
-git rm -q .pr_agent.toml; git commit -qm "chore: drop config"
+git rm -q .pr_agent.toml; git -c commit.gpgsign=false commit -qm "chore: drop config"
 out=$(PR_AGENT_PYTHON="$FAKE" FAKE_LOG="$TMPROOT/log" bash "$X/pr-agent/try.sh" 2>&1); rc=$?
 assert_eq 2 "$rc"; has "$out" "no ignore globs"
 
@@ -174,19 +174,21 @@ out=$(bash "$here/scratch.sh" 2>&1); rc=$?
 assert_eq 2 "$rc"; has "$out" "bin/agent-review"
 
 it "scratch.sh stops when the timeout line it edits has changed"
-mkdir -p bin pr-agent; echo 'timeout=901' > bin/agent-review; cp "$here/try.sh" pr-agent/; git add bin pr-agent; git commit -qm "feat: tool"
-git checkout -q main; git merge -q --ff-only feature 2>/dev/null || git reset -q --hard feature; git checkout -q feature
+mkdir -p bin pr-agent; echo 'timeout=901' > bin/agent-review; cp "$here/try.sh" pr-agent/; git add bin pr-agent; git -c commit.gpgsign=false commit -qm "feat: tool"
+git checkout -q main; git -c commit.gpgsign=false merge -q --ff-only feature 2>/dev/null || git reset -q --hard feature; git checkout -q feature
 out=$(bash "$here/scratch.sh" 2>&1); rc=$?
 assert_eq 2 "$rc"; has "$out" "update scratch.sh"
 
 # ---- scratch.sh -------------------------------------------------------------------------
 C="$TMPROOT/clone"; git clone -q "$root" "$C"; cd "$C"
 git config user.email t@example.com; git config user.name t
+# scratch.sh commits its two branches itself, as it must in a real repository: this scratch clone never signs
+git config commit.gpgsign false
 git checkout -q -B main "$(git -C "$root" rev-parse HEAD)"
 git rm -rq --ignore-unmatch pr-agent   # main without the trial scripts, as before this branch merges
-printf '.env\nconfig/secrets.yml\n' >> .gitignore; git add .gitignore; git commit -q --no-verify -m "chore: ignore env files"
+printf '.env\nconfig/secrets.yml\n' >> .gitignore; git add .gitignore; git -c commit.gpgsign=false commit -q --no-verify -m "chore: ignore env files"
 git checkout -q -b tooling; mkdir -p pr-agent; cp "$here/try.sh" "$here/check-model.sh" pr-agent/; git add pr-agent
-git commit -q --no-verify -m "chore: try.sh"
+git -c commit.gpgsign=false commit -q --no-verify -m "chore: try.sh"
 before="$(git rev-parse --abbrev-ref HEAD) $(git status --porcelain | wc -l | tr -d ' ')"
 
 it "scratch.sh creates both branches from the current branch, without touching the checkout"

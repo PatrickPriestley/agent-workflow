@@ -37,4 +37,4 @@ cat > README.md <<'MD'
 MD
 git init -q -b main
 git -c user.name=Owner -c user.email=owner@example.com add -A
-git -c user.name=Owner -c user.email=owner@example.com commit -q -m "greet: initial"
+git -c user.name=Owner -c user.email=owner@example.com -c commit.gpgsign=false commit -q -m "greet: initial"

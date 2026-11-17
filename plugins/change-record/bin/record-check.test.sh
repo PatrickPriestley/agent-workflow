@@ -22,10 +22,10 @@ repo() {
   git init -q -b main; git config user.email t@example.com; git config user.name t
   git config core.hooksPath /dev/null
   printf 'hello\n' > lib.txt; printf '# Changes\n' > docs/changes/README.md
-  git add -A; git commit -qm "feat: base"
+  git add -A; git -c commit.gpgsign=false commit -qm "feat: base"
   git checkout -qb feature
 }
-commit() { git add -A; git commit -qm "$1"; }
+commit() { git add -A; git -c commit.gpgsign=false commit -qm "$1"; }
 record() {  # PATH TIER STATUS [extra sections...]
   { printf -- '---\nid: %s\ntier: %s\nstatus: %s\nrequester: me\napprovers: []\n---\n# Title\n' "$(basename "$1" .md)" "$2" "$3"
     printf '## Goal\nx\n## Probed facts\nx\n## Decisions\nx\n## Tasks\nx\n## Checks\nx\n## Outcome\n'
@@ -94,7 +94,7 @@ out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 1 "$rc"; has "$out" "approved before 
 
 it "tier 2, code with the record approved on the base: pass"
 repo t2code; git checkout -q main; tier2 docs/changes/2026-11-07-big.md approved; commit "docs(change): big"
-git checkout -q feature; git merge -q main; printf 'bye\n' >> lib.txt; commit "feat: big step 1"
+git checkout -q feature; git -c commit.gpgsign=false merge -q main; printf 'bye\n' >> lib.txt; commit "feat: big step 1"
 out="$(bash "$RC" --body "$(body 'Change: docs/changes/2026-11-07-big.md')" 2>&1)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "tier=2"
 
@@ -117,15 +117,15 @@ out="$(bash "$RC" 2>&1)"; has "$out" "mode=code"
 
 it "tier 2 cannot be reached by raising a tier 1 record on the base alongside code"
 repo upgrade; git checkout -q main; record docs/changes/2026-11-07-up.md 1 done; printf 'Shipped.\n' >> docs/changes/2026-11-07-up.md; commit "feat: tier 1 done"
-git checkout -q feature; git merge -q main; tier2 docs/changes/2026-11-07-up.md approved; printf 'bye\n' >> lib.txt; commit "feat: sneaky"
+git checkout -q feature; git -c commit.gpgsign=false merge -q main; tier2 docs/changes/2026-11-07-up.md approved; printf 'bye\n' >> lib.txt; commit "feat: sneaky"
 out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 1 "$rc"; has "$out" "on the base commit"; has "$out" "tier 1"
 
 it "a code PR cannot lower the tier of a record on the base; a record-only PR can"
 repo lower; git checkout -q main; tier2 docs/changes/2026-11-07-dn.md approved; commit "docs(change): dn"
-git checkout -q feature; git merge -q main; record docs/changes/2026-11-07-dn.md 1 open; printf 'bye\n' >> lib.txt; commit "feat: downgraded"
+git checkout -q feature; git -c commit.gpgsign=false merge -q main; record docs/changes/2026-11-07-dn.md 1 open; printf 'bye\n' >> lib.txt; commit "feat: downgraded"
 out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 1 "$rc"; has "$out" "lowered"
 repo lower2; git checkout -q main; tier2 docs/changes/2026-11-07-dn.md approved; commit "docs(change): dn"
-git checkout -q feature; git merge -q main; record docs/changes/2026-11-07-dn.md 1 open; commit "docs(change): dn is routine after all"
+git checkout -q feature; git -c commit.gpgsign=false merge -q main; record docs/changes/2026-11-07-dn.md 1 open; commit "docs(change): dn is routine after all"
 out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 0 "$rc"
 
 it "--json prints one JSON document: status, tier, record, mode and the problems"
@@ -187,12 +187,12 @@ it "a brand-new tier 2 record cannot be born done: the approval PR sets approved
 repo borndone; tier2 docs/changes/2026-11-07-big.md done; sed -i.bak 's/^## Outcome$/## Outcome\nShipped./' docs/changes/2026-11-07-big.md; rm -f docs/changes/*.bak; commit "docs(change): big, done"
 out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 1 "$rc"; has "$out" "approved before it is done"
 repo thendone; git checkout -q main; tier2 docs/changes/2026-11-07-big.md approved; commit "docs(change): big approved"
-git checkout -q feature; git merge -q main; tier2 docs/changes/2026-11-07-big.md done; sed -i.bak 's/^## Outcome$/## Outcome\nShipped./' docs/changes/2026-11-07-big.md; rm -f docs/changes/*.bak; commit "docs(change): big done"
+git checkout -q feature; git -c commit.gpgsign=false merge -q main; tier2 docs/changes/2026-11-07-big.md done; sed -i.bak 's/^## Outcome$/## Outcome\nShipped./' docs/changes/2026-11-07-big.md; rm -f docs/changes/*.bak; commit "docs(change): big done"
 out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 0 "$rc"
 
 it "a record-only PR may abandon a tier 2 record, approved or still a draft"
 repo abandon1; git checkout -q main; tier2 docs/changes/2026-11-07-big.md approved; commit "docs(change): big approved"
-git checkout -q feature; git merge -q main; tier2 docs/changes/2026-11-07-big.md abandoned; sed -i.bak 's/^## Outcome$/## Outcome\nDropped: the vendor shipped it./' docs/changes/2026-11-07-big.md; rm -f docs/changes/*.bak; commit "docs(change): big abandoned"
+git checkout -q feature; git -c commit.gpgsign=false merge -q main; tier2 docs/changes/2026-11-07-big.md abandoned; sed -i.bak 's/^## Outcome$/## Outcome\nDropped: the vendor shipped it./' docs/changes/2026-11-07-big.md; rm -f docs/changes/*.bak; commit "docs(change): big abandoned"
 out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 0 "$rc"; has "$out" "mode=approval"
 repo abandon2; tier2 docs/changes/2026-11-07-big.md abandoned; commit "docs(change): never mind"
 out="$(bash "$RC" 2>&1)"; rc=$?; assert_eq 0 "$rc"

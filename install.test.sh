@@ -217,9 +217,9 @@ printf '%s' "$out" | grep -q "would:" && ok || bad "dry run did not show the wir
 SRC="$TMPROOT/src"; git clone -q "$here" "$SRC" 2>/dev/null
 git -C "$SRC" config user.email t@t; git -C "$SRC" config user.name t; git -C "$SRC" config core.hooksPath /dev/null
 cp "$here/install.sh" "$SRC/install.sh"   # the installer under test, not the last committed one
-git -C "$SRC" checkout -q -B main; git -C "$SRC" commit -qam "chore: installer under test" --allow-empty
-git -C "$SRC" update-ref refs/remotes/origin/main HEAD; git -C "$SRC" tag v-test
-git -C "$SRC" checkout -q -b dev; printf '\n# dev branch edit\n' >> "$SRC/AGENT-WORKFLOW.md"; git -C "$SRC" commit -qam "docs: dev edit"
+git -C "$SRC" checkout -q -B main; git -C "$SRC" -c commit.gpgsign=false commit -qam "chore: installer under test" --allow-empty
+git -C "$SRC" update-ref refs/remotes/origin/main HEAD; git -C "$SRC" -c tag.gpgsign=false tag v-test
+git -C "$SRC" checkout -q -b dev; printf '\n# dev branch edit\n' >> "$SRC/AGENT-WORKFLOW.md"; git -C "$SRC" -c commit.gpgsign=false commit -qam "docs: dev edit"
 pinned_run() { HOME="$1" bash "$SRC/install.sh" "${@:2}"; }
 
 it "by default it installs from a pinned copy at origin/main, not from this checkout"
@@ -273,7 +273,7 @@ out=$(pinned_run "$H" 2>&1); rc=$?
 
 it "a pinned path inside another repository is never taken for the pinned copy"
 H=$(fresh_home pin5b); git init -q "$H"; echo keep > "$H/mine.txt"
-git -C "$H" add mine.txt; git -C "$H" -c user.email=t@t -c user.name=t commit -qm "chore: home"
+git -C "$H" add mine.txt; git -C "$H" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm "chore: home"
 mkdir -p "$H/.local/share/agent-workflow"; before="$(git -C "$H" rev-parse HEAD)"
 out=$(pinned_run "$H" 2>&1); rc=$?
 [ "$rc" != 0 ] && ok || bad "installed into the enclosing repository"
@@ -297,8 +297,8 @@ assert_has_line "is not a git checkout" "$out"
 
 it "--ref pins a commit that is no branch or tag tip, even one the pinned copy lacks"
 H=$(fresh_home pin5c); P="$H/.local/share/agent-workflow"; pinned_run "$H" >/dev/null 2>&1
-git -C "$SRC" checkout -q -b mid main; git -C "$SRC" commit -q --allow-empty -m "chore: mid"
-mid="$(git -C "$SRC" rev-parse HEAD)"; git -C "$SRC" commit -q --allow-empty -m "chore: past mid"
+git -C "$SRC" checkout -q -b mid main; git -C "$SRC" -c commit.gpgsign=false commit -q --allow-empty -m "chore: mid"
+mid="$(git -C "$SRC" rev-parse HEAD)"; git -C "$SRC" -c commit.gpgsign=false commit -q --allow-empty -m "chore: past mid"
 git -C "$SRC" checkout -q dev
 out=$(pinned_run "$H" --ref "$mid" 2>&1); rc=$?
 assert_eq 0 "$rc"

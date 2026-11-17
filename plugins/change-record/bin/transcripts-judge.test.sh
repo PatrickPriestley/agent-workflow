@@ -167,7 +167,7 @@ REPO="$TMPROOT/checkout"; mkdir -p "$REPO/docs/changes" "$REPO/tests"
 # MIN) on the day of the made-up sessions (2026-11-10), which start on the hour: a session's own
 # commits are those made after it began
 at() { local t="$1"; shift; case "$t" in *:*:*) ;; *:*) t="$t:00" ;; *) t="$t:30:00" ;; esac
-       GIT_AUTHOR_DATE="2026-11-10T${t}Z" GIT_COMMITTER_DATE="2026-11-10T${t}Z" git "$@"; }
+       GIT_AUTHOR_DATE="2026-11-10T${t}Z" GIT_COMMITTER_DATE="2026-11-10T${t}Z" git -c commit.gpgsign=false "$@"; }
 record() {  # id decisions outcome
 cat <<EOF
 ---
@@ -1466,7 +1466,7 @@ PW="$TMPROOT/propose"; PREPO="$PW/repo"; PAR="$PW/archive"; PLAB="$PW/labels"; m
 SKILL0="$(printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write the code.\n\nAsk skill-owner@example.org if unsure.\n')"
 ( cd "$PREPO" && git init -q -b work && git config user.email t@example.com && git config user.name t && git config core.hooksPath /dev/null
   printf '%s\n' "$SKILL0" > plugins/change-record/skills/change/SKILL.md
-  git add -A && git commit -qm "feat: base" && git remote add origin https://github.com/Owner/Repo ) > /dev/null 2>&1
+  git add -A && git -c commit.gpgsign=false commit -qm "feat: base" && git remote add origin https://github.com/Owner/Repo ) > /dev/null 2>&1
 P1=91000000-2222-3333-4444-555555555555; P2=92000000-2222-3333-4444-555555555555
 pline() { printf '{"sessionId":"%s","timestamp":"%s","cwd":"%s","gitBranch":"work","type":"%s","message":{"role":"%s","content":%s}}\n' "$1" "$2" "$PREPO" "$3" "$3" "$4"; }
 # psession ID: a session that loaded the skill and wrote code with no test run before it

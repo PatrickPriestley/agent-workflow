@@ -18,4 +18,4 @@ cat >> README.md <<'MD'
 MD
 printf '__pycache__/\n' > .gitignore
 git -c user.name=Owner -c user.email=owner@example.com add -A
-git -c user.name=Owner -c user.email=owner@example.com commit -q --amend -m "greet: initial"
+git -c user.name=Owner -c user.email=owner@example.com -c commit.gpgsign=false commit -q --amend -m "greet: initial"

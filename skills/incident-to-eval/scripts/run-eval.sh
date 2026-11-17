@@ -63,8 +63,8 @@ new_snapshot() {  # $1 name, $2 commit: history-free copy of that tree, tagged b
   git archive "$2" | tar -x -C "$dir"
   git -C "$dir" add -A
   git -C "$dir" -c user.name="$(git config user.name)" -c user.email="$(git config user.email)" \
-    commit -qm "snapshot of $(git rev-parse --short "$2")" --allow-empty
-  git -C "$dir" tag base
+    -c commit.gpgsign=false commit -qm "snapshot of $(git rev-parse --short "$2")" --allow-empty
+  git -C "$dir" -c tag.gpgsign=false tag base
   echo "$dir"
 }
 

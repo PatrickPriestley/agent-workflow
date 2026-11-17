@@ -30,6 +30,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      # A scaffold or suite that commits or tags in a scratch repository turns signing off for
+      # that command (record docs/changes/2026-11-17-unsigned-scratch-commits): a machine that
+      # signs every commit once ran its signing service dry on the suites' thousands. Here git
+      # is asked to sign with a program that always fails, so one that forgets fails here.
+      - name: A signing program that always fails
+        run: |
+          printf '#!/bin/sh\necho "a scratch repository asked to be signed: $*" >&2\nexit 1\n' > "$RUNNER_TEMP/signer"
+          chmod +x "$RUNNER_TEMP/signer"
+          git config --global commit.gpgsign true; git config --global tag.gpgsign true
+          git config --global gpg.program "$RUNNER_TEMP/signer"
       - name: Native evaluation context
         run: node --test evals/context.test.cjs
       - name: Installer
@@ -71,6 +81,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      # A scaffold or suite that commits or tags in a scratch repository turns signing off for
+      # that command (record docs/changes/2026-11-17-unsigned-scratch-commits): a machine that
+      # signs every commit once ran its signing service dry on the suites' thousands. Here git
+      # is asked to sign with a program that always fails, so one that forgets fails here.
+      - name: A signing program that always fails
+        run: |
+          printf '#!/bin/sh\necho "a scratch repository asked to be signed: $*" >&2\nexit 1\n' > "$RUNNER_TEMP/signer"
+          chmod +x "$RUNNER_TEMP/signer"
+          git config --global commit.gpgsign true; git config --global tag.gpgsign true
+          git config --global gpg.program "$RUNNER_TEMP/signer"
       - name: Versions
         run: bash --version | head -n1; python3 --version; git --version; node --version
       # judge --review runs a model's scripts in a bwrap box, and its tests do the same. A Linux

@@ -31,10 +31,10 @@ exit $rc
 SH
   printf 'hello\n' > lib.txt
   printf 'check hello\n' > tests/test_hello.sh
-  git add -A; git commit -qm "feat: base"
+  git add -A; git -c commit.gpgsign=false commit -qm "feat: base"
   git checkout -qb feature
 }
-commit() { git add -A; git commit -qm "$1"; }
+commit() { git add -A; git -c commit.gpgsign=false commit -qm "$1"; }
 RUN='bash run-tests.sh {files}'
 
 it "a new test that fails on the base and passes on the head is red"
@@ -125,13 +125,13 @@ out="$(bash "$RC" --run "$RUN" --json 2>/dev/null)"; rc=$?; assert_eq 1 "$rc"
 assert_eq "fail" "$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
 
 it "a modified test that already fails on the base before the change is inconclusive, not red"
-repo prefail; git checkout -q main; printf 'check nothere\n' > tests/test_flaky.sh; commit "test: already failing"; git checkout -q feature; git merge -q main
+repo prefail; git checkout -q main; printf 'check nothere\n' > tests/test_flaky.sh; commit "test: already failing"; git checkout -q feature; git -c commit.gpgsign=false merge -q main
 printf 'check nothere\ncheck bye\n' > tests/test_flaky.sh; printf 'bye\n' >> lib.txt; commit "feat: extend a failing test"
 out="$(bash "$RC" --run "$RUN" 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "inconclusive: tests/test_flaky.sh"; has "$out" "already fails on the base"
 
 it "with a discovering runner, a pre-existing failure elsewhere does not make a modified green test red"
-repo discover; git checkout -q main; printf 'check nothere\n' > tests/test_other.sh; commit "test: already failing"; git checkout -q feature; git merge -q main
+repo discover; git checkout -q main; printf 'check nothere\n' > tests/test_other.sh; commit "test: already failing"; git checkout -q feature; git -c commit.gpgsign=false merge -q main
 printf 'check hello\ncheck hello\n' > tests/test_hello.sh; printf 'bye\n' >> lib.txt; commit "feat: no proof"
 out="$(bash "$RC" --run 'true {files}; bash run-tests.sh tests/*.sh' 2>&1)"; rc=$?
 lacks "$out" "red: tests/test_hello.sh"; has "$out" "inconclusive: tests/test_hello.sh"
@@ -148,7 +148,7 @@ repo both; printf 'bye\n' >> lib.txt; commit "feat: x"
 out="$(bash "$RC" --run "$RUN" --json --github 2>&1)"; rc=$?; assert_eq 2 "$rc"; has "$out" "--json and --github"
 
 it "with a discovering runner, a pre-existing failure elsewhere does not make a NEW green test red either"
-repo discovernew; git checkout -q main; printf 'check nothere\n' > tests/test_other.sh; commit "test: already failing"; git checkout -q feature; git merge -q main
+repo discovernew; git checkout -q main; printf 'check nothere\n' > tests/test_other.sh; commit "test: already failing"; git checkout -q feature; git -c commit.gpgsign=false merge -q main
 printf 'check hello\n' > tests/test_newgreen.sh; printf 'bye\n' >> lib.txt; commit "feat: new test proves nothing"
 out="$(bash "$RC" --run 'true {files}; bash run-tests.sh tests/*.sh' 2>&1)"; rc=$?
 lacks "$out" "red: tests/test_newgreen.sh"; has "$out" "inconclusive: tests/test_newgreen.sh"; has "$out" "already has failing assertions"
@@ -178,11 +178,11 @@ out="$(bash "$RC" --run "$RUN" --require 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "no test files changed"
 
 it "a helper that already existed on the base is 'no tests' too, whether its runner exits 5 or 0"
-repo oldhelper; git checkout -q main; printf 'echo "no tests ran"; exit 5\n' > tests/conftest.sh; commit "test: helper"; git checkout -q feature; git merge -q main
+repo oldhelper; git checkout -q main; printf 'echo "no tests ran"; exit 5\n' > tests/conftest.sh; commit "test: helper"; git checkout -q feature; git -c commit.gpgsign=false merge -q main
 printf 'echo "no tests ran"; echo helper v2; exit 5\n' > tests/conftest.sh; printf 'check bye\n' > tests/test_bye.sh; printf 'bye\n' >> lib.txt; commit "feat: touch helper"
 out="$(bash "$RC" --run "$RUN" --strict 2>&1)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "no tests: tests/conftest.sh"; lacks "$out" "inconclusive"
-repo oldhelper0; git checkout -q main; printf 'echo "No tests found"; exit 0\n' > tests/helpers.sh; commit "test: helper"; git checkout -q feature; git merge -q main
+repo oldhelper0; git checkout -q main; printf 'echo "No tests found"; exit 0\n' > tests/helpers.sh; commit "test: helper"; git checkout -q feature; git -c commit.gpgsign=false merge -q main
 printf 'echo "No tests found"; echo v2; exit 0\n' > tests/helpers.sh; printf 'check bye\n' > tests/test_bye.sh; printf 'bye\n' >> lib.txt; commit "feat: touch helper"
 out="$(bash "$RC" --run "$RUN" --strict 2>&1)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "no tests: tests/helpers.sh"; lacks "$out" "passes on the base"
@@ -201,11 +201,11 @@ out="$(bash "$RC" --run "$RUN" 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "inconclusive: tests/test_new.sh"; lacks "$out" "no tests:"
 
 it "a helper on the base that the PR turns into a real test is judged by its head version"
-repo converted; git checkout -q main; printf 'echo "no tests ran"; exit 5\n' > tests/test_utils.sh; commit "test: helpers only"; git checkout -q feature; git merge -q main
+repo converted; git checkout -q main; printf 'echo "no tests ran"; exit 5\n' > tests/test_utils.sh; commit "test: helpers only"; git checkout -q feature; git -c commit.gpgsign=false merge -q main
 printf 'check bye\n' > tests/test_utils.sh; printf 'bye\n' >> lib.txt; commit "feat: real tests in the helper file"
 out="$(bash "$RC" --run "$RUN" --strict 2>&1)"; rc=$?
 assert_eq 0 "$rc"; has "$out" "red: tests/test_utils.sh"; lacks "$out" "no tests:"
-repo convertedgreen; git checkout -q main; printf 'echo "no tests ran"; exit 5\n' > tests/test_utils.sh; commit "test: helpers only"; git checkout -q feature; git merge -q main
+repo convertedgreen; git checkout -q main; printf 'echo "no tests ran"; exit 5\n' > tests/test_utils.sh; commit "test: helpers only"; git checkout -q feature; git -c commit.gpgsign=false merge -q main
 printf 'check hello\n' > tests/test_utils.sh; printf 'bye\n' >> lib.txt; commit "feat: a test that proves nothing"
 out="$(bash "$RC" --run "$RUN" 2>&1)"; rc=$?
 assert_eq 1 "$rc"; has "$out" "passes on the base commit: tests/test_utils.sh"

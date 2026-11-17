@@ -17,11 +17,11 @@ repo() {  # main with one commit; feature branch checked out; a later main commi
   git init -q -b main; git config user.email t@example.com; git config user.name t
   git config core.hooksPath /dev/null
   seq 1 50 > app.txt; seq 1 30 > old.txt; printf '\x00\x01' > logo.bin
-  git add -A; git commit -qm "feat: base"
+  git add -A; git -c commit.gpgsign=false commit -qm "feat: base"
   git checkout -qb feature
 }
 lines() { seq 1 "$1"; }  # N lines of text
-commit() { git add -A; git commit -qm "$1"; }
+commit() { git add -A; git -c commit.gpgsign=false commit -qm "$1"; }
 # main later drops 30 lines the branch still has: diffing from main's tip, not the merge base,
 # would count them as added.
 later_main() { git checkout -q main; lines 500 > main-only.txt; lines 20 > app.txt; commit "feat: later"; git checkout -q feature; }
@@ -109,7 +109,7 @@ lacks "$out" "::warning"; has "$(cat "$S")" "| 100 |"
 
 it "moving a file out of an excluded folder never reports a negative generated count"
 repo moved; mkdir -p api/captures; lines 300 > api/captures/c.json; commit "test: capture"
-git checkout -q main; git merge -q --ff-only feature; git checkout -q -B feature
+git checkout -q main; git -c commit.gpgsign=false merge -q --ff-only feature; git checkout -q -B feature
 mkdir -p docs; git mv api/captures/c.json docs/c.json; commit "docs: move capture"
 S="$TMPROOT/moved-summary.md"
 out="$(GITHUB_STEP_SUMMARY="$S" bash "$PS" --github main..feature 2>&1)"

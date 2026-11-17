@@ -15,4 +15,4 @@ not installed in this isolated evaluation environment.
 MD
 cat "$case_dir/../../AGENT-WORKFLOW.md" >> CLAUDE.md
 git add CLAUDE.md
-git -c user.name=Owner -c user.email=owner@example.com commit -q -m "test: supply shared working rules"
+git -c user.name=Owner -c user.email=owner@example.com -c commit.gpgsign=false commit -q -m "test: supply shared working rules"

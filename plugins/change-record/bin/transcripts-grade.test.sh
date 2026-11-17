@@ -107,7 +107,7 @@ EOF
 # at DAY git-args...: a git command whose commit is made on that day. The first commit is made long before
 # any session here began and the others long after each ended, so the first is where a session started
 # and the others are its own (record 2026-11-12-grader-faults).
-at() { local d="$1"; shift; GIT_AUTHOR_DATE="${d}T00:00:00Z" GIT_COMMITTER_DATE="${d}T00:00:00Z" git "$@"; }
+at() { local d="$1"; shift; GIT_AUTHOR_DATE="${d}T00:00:00Z" GIT_COMMITTER_DATE="${d}T00:00:00Z" git -c commit.gpgsign=false "$@"; }
 (
   cd "$REPO" && git init -q -b main && git config user.email t@example.com && git config user.name t
   git config core.hooksPath /dev/null

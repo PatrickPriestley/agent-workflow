@@ -26,10 +26,10 @@ is never called. Commits made in the real repository are signed as before.
 - Verified against the real system (this container): with `GIT_CONFIG_GLOBAL` naming a
   configuration whose `gpg.program` and `gpg.ssh.program` are a script that records its call
   and exits 1, `git commit` fails with `fatal: failed to write commit object`, the same
-  message as the incident. Run that way, 18 of the 21 suites fail (between 1 and 165
-  assertions each), `export-evals-json --check` exits 2, and the script is called 454 times
-  in one pass over the suites. The same suites with signing off all pass, except the one
-  below.
+  message as the incident. Run that way, 17 of the 20 suites tried fail because of it
+  (between 1 and 165 assertions each; an 18th fails either way, below),
+  `export-evals-json --check` exits 2, and the script is called 454 times in one pass over
+  the suites. The same suites with signing off all pass, except that one.
 - Verified against the real system (this container): with `tag.gpgsign=true`, a lightweight
   `git tag NAME` fails with `fatal: no tag message?` before any signing program is called.
   So a tag needs `-c tag.gpgsign=false` even when it is not annotated.
@@ -51,7 +51,7 @@ is never called. Commits made in the real repository are signed as before.
 - Each command a scaffold or test runs in a scratch repository passes the setting itself:
   `git -c commit.gpgsign=false commit`, and the same for `merge` (a merge can make a commit),
   and `-c tag.gpgsign=false` for `tag`. Where a suite wraps git in a helper (`commit`, `at`,
-  `commit_main`), the helper carries it. Rejected: `GIT_CONFIG_COUNT` set at the top of a
+  `commit_main`, `g`), the helper carries it. Rejected: `GIT_CONFIG_COUNT` set at the top of a
   suite, which would replace the entries the environment already sets; and setting it in each
   scratch repository's own configuration, which is less visible at the commit and would also
   switch off signing for the agent an eval runs there.
@@ -88,3 +88,33 @@ exits 0. CI on the pull request runs the suites with its own failing signer.
 
 ## Outcome
 
+Task 1, in this container (git 2.43, 2026-11-17), with `GIT_CONFIG_GLOBAL` naming a
+configuration with `commit.gpgsign` and `tag.gpgsign` on and a signing program that records
+its call and exits 1 (`gpg.program` and `gpg.ssh.program`):
+
+```
+node --test plugins/change-record/evals/cases.test.cjs        pass 41 fail 0 (was 34 and 6)
+bash plugins/change-record/outcome-evals/checks/selftest.sh   passed=175 failed=0 (was 155 and 20)
+bash plugins/change-record/outcome-evals/run.test.sh          passed=91 failed=0 (was 36 and 55)
+plugins/change-record/bin/*.test.sh                           all pass: red-check 107, record-check 117,
+                                                              dispatch 218, record-review 81, transcripts 364,
+                                                              transcripts-store 440, grade 212, judge 455
+bin/*.test.sh                                                 agent-review 141, commit-gate 81, pr-size 41,
+                                                              ci-workflow 31
+install.test.sh 112, pr-agent/*.test.sh, evals/context.test.cjs, store/schema.test.sh   all pass
+python3 plugins/change-record/evals/export-evals-json --check exit 0 (was 2)
+calls to the signing program                                  0 (was 454)
+```
+
+The rewrite was mechanical (an insertion before `commit`, `merge` and `tag` after any `-C`
+and `-c` options), then read line by line: three lines that only quote a command (the idle
+agent's denied `git commit -m x` and its expectation in `dispatch.test.sh`, a transcript in
+`transcripts-grade.test.sh`) were put back. A second pass with the failing signer found the
+`g` helper of `agent-review.test.sh`, which the insertion could not see; no other suite wraps
+git that way. CI asks for the failing signer before the suites of both jobs, so the next
+commit made without the setting fails there.
+
+Left as it was: `test-pre-commit-green-phase.sh` "an unreadable marker fails closed" still
+fails in this container, as before, because it runs as root. The commits an agent makes in
+an eval's scratch repository are the agent's own and still follow the machine's
+configuration; this change covers what the scaffolds and suites run themselves.

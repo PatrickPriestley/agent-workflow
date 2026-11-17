@@ -109,7 +109,7 @@ class Cli(unittest.TestCase):
         src = open("tests/test_greet.py").read()
         open("tests/test_greet.py", "w").write(src.replace('        self.assertEqual(greet("Ada"), "Hello, Ada!")\n', "        pass\n"))
     tool("Bash", {"command": "python3 -m unittest discover -s tests -t . && git commit -am work"})
-    git("add", "-A"); git("commit", "-q", "-m", "feat: " + task)
+    git("add", "-A"); git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "feat: " + task)
 res = {"type": "result", "subtype": "success", "is_error": False, "num_turns": 7, "duration_ms": 1234,
        "total_cost_usd": float(os.environ.get("FAKE_COST", "0.25")), "result": "Change: docs/changes/x.md"}
 if mode == "overbudget": res.update(subtype="error_max_budget_usd", is_error=True)

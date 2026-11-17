@@ -7,24 +7,24 @@ repo=$(mktemp -d); trap 'rm -rf "$repo"' EXIT
 cd "$repo" && git init -q && git config user.name t && git config user.email t@t
 [ -f "$hook" ] && cp "$hook" .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 mkdir -p src test && echo 1 > test/a.test.ts && echo 1 > src/a.ts
-git add -A && git commit -qm red >/dev/null 2>&1
+git add -A && git -c commit.gpgsign=false commit -qm red >/dev/null 2>&1
 
 echo 0 > src/a.ts && git add src/a.ts
-if git commit -qm no-marker >/dev/null 2>err && [ ! -s err ]; then ok "outside green, commits pass silently"
+if git -c commit.gpgsign=false commit -qm no-marker >/dev/null 2>err && [ ! -s err ]; then ok "outside green, commits pass silently"
 else bad "outside green, commits pass silently ($(cat err))"; fi
 echo test/a.test.ts > .git/green-phase
 
 echo 2 > test/a.test.ts && git add test/a.test.ts
-if git commit -qm green-edits-test >/dev/null 2>err; then bad "rejects a commit touching a listed test during green"
+if git -c commit.gpgsign=false commit -qm green-edits-test >/dev/null 2>err; then bad "rejects a commit touching a listed test during green"
 else grep -q "test/a.test.ts" err && ok "rejects a commit touching a listed test during green" || bad "rejection names the file"; fi
 git reset -q --hard
 
 echo 2 > src/a.ts && git add src/a.ts
-git commit -qm green-impl >/dev/null 2>&1 && ok "allows implementation commits during green" || bad "allows implementation commits during green"
+git -c commit.gpgsign=false commit -qm green-impl >/dev/null 2>&1 && ok "allows implementation commits during green" || bad "allows implementation commits during green"
 
 # expect_reject <name> <path the reason must name>: commit what is staged; it must fail
 expect_reject() {
-  if git commit -qm "$1" >/dev/null 2>err; then bad "$1"; git reset -q --hard HEAD~1  # undo the wrongly allowed commit
+  if git -c commit.gpgsign=false commit -qm "$1" >/dev/null 2>err; then bad "$1"; git reset -q --hard HEAD~1  # undo the wrongly allowed commit
   elif grep -qF -- "$2" err; then ok "$1"; else bad "$1: reason does not name $2 ($(cat err))"; fi
   git reset -q --hard
 }
@@ -33,7 +33,7 @@ git rm -q test/a.test.ts;                              expect_reject "rejects de
 chmod +x test/a.test.ts && git add test/a.test.ts;     expect_reject "rejects a mode change to a protected test" "test/a.test.ts"
 
 printf 'x\n' > "test/my spec.test.ts"; printf 'x\n' > "test/é.test.ts"; printf 'x\n' > "$(printf 'test/tab\tname.test.ts')"
-rm .git/green-phase; git add -A && git commit -qm more-tests >/dev/null 2>&1
+rm .git/green-phase; git add -A && git -c commit.gpgsign=false commit -qm more-tests >/dev/null 2>&1
 printf 'test/my spec.test.ts\ntest/é.test.ts\n%s\n' "$(printf 'test/tab\tname.test.ts')" > .git/green-phase
 echo y >> "test/my spec.test.ts" && git add -A;        expect_reject "rejects a protected path containing a space" "my spec"
 echo y >> "test/é.test.ts" && git add -A;              expect_reject "rejects a protected non-ASCII path (git quotes it)" "é.test.ts"
@@ -55,5 +55,5 @@ elif grep -q "could not list staged paths" err; then ok "a git error fails close
 rm -rf "$fake"
 
 rm .git/green-phase; echo 3 > test/a.test.ts && git add test/a.test.ts
-git commit -qm after-green >/dev/null 2>&1 && ok "allows test edits once green-phase is removed" || bad "allows test edits once green-phase is removed"
+git -c commit.gpgsign=false commit -qm after-green >/dev/null 2>&1 && ok "allows test edits once green-phase is removed" || bad "allows test edits once green-phase is removed"
 exit $fail

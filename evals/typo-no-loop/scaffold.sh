@@ -37,7 +37,7 @@ cat > README.md <<'MD'
 MD
 git init -q -b main
 git -c user.name=Owner -c user.email=owner@example.com add -A
-git -c user.name=Owner -c user.email=owner@example.com commit -q -m "greet: initial"
+git -c user.name=Owner -c user.email=owner@example.com -c commit.gpgsign=false commit -q -m "greet: initial"
 
 sed -i.bak "s/prints a greeting/prints a greating/" README.md && rm README.md.bak
-git -c user.name=Owner -c user.email=owner@example.com commit -qam "readme"
+git -c user.name=Owner -c user.email=owner@example.com -c commit.gpgsign=false commit -qam "readme"

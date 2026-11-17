@@ -30,7 +30,7 @@ repo() {
     cd "$1" && git init -q -b work && git config user.email t@example.com && git config user.name t
     git config core.hooksPath /dev/null
     printf -- '---\nname: change\n---\n# Change\n' > plugins/change-record/skills/change/SKILL.md
-    git add -A && git commit -qm "feat: base" && git remote add origin "$2" )
+    git add -A && git -c commit.gpgsign=false commit -qm "feat: base" && git remote add origin "$2" )
 }
 REPO="$TMPROOT/checkout"; repo "$REPO" "git@github.com:Owner/Repo.git"
 COMMIT="$(git -C "$REPO" rev-parse HEAD)"
@@ -133,7 +133,7 @@ assert_eq "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[
   "$(json "$AR/sessions/$SID.json" 'd["streams"]["main"]["sha256"]')"
 assert_eq "1" "$(json "$AR/sessions/$SID.json" 'd["streams"]["subagents/agent-a0123456789abcdef"]["lines"]')"
 it "a commit after the first stop moves last_stop and keeps first_stop"
-(cd "$REPO" && git commit -q --allow-empty -m "feat: more")
+(cd "$REPO" && git -c commit.gpgsign=false commit -q --allow-empty -m "feat: more")
 line 2026-11-01T10:10:00.000Z '"type":"user","message":{"role":"user","content":"more"}' >> "$TR"
 hook Stop | archive > /dev/null
 assert_eq "$COMMIT $(git -C "$REPO" rev-parse HEAD)" "$(json "$AR/sessions/$SID.json" 'd["first_stop"]["commit"]+" "+d["last_stop"]["commit"]')"
