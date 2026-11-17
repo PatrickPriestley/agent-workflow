@@ -65,19 +65,21 @@ if argv[:2] != ["plugin", "eval"]:
 plugin, case, out = argv[2], argv[argv.index("--case") + 1], argv[argv.index("--json") + 1]
 arm = "edit" if "EDITED" in open(os.path.join(plugin, "skills", "change", "SKILL.md")).read() else "current"
 spec = json.loads(os.environ["FAKE_EVAL"])[arm][case]
-if isinstance(spec, str) and spec.startswith("exit:"):
-    sys.exit(int(spec[5:]))
 if spec == "nojson":
     sys.exit(0)
-runs = [{"error": "the agent timed out", "graders": []}] if spec == "error" else [
-    {"error": None, "costUsd": 0.1, "graders": [{"name": g.replace("unscored:", ""), "passed": v, "scored": not g.startswith("unscored:")}
-                                                for g, v in run.items()]}
-    for run in (spec if isinstance(spec, list) else [])]
+good = [{"saw-it-fail": True, ("test-run-before-code-change" if case == "red-first" else "test-run-before-workflow-change"): True}]
+runs = [{"error": None, "costUsd": 0.1, "graders": [{"name": g.replace("unscored:", ""), "passed": v, "scored": not g.startswith("unscored:")}
+                                                    for g, v in run.items()]}
+        for run in (spec if isinstance(spec, list) else good)]
+if spec == "error":
+    runs[0]["error"] = "the agent timed out"
 names = sorted({g["name"] for r in runs for g in r["graders"]})
 graders = [{"name": n, "type": "tool_used", "config": {"tool": "Skill"}} if n == "skill-fired"
            else {"name": n, "type": "regex", "config": {}} for n in names]
 json.dump({"partial": spec == "partial", "costUsd": 0.1 * len(runs),
            "cases": [{"name": case, "graders": graders, "arms": {"with": runs}}]}, open(out, "w"))
+if isinstance(spec, str) and spec.startswith("exit:"):
+    sys.exit(int(spec[5:]))
 sys.exit(0 if all(all(g["passed"] for g in r["graders"]) for r in runs if not r["error"]) else 1)
 PY
 chmod +x "$FAKEBIN/claude"; export PATH="$FAKEBIN:$PATH"
@@ -205,8 +207,9 @@ it "a grader the runner does not score is not counted: failing it alone would ha
 export FAKE_EVAL="$(py -c '
 import json, sys
 g = json.loads(sys.argv[1]); e = json.loads(sys.argv[1])
-g["red-first"] = [{"saw-it-fail": False, "test-run-before-code-change": True, "unscored:paid": True}]
-e["red-first"] = [{"saw-it-fail": True, "test-run-before-code-change": True, "unscored:paid": False}]
+g["red-first"] = [{"saw-it-fail": False, "test-run-before-code-change": True, "unscored:paid": True, "unscored:other": True}]
+e["red-first"] = [{"saw-it-fail": True, "test-run-before-code-change": True, "unscored:paid": False, "unscored:other": False}]
+# counted, they make red-first 3/4 as it is and 2/4 with the edit: lower, so dropped
 print(json.dumps({"current": g, "edit": e}))' "$good")"
 out="$(compare --step red-first --run --runs 1)"; assert_eq 0 "$?"; has "$out" "keep"
 it "a runner that exits 0 and writes no result gives no verdict, even where an earlier run left one"
@@ -224,7 +227,7 @@ out="$(compare --step red-first)"; assert_eq 0 "$?"; has "$out" "the edit put on
 export FAKE_EVAL="$(py -c 'import json,sys; g=json.loads(sys.argv[1]); print(json.dumps({"current": g, "edit": g}))' "$good")"
 compare --step red-first --run --runs 1 > /dev/null
 copy="$(cat "$D/compare/$SID/red-first/plugin/skills/change/SKILL.md")"
-has "$copy" "A line added later."; has "$copy" "2. Write a test, see it fail. EDITED"; has "$copy" "4. Open the pull request."
+assert_eq "$(printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write a test, see it fail. EDITED\n3. Write the code.\n4. Open the pull request.\n\nA line added later.')" "$copy"
 it "a skill that changed where the edit goes: it says the edit must be made again by hand, and runs nothing"
 printf -- '---\nname: change\n---\n# Change\n\n1. Write the record.\n2. Write the code, then its tests.\n3. Open the pull request.\n' > "$P/skills/change/SKILL.md"
 : > "$FAKELOG"; out="$(compare --step red-first --run)"; assert_eq 1 "$?"; has "$out" "does not apply"; has "$out" "by hand"; assert_eq 0 "$(calls)"
