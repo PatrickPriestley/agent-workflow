@@ -17,10 +17,11 @@ strict: true
 timeout-minutes: 10
 max-turns: 20
 
-# Default bash allowlist only (ls, cat, grep, head, wc, ...). No edit tool,
-# no network beyond what the engine itself needs.
+# Read-only shell commands only. No edit tool, no network beyond what the
+# engine itself needs. (The bare `bash:` form shown in the docs is rejected
+# by the v1.2.2 compiler; `bash: true` would allow every command.)
 tools:
-  bash:
+  bash: ["ls", "cat", "grep", "head", "wc", "test"]
 
 safe-outputs:
   create-issue:
