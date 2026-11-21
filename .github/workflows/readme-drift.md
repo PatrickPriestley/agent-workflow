@@ -11,17 +11,18 @@ on:
 permissions:
   contents: read
 
-engine: claude
+engine: codex
 
 strict: true
 timeout-minutes: 10
 max-turns: 20
 
-# Read-only shell commands only. No edit tool, no network beyond what the
-# engine itself needs. (The bare `bash:` form shown in the docs is rejected
-# by the v1.2.2 compiler; `bash: true` would allow every command.)
+# Codex cannot allow-list shell commands (gh aw v1.2.2 rejects a list for
+# this engine; claude, copilot and gemini support one). So the shell is
+# open inside gh-aw's sandbox: firewalled network, read-only token, no edit
+# tool, and the only way out is the safe outputs below.
 tools:
-  bash: ["ls", "cat", "grep", "head", "wc", "test"]
+  bash: ["*"]
 
 safe-outputs:
   create-issue:
