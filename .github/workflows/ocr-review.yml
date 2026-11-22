@@ -9,6 +9,9 @@ name: ocr-review
 # the last review). After the trial, keep the label trigger only, or remove
 # whichever reviewer lost.
 #
+# OCR runs on Claude, the pull requests' own model family, so it is an extra
+# reviewer, not the independent review: that stays with PR-Agent (OpenAI).
+#
 # OCR reads the diff, not the pull request description or commit messages, so
 # the description checks of pr-agent/skills/workflow-review (the Reviewed by
 # line, Conventional Commit titles) stay with PR-Agent. .opencodereview/rule.json
@@ -47,12 +50,15 @@ jobs:
       - uses: alibaba/open-code-review@284ff013f0705ae6cac4c8dfbffa2f2551886d56
         with:
           ocr_version: '1.14.1'
-          llm_url: https://api.openai.com/v1
-          llm_auth_token: ${{ secrets.OPENAI_API_KEY }}
-          llm_model: gpt-5.5
-          llm_use_anthropic: 'false'
-          # The default body adds a "thinking" field that OpenAI does not take.
-          llm_extra_body: '{}'
+          # Claude, while the OpenAI credit PR-Agent and the first OCR runs used
+          # is spent. Claude also writes these pull requests, so this is not the
+          # independent review of AGENT-WORKFLOW.md rule 4: PR-Agent, on OpenAI,
+          # stays that review. The action's default body (thinking disabled)
+          # is in the form Anthropic accepts.
+          llm_url: https://api.anthropic.com
+          llm_auth_token: ${{ secrets.ANTHROPIC_API_KEY }}
+          llm_model: claude-sonnet-5-5
+          llm_use_anthropic: 'true'
           max_tokens_budget: '2000000'
           route_severity_below: 'low'
           route_categories: 'style,documentation'

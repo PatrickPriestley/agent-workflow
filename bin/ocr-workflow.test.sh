@@ -42,14 +42,18 @@ it "the action and the CLI are pinned: the action to a full commit, the CLI to a
 printf '%s\n' "$w" | grep -qE '^ *- uses: alibaba/open-code-review@[0-9a-f]{40}$' && ok || bad "action not pinned to a 40-character commit"
 has "$w" "ocr_version: '1.14.1'"
 
-it "the model is OpenAI's, not Claude: Claude writes the pull requests here"
-has "$w" "llm_url: https://api.openai.com/v1"
-has "$w" "llm_use_anthropic: 'false'"
-printf '%s\n' "$w" | grep -qiE 'llm_model: .*(claude|anthropic)' && bad "a Claude model is configured" || ok
+it "the model is Anthropic's Claude, over its own protocol"
+has "$w" "llm_url: https://api.anthropic.com"
+has "$w" "llm_use_anthropic: 'true'"
+printf '%s\n' "$w" | grep -qE "^ +llm_model: claude-[a-z0-9.-]+$" && ok || bad "no claude-* model"
+# The Anthropic API rejects unknown body fields: no reasoning_effort, and no empty-object override of
+# the action's default body, which disables thinking in a form Anthropic accepts.
+lacks "$w" 'llm_reasoning_effort|llm_extra_body'
 
 it "the key is named once, as the action's llm_auth_token input, never in a run: script"
-[ "$(printf '%s\n' "$w" | grep -c 'secrets.OPENAI_API_KEY')" = 1 ] && ok || bad "OPENAI_API_KEY named more than once"
-printf '%s\n' "$w" | grep -qE '^ +llm_auth_token: \$\{\{ secrets\.OPENAI_API_KEY \}\}$' && ok || bad "the key is not the llm_auth_token input"
+[ "$(printf '%s\n' "$w" | grep -c 'secrets.ANTHROPIC_API_KEY')" = 1 ] && ok || bad "ANTHROPIC_API_KEY not named exactly once"
+printf '%s\n' "$w" | grep -qE '^ +llm_auth_token: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}$' && ok || bad "the key is not the llm_auth_token input"
+lacks "$w" 'OPENAI_API_KEY'
 
 it "the review is capped in tokens"
 printf '%s\n' "$w" | grep -qE "max_tokens_budget: '[1-9][0-9]*'" && ok || bad "no token cap"
