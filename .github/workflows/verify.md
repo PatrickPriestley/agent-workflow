@@ -22,7 +22,12 @@ permissions:
 # another model family (AGENT-WORKFLOW.md rule 4, as for PR-Agent). Codex cannot
 # allow-list shell commands, so the shell is open inside the sandbox; the agent
 # has no write token and no edit tool, and its only output is the review.
-engine: codex
+engine:
+  id: codex
+  env:
+    # The repo's bash tests use mktemp; gh-aw's agent policy keeps temporary
+    # files under /tmp/gh-aw/agent/, so point TMPDIR there (created below).
+    TMPDIR: /tmp/gh-aw/agent/tmp
 
 strict: true
 timeout-minutes: 30
@@ -55,6 +60,7 @@ pre-agent-steps:
       set -u
       out=/tmp/gh-aw/agent/verify
       mkdir -p "$out"
+      mkdir -p /tmp/gh-aw/agent/tmp
       printf '# %s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$out/description.md"
       base=$(git merge-base origin/main HEAD)
       {
@@ -133,6 +139,10 @@ Running the repository's own test scripts (`bash <file>.test.sh`,
 `node --test <file>`), `git` read commands, and the temporary edits of step 3
 are your assigned work. Do not install packages, open or print `.env` or other
 secret files, or push. If a check needs more than this, report it as not run.
+
+Tests that call `mktemp` write under `$TMPDIR`, which this workflow sets to
+`/tmp/gh-aw/agent/tmp` (created before you start). Running them is assigned
+work; their scratch files there are expected.
 
 ## Output
 
