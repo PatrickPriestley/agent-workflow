@@ -1,0 +1,40 @@
+name: properties
+
+# The property-based tests in properties/, written with Hegel (hegeltest, pinned:
+# Hegel is in beta). Each file is a program: it runs its properties and exits non-zero,
+# with a shrunk counterexample and a reproduce line, if one fails.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: properties-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install Hegel
+        run: pip install 'hegeltest==0.5.1'
+      - name: Run every file in properties/
+        shell: bash
+        run: |
+          status=0
+          for f in properties/*.py; do
+            echo "== $f"
+            python3 -I "$f" || status=1
+          done
+          exit "$status"
