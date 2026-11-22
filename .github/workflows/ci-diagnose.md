@@ -41,11 +41,15 @@ permissions:
   pull-requests: read
   issues: read
 
-# Codex: another model family than the Claude-written pull requests here, as
-# for /verify. Codex cannot allow-list shell commands, so the shell is open in
-# the sandbox; the agent has no write token and no edit tool.
+# Claude. Codex was the first choice (another model family than the
+# Claude-written pull requests), but OpenAI refuses Codex for this
+# repository's organization while it has the ChatGPT monthly API credit
+# benefit (codex_byok_restricted_by_api_credit_promo). Diagnosis is not the
+# independent review of AGENT-WORKFLOW.md rule 4, so the author's family is
+# acceptable here. Claude allow-lists shell commands: read tools, git read
+# commands, and the repository's bash and node test runners.
 engine:
-  id: codex
+  id: claude
   env:
     # The repo's bash tests use mktemp; gh-aw's agent policy keeps temporary
     # files under /tmp/gh-aw/agent/, so point TMPDIR there (created below).
@@ -56,7 +60,25 @@ timeout-minutes: 25
 max-turns: 30
 
 tools:
-  bash: ["*"]
+  bash:
+    # ":*" allows arguments; a bare name allows only the bare command.
+    - "cd:*"
+    - "cat:*"
+    - "ls:*"
+    - "head:*"
+    - "tail:*"
+    - "grep:*"
+    - "wc:*"
+    - "sed -n:*"
+    - "jq:*"
+    - "git log:*"
+    - "git diff:*"
+    - "git show:*"
+    - "git status:*"
+    - "git rev-parse:*"
+    - "git -C:*"
+    - "bash:*"
+    - "node --test:*"
 
 network:
   allowed:
