@@ -39,7 +39,10 @@ timeout-minutes: 30
 max-turns: 40
 
 tools:
-  # For writing the throwaway properties under /tmp/gh-aw/agent/props/ only.
+  # For writing the throwaway properties under /tmp/gh-aw/agent/props/. gh-aw
+  # grants Edit and Write without a path limit whether or not this is declared,
+  # so the prompt is what keeps them there; nothing written can leave the run
+  # (no push output, read-only token, the checkout is discarded).
   edit:
   bash:
     - "cd:*"
@@ -56,7 +59,6 @@ tools:
     - "git status:*"
     - "git rev-parse:*"
     - "git worktree add:*"
-    - "bash:*"
     - "python3 -m venv /tmp/gh-aw/agent/venv"
     - "/tmp/gh-aw/agent/venv/bin/pip install hegeltest==0.5.1"
     - "/tmp/gh-aw/agent/venv/bin/python -I:*"
@@ -138,15 +140,21 @@ Run these two commands once, exactly as written:
 3. **Write each** as a file `/tmp/gh-aw/agent/props/prop_<name>.py` with the
    edit tool, in the shape of `properties/pr_size.py`: `@hegel.test(test_cases=25)`
    on a function that draws inputs and asserts, called under
-   `if __name__ == "__main__":`. Point it at the head's script by path. Build
-   any scratch files under `tempfile` (TMPDIR is set). Keep each case fast.
-4. **Run each** with `/tmp/gh-aw/agent/venv/bin/python -I /tmp/gh-aw/agent/props/prop_<name>.py`.
+   `if __name__ == "__main__":`. Take the path of the script under test as
+   the first command-line argument and make it absolute at once
+   (`os.path.abspath(sys.argv[1])`: a case may run it from a scratch
+   directory), so the same file runs against the head and the base, and run
+   the script from the property with
+   `subprocess` (`bash <path>` or `python3 <path>`). Build any scratch files
+   under `tempfile` (TMPDIR is set). Keep each case fast.
+4. **Run each** as one plain command, with nothing before it:
+   `/tmp/gh-aw/agent/venv/bin/python -I /tmp/gh-aw/agent/props/prop_<name>.py <path-to-script>`.
+   A `VAR=value` prefix or a command joined with `&&` is refused.
    - Held: note the number of cases.
    - Failed: copy Hegel's shrunk counterexample and its `reproduce_failure`
      line. Then check whether main fails it too: add a worktree of the merge
      base with `git worktree add /tmp/gh-aw/agent/props/base <merge_base>` and
-     run the same property against the script there (an environment variable
-     for the path, as in `properties/pr_size.py`). Failing on the head only is
+     run the same property with the script there as its argument. Failing on the head only is
      a likely bug in this pull request; failing on both is an older bug or a
      wrong property.
    - Before you report a failure as a bug, ask whether the property itself is
@@ -167,9 +175,9 @@ One `add_comment` on the pull request:
 
 ## Assigned commands
 
-The setup commands, reading files, `git` read commands, writing and running the
-files under `/tmp/gh-aw/agent/props/`, and running the pull request's own
-scripts and tests are your assigned work. Do not edit or create files anywhere
+The setup commands, reading files, `git` read commands, and writing and running
+the files under `/tmp/gh-aw/agent/props/` (which run the pull request's scripts
+through `subprocess`) are your assigned work. Do not edit or create files anywhere
 else, install anything other than `hegeltest==0.5.1`, or open `.env` or other
 secret files.
 

@@ -1,6 +1,6 @@
 """Properties of bin/pr-size, checked with Hegel (https://hegel.dev).
 
-  python3 properties/pr_size.py        # needs: pip install hegeltest==0.5.1
+  python3 properties/pr_size.py [PATH-TO-PR-SIZE]   # needs: pip install hegeltest==0.5.1
 
 Lockfiles never count as reviewable lines, whatever other files a change adds
 and at whatever depth the lockfiles sit. Each generated case builds a small git
@@ -13,13 +13,17 @@ package-lock.json with no other file.
 import os
 import re
 import subprocess
+import sys
 import tempfile
 
 import hegel
 from hegel import generators as gs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PR_SIZE = os.environ.get("PR_SIZE", os.path.join(ROOT, "bin", "pr-size"))
+# The script under test: the first argument, else $PR_SIZE, else this checkout's.
+# Absolute, because each case runs it from a scratch repository.
+PR_SIZE = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else
+                          os.environ.get("PR_SIZE", os.path.join(ROOT, "bin", "pr-size")))
 LOCKS = ["Cargo.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
          "uv.lock", "Gemfile.lock", "go.sum", "composer.lock"]
 SOURCES = ["app.py", "lib/util.sh", "src/main.go", "README.md"]
