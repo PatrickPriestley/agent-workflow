@@ -1,0 +1,3 @@
+# bin/mutate: the test command for changed Python files, one "<glob> <command>" per line.
+# Shell scripts need no entry: `x` is tested by `x.test.sh` beside it.
+plugins/change-record/grade/*.py bash plugins/change-record/bin/transcripts-grade.test.sh
