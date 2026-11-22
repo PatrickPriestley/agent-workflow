@@ -41,11 +41,15 @@ permissions:
   pull-requests: read
   issues: read
 
-# Codex: another model family than the Claude-written pull requests here, as
-# for /verify. Codex cannot allow-list shell commands, so the shell is open in
-# the sandbox; the agent has no write token and no edit tool.
+# Claude. Codex was the first choice (another model family than the
+# Claude-written pull requests), but OpenAI refuses Codex for this
+# repository's organization while it has the ChatGPT monthly API credit
+# benefit (codex_byok_restricted_by_api_credit_promo). Diagnosis is not the
+# independent review of AGENT-WORKFLOW.md rule 4, so the author's family is
+# acceptable here. Claude allow-lists shell commands: read tools, git read
+# commands, and the repository's bash and node test runners.
 engine:
-  id: codex
+  id: claude
   env:
     # The repo's bash tests use mktemp; gh-aw's agent policy keeps temporary
     # files under /tmp/gh-aw/agent/, so point TMPDIR there (created below).
@@ -56,7 +60,25 @@ timeout-minutes: 25
 max-turns: 30
 
 tools:
-  bash: ["*"]
+  bash:
+    # ":*" allows arguments; a bare name allows only the bare command.
+    - "cd:*"
+    - "cat:*"
+    - "ls:*"
+    - "head:*"
+    - "tail:*"
+    - "grep:*"
+    - "wc:*"
+    - "sed -n:*"
+    - "jq:*"
+    - "git log:*"
+    - "git diff:*"
+    - "git show:*"
+    - "git status:*"
+    - "git rev-parse:*"
+    - "git -C:*"
+    - "bash:*"
+    - "node --test:*"
 
 network:
   allowed:
@@ -96,6 +118,8 @@ pre-agent-steps:
       echo "$mode" > "$out/mode.txt"
       gh run view "$run_id" --repo "$REPO" \
         --json name,event,headBranch,headSha,conclusion,url,jobs,workflowName > "$out/run.json" 2> "$out/run.err" || { echo "::error::cannot read run $run_id"; cat "$out/run.err"; exit 1; }
+      conclusion=$(jq -r .conclusion "$out/run.json")
+      [ "$conclusion" = failure ] || { echo "::error::run $run_id concluded '$conclusion', not failure: nothing to diagnose"; exit 1; }
       head_sha=$(jq -r .headSha "$out/run.json")
       workflow_name=$(jq -r .workflowName "$out/run.json")
       [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected head sha"; exit 1; }
@@ -110,9 +134,9 @@ pre-agent-steps:
       # The failing commit as data: fetched, then written into a worktree. This
       # executes none of its files (hooks and filters come from git config,
       # which the commit cannot set).
-      git fetch -q origin "$head_sha"
-      git -c core.hooksPath=/dev/null worktree add -q --detach "$out/head" "$head_sha"
-      base=$(git merge-base origin/main "$head_sha")
+      git fetch -q origin "$head_sha" || { echo "::error::cannot fetch $head_sha from origin (a fork's or a deleted commit?)"; exit 1; }
+      git -c core.hooksPath=/dev/null worktree add -q --detach "$out/head" "$head_sha" || { echo "::error::cannot check out $head_sha"; exit 1; }
+      base=$(git merge-base origin/main "$head_sha") || { echo "::error::no merge base between origin/main and $head_sha"; exit 1; }
       {
         echo "head=$head_sha"
         echo "merge_base=$base"
@@ -145,6 +169,9 @@ pre-agent-steps:
       wc -l "$out/failed.log"; jq -c . "$out/prs.json"; jq -c '[.[] | {conclusion, duration_seconds}]' "$out/main-runs.json"
 
 safe-outputs:
+  # A backtest can post nothing: its safe outputs are only previewed in the
+  # run summary, whatever the agent asks for. A live run posts.
+  staged: ${{ github.event_name == 'workflow_dispatch' }}
   # Threat detection gets engine.env too, so its TMPDIR must exist in the
   # detection job as well (without it the scan crashed in mkdtemp and the
   # output was posted unscanned). Fail closed: no verdict, nothing posted.
