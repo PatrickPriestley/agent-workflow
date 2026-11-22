@@ -1,0 +1,38 @@
+{
+  "include": [
+    "AGENT-WORKFLOW.md",
+    ".github/workflows/*.md",
+    "skills/**/*.md",
+    "plugins/**/skills/**/*.md",
+    "pr-agent/skills/**/*.md",
+    "**/*.test.{js,cjs,mjs}"
+  ],
+  "exclude": [
+    "**/.env",
+    "**/.env.*",
+    "**/*.jsonl",
+    "**/*.gz",
+    "**/*.patch",
+    "**/*.lock.yml",
+    "docs/changes/**"
+  ],
+  "rules": [
+    {
+      "path": ".github/workflows/*.md",
+      "rule": "This is a GitHub Agentic Workflow (gh-aw) source: YAML frontmatter (triggers, permissions, engine, tools, network, pre-agent steps, safe outputs) and the agent's prompt; the .lock.yml is compiled from it. Report:\n- A trigger that someone without write access, or a fork pull request, can start.\n- Write permissions on the agent job, or safe outputs broader than the prompt needs (targets, max, allowed files).\n- Network hosts or shell commands beyond what the prompt's steps need.\n- Untrusted text (pull request title or body, branch names, logs, commit messages) interpolated into a run: script instead of passed through env and written to a file.\n- Pre-agent steps that execute code from the pull request or the failing commit outside the sandbox.\n- Prompt instructions that contradict the frontmatter's limits or each other.\nDo not comment on wording."
+    },
+    {
+      "path": "{AGENT-WORKFLOW.md,skills/**/*.md,plugins/**/skills/**/*.md,pr-agent/skills/**/*.md}",
+      "rule": "This file is an instruction for a coding agent: the workflow rules, a skill or a reference it loads. Report only:\n- An instruction that contradicts AGENT-WORKFLOW.md or another skill in the change.\n- A step that cannot be followed as written: a script, flag, path or file that does not exist in the repository.\n- Wording an agent could read as permission to skip a rule: tests failing first, independent review by another model family, probing the real system, or the owner's approval for merges, releases and deletions.\n- AI attribution: Co-Authored-By lines for an AI, Claude-Session links or \"Generated with\" footers.\nDo not comment on grammar, tone or formatting."
+    },
+    {
+      "path": "**/*.test.{sh,js,cjs,mjs}",
+      "rule": "This is a test. Report only problems that make it misleading:\n- It cannot fail: no assertion, output printed as a pass whatever happens, an assertion on a value the test itself set, or a stub that replaces the code under test.\n- A test deleted, skipped, weakened or marked as an expected failure in this change.\n- A new or changed guard (if, early return, validation) in the code under test that no assertion would catch if it were removed.\n- Real secret values, or files outside a temporary directory written or deleted.\nDo not comment on style or duplication."
+    },
+    {
+      "path": "**/*",
+      "rule": "This repository follows AGENT-WORKFLOW.md. In addition to defects, report:\n- A new call to something outside the repository (an API method, CLI flag, protocol message, file format) whose exact request this change does not show being checked against the real system.\n- A new or changed guard with no test in the change that fails when it is removed.\n- AI attribution in a file: Co-Authored-By lines for an AI, Claude-Session links, \"Generated with\" footers.\n- Secret values, or deleted files, data or migrations.",
+      "merge_system_rule": true
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+name: ocr-review
+# Open Code Review (alibaba/open-code-review): an LLM reads the pull request's
+# diff and posts inline comments plus one summary. Comments only; it never
+# blocks a merge.
+#
+# Trial against PR-Agent: it runs on the same events (opened, reopened, ready
+# for review), so each pull request gets both reviews to compare, and again
+# when someone adds the "ocr-review" label (that run covers the commits since
+# the last review). After the trial, keep the label trigger only, or remove
+# whichever reviewer lost.
+#
+# OCR reads the diff, not the pull request description or commit messages, so
+# the description checks of pr-agent/skills/workflow-review (the Reviewed by
+# line, Conventional Commit titles) stay with PR-Agent. .opencodereview/rule.json
+# carries the rest of that checklist.
+#
+# The action checks out the base branch and reads the head only as git
+# objects, so no pull request code runs here, and the rules come from the base
+# branch's .opencodereview/rule.json.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, labeled]
+
+permissions: {}
+
+concurrency:
+  group: ocr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Same-repository pull requests only (forks get no secrets). A label run
+    # is a request, drafts included; the other events skip drafts.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'ocr-review') ||
+       (github.event.action != 'labeled' && github.event.pull_request.draft == false))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # v1.14.1, pinned to the tag's commit.
+      - uses: alibaba/open-code-review@284ff013f0705ae6cac4c8dfbffa2f2551886d56
+        with:
+          ocr_version: '1.14.1'
+          llm_url: https://api.openai.com/v1
+          llm_auth_token: ${{ secrets.OPENAI_API_KEY }}
+          llm_model: gpt-5.5
+          llm_use_anthropic: 'false'
+          # The default body adds a "thinking" field that OpenAI does not take.
+          llm_extra_body: '{}'
+          max_tokens_budget: '2000000'
+          route_severity_below: 'low'
+          route_categories: 'style,documentation'
+          sticky_summary: 'true'
+          incremental: 'true'
+          checkpoint_range: 'true'
+          upload_artifacts: 'true'
+      # Take the label off whatever happened, so adding it again re-runs.
+      - name: Remove the ocr-review label
+        if: always() && github.event.action == 'labeled'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label ocr-review
