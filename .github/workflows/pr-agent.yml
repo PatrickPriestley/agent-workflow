@@ -26,9 +26,11 @@ name: pr-agent
 
 on:
   pull_request:
-    # synchronize: each push to an open pull request gets a fresh review, one model call per push;
-    # the concurrency group below cancels a run that a newer push has replaced.
-    types: [opened, reopened, ready_for_review, synchronize]
+    # One review when a pull request opens, reopens or leaves draft: each review is a paid model
+    # call, so pushes no longer trigger one. To review again after pushes, mark the pull request
+    # as draft and then ready for review. The concurrency group cancels a run that a newer one
+    # has replaced.
+    types: [opened, reopened, ready_for_review]
 
 permissions: {}
 
@@ -106,8 +108,6 @@ jobs:
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: 'true'
           GITHUB_ACTION_CONFIG__AUTO_DESCRIBE: 'false'
           GITHUB_ACTION_CONFIG__AUTO_IMPROVE: 'false'
-          # A push (synchronize) is skipped unless handle_push_trigger is on, and then runs
-          # push_commands, which default to /describe and /review: keep it to /review.
-          GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: 'true'
-          GITHUB_ACTION_CONFIG__PUSH_COMMANDS: '["/review"]'
+          # Pushes do not trigger this workflow; PR-Agent's own push handling stays off as well.
+          GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: 'false'
           GITHUB_ACTION_CONFIG__FAIL_ON_TOOL_ERRORS: 'true'

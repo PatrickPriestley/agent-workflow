@@ -27,9 +27,10 @@ printf '%s\n' "$w" | grep -v '^ *#' | grep -qiE 'the-pr-agent/pr-agent@|pragent/
 it "every other action is pinned to a version"
 printf '%s\n' "$w" | grep -E '^ *(- )?uses:' | grep -v 'docker://' | grep -vE '@v[0-9]+' >/dev/null && bad "an action has no version" || ok
 
-it "runs on pull requests only, including each push to one, skipping drafts and forks"
+it "runs when a pull request opens, reopens or leaves draft, not on each push, skipping drafts and forks"
 has "$w" "pull_request:"
-has "$w" "types: [opened, reopened, ready_for_review, synchronize]"
+has "$w" "types: [opened, reopened, ready_for_review]"
+printf '%s\n' "$w" | grep -v '^ *#' | grep -q 'synchronize' && bad "a push still triggers a review" || ok
 printf '%s\n' "$w" | grep -qE 'issue_comment|pull_request_target' && bad "comment or target triggers present" || ok
 has "$w" "github.event.pull_request.draft == false"
 has "$w" "github.event.pull_request.head.repo.full_name == github.repository"
@@ -45,9 +46,9 @@ assert_eq "'true'" "$(envval GITHUB_ACTION_CONFIG__AUTO_REVIEW)"
 assert_eq "'false'" "$(envval GITHUB_ACTION_CONFIG__AUTO_DESCRIBE)"
 assert_eq "'false'" "$(envval GITHUB_ACTION_CONFIG__AUTO_IMPROVE)"
 
-it "a push runs /review only: without push_commands PR-Agent falls back to /describe and /review"
-assert_eq "'true'" "$(envval GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER)"
-assert_eq "'[\"/review\"]'" "$(envval GITHUB_ACTION_CONFIG__PUSH_COMMANDS)"
+it "PR-Agent ignores pushes too, so no push reaches /describe or /review"
+assert_eq "'false'" "$(envval GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER)"
+assert_eq "" "$(envval GITHUB_ACTION_CONFIG__PUSH_COMMANDS)"
 
 it "the model is OpenAI's gpt-6.1-sol, under the bare name PR-Agent knows, unless the variable names another, with no fallback"
 assert_eq "\${{ vars.PR_AGENT_MODEL || 'gpt-6.1-sol' }}" "$(envval CONFIG__MODEL)"
