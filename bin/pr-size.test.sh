@@ -124,6 +124,30 @@ out="$(bash "$PS" main...feature 2>&1)"; assert_eq 2 "$?"; has "$out" "two dots"
 out="$(bash "$PS" --stop many 2>&1)"; assert_eq 2 "$?"; has "$out" "whole numbers"
 out="$(bash "$PS" --aim 500 --stop 100 2>&1)"; assert_eq 2 "$?"; has "$out" "is above the stop limit"
 
+it "without --github, no annotation and no step summary, even above the aim"
+cd "$TMPROOT/big"; S="$TMPROOT/quiet-summary.md"; : > "$S"
+out="$(GITHUB_STEP_SUMMARY="$S" bash "$PS" 2>&1)"
+lacks "$out" "::warning"; assert_eq "" "$(cat "$S")"
+
+it "with no main, master or origin/HEAD, says it cannot find a base branch"
+r="$TMPROOT/nobase"; mkdir -p "$r"; cd "$r" || exit 1
+git init -q -b trunk; git config user.email t@example.com; git config user.name t
+lines 5 > a.txt; commit "feat: a"; git checkout -qb feature; lines 5 >> a.txt; commit "feat: b"
+out="$(bash "$PS" 2>&1)"; assert_eq 2 "$?"; has "$out" "cannot find a base branch"
+
+it "counts from the remote's branch before a stale local main: origin/HEAD first, then origin/main"
+# Local main is left behind at the first commit; the remote's branch has a 100-line commit
+# the feature branch is built on. Counting from local main would add those 100 lines.
+repo stale; lines 100 > shared.txt; commit "feat: shared"; shared="$(git rev-parse HEAD)"
+lines 10 >> app.txt; commit "feat: mine"
+git branch -qf main "$(git rev-list --max-parents=0 HEAD)"
+git update-ref refs/remotes/origin/develop "$shared"
+git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+assert_eq 10 "$(count "$(bash "$PS" 2>&1)")"
+git symbolic-ref --delete refs/remotes/origin/HEAD; git update-ref -d refs/remotes/origin/develop
+git update-ref refs/remotes/origin/main "$shared"
+assert_eq 10 "$(count "$(bash "$PS" 2>&1)")"
+
 it "fails outside a git repository, and says so"
 cd "$TMPROOT"; out="$(bash "$PS" 2>&1)"; assert_eq 2 "$?"; has "$out" "not inside a git repository"
 
