@@ -58,7 +58,7 @@ excludes=(
   ':(exclude,glob)**/fixtures/**' ':(exclude,glob)**/captures/**' ':(exclude,glob)**/testdata/**'
   ':(exclude,glob)**/__snapshots__/**' ':(exclude,glob)**/*.snap'
 )
-for f in Cargo.lock package-lock.json yarn.lock pnpm-lock.yaml poetry.lock uv.lock Gemfile.lock go.sum composer.lock; do
+for f in Cargo.lock package-lock.json pnpm-lock.yaml poetry.lock uv.lock Gemfile.lock go.sum composer.lock; do
   excludes+=(":(exclude,glob)**/$f")
 done
 while IFS= read -r g; do [ -n "$g" ] && excludes+=(":(exclude,glob)$g"); done < <(git config --get-all prsize.exclude || true)
