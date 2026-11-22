@@ -115,5 +115,48 @@ else
   echo "  skip mutmut not installed: set MUTMUT or put mutmut 2.x on PATH"
 fi
 
+echo "6. a for list, a guard whose deletion does not parse, fixtures, hangs and HOME"
+cd "$repo" || exit 1
+printf '#!/usr/bin/env bash\nfor f in a b; do echo "$f"; done\n' > loop
+printf '#!/usr/bin/env bash\nhere="$(cd "$(dirname "$0")" && pwd)"\n[ "$(bash "$here/loop" | tr "\\n" " ")" = "a b " ] || exit 1\n' > loop.test.sh
+g add -A && g commit -qm "loop: fully tested"
+clean=$(git rev-parse HEAD)
+it "--strict exits 0 when every mutant is killed"
+MUTMUT= PATH="$(nomm_path)" "$M" "$clean~1..$clean" --strict > "$T/strict.txt" 2>&1; assert_eq 0 "$?"
+it "dropping each item from a for list is a mutant, and the test kills it"
+has "$(cat "$T/strict.txt")" "loop:2  drop 'a' from list           killed"
+cat > guard <<'EOF2'
+#!/usr/bin/env bash
+[ -n "${1:-}" ] || {
+  echo "usage: guard X" >&2; exit 2; }
+echo "$1"
+EOF2
+printf '#!/usr/bin/env bash\nhere="$(cd "$(dirname "$0")" && pwd)"\n[ "$(bash "$here/guard" x)" = x ] || exit 1\nbash "$here/guard" 2>/dev/null; [ $? -eq 2 ] || exit 1\n' > guard.test.sh
+cat > sleeper <<'EOF2'
+#!/usr/bin/env bash
+[ "${1:-}" = go ] || exit 0
+sleep 30
+EOF2
+printf '#!/usr/bin/env bash\nhere="$(cd "$(dirname "$0")" && pwd)"\nbash "$here/sleeper" stop\n' > sleeper.test.sh
+mkdir -p fixtures; printf '#!/usr/bin/env bash\necho fixture\n' > fixtures/f.sh; printf '#!/usr/bin/env bash\nexit 0\n' > fixtures/f.sh.test.sh
+printf '#!/usr/bin/env bash\ntrue && echo home\n' > homey
+printf '#!/usr/bin/env bash\ntouch "$HOME/.mutate-probe"\nexit 0\n' > homey.test.sh
+g add -A && g commit -qm "guard, sleeper, fixtures, homey"
+mkdir -p "$T/realhome"
+start=$(date +%s)
+out=$(HOME="$T/realhome" MUTMUT= PATH="$(nomm_path)" "$M" "HEAD~1..HEAD" --timeout 2 2>&1)
+took=$(( $(date +%s) - start ))
+it "a guard whose deletion leaves a dangling } is invalid, not survived"; has "$out" "guard:2  delete guard                 invalid"
+it "a test that hangs through a child process is killed at --timeout"; has "$out" "sleeper:2  || -> &&                     timed out"
+it "and the run does not wait for the child (took ${took}s)"; [ "$took" -lt 25 ] && ok || bad "took ${took}s"
+it "files under fixtures/ are not mutated"
+printf '%s\n' "$out" | grep -q 'fixtures/f.sh' && bad "fixtures/f.sh was mutated: $out" || ok
+it "tests run with HOME in a scratch directory, not the caller's"
+[ -e "$T/realhome/.mutate-probe" ] && bad "the test wrote to the real HOME" || ok
+it "--deadline 0 starts no mutant and says so"
+has "$(MUTMUT= PATH="$(nomm_path)" "$M" "HEAD~1..HEAD" --deadline 0 2>&1)" "(stopped at --deadline 0 seconds)"
+it "--timeout, --max, --py-lines and --deadline need a number"
+for o in --timeout --max --py-lines --deadline; do "$M" "$o" x >/dev/null 2>&1 || [ $? -ne 2 ] || continue; bad "$o x was accepted"; done; ok
+
 echo; echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

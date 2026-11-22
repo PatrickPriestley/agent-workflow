@@ -33,16 +33,23 @@ jobs:
       - name: bin/mutate's own tests
         run: bash bin/mutate.test.sh
       - name: Mutate the lines this pull request changes (report only)
+        # shell: bash adds pipefail, so a usage or setup failure of bin/mutate fails the
+        # step instead of hiding behind tee. Survivors do not: without --strict it exits 0.
+        # --deadline keeps the run inside the job limit; the report below still runs.
+        shell: bash
         env:
           BASE_REF: ${{ github.base_ref }}
+        run: bin/mutate "origin/$BASE_REF..HEAD" --max 60 --timeout 120 --deadline 1500 | tee "$RUNNER_TEMP/mutate.txt"
+      - name: Write the report to the job summary
+        if: always()
+        shell: bash
         run: |
-          bin/mutate "origin/$BASE_REF..HEAD" --max 60 --timeout 300 | tee "$RUNNER_TEMP/mutate.txt"
           {
             echo '## Mutation report'
             echo
             echo 'A **SURVIVED** mutant is a change to a line this pull request touches that no test noticed.'
             echo
             echo '```'
-            cat "$RUNNER_TEMP/mutate.txt"
+            cat "$RUNNER_TEMP/mutate.txt" 2>/dev/null || echo "bin/mutate wrote no report"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
