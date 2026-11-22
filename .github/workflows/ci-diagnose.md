@@ -88,6 +88,14 @@ pre-agent-steps:
       wc -l "$out/failed.log"; jq -c . "$out/prs.json"; jq -c '[.[].conclusion]' "$out/main-runs.json"
 
 safe-outputs:
+  # Threat detection gets engine.env too, so its TMPDIR must exist in the
+  # detection job as well (without it the scan crashed in mkdtemp and the
+  # output was posted unscanned). Fail closed: no verdict, nothing posted.
+  threat-detection:
+    continue-on-error: false
+    steps:
+      - name: Create TMPDIR for the detector
+        run: mkdir -p /tmp/gh-aw/agent/tmp
   add-comment:
     # The agent names the pull request from prs.json; one comment per run, and
     # an earlier diagnosis on the same pull request is hidden.

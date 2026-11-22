@@ -77,6 +77,14 @@ pre-agent-steps:
       jq -c '{status, summary}' "$out/red-sh.json" "$out/red-js.json" || true
 
 safe-outputs:
+  # Threat detection gets engine.env too, so its TMPDIR must exist in the
+  # detection job as well (without it the scan crashed in mkdtemp and the
+  # output was posted unscanned). Fail closed: no verdict, nothing posted.
+  threat-detection:
+    continue-on-error: false
+    steps:
+      - name: Create TMPDIR for the detector
+        run: mkdir -p /tmp/gh-aw/agent/tmp
   create-pull-request-review-comment:
     max: 10
   submit-pull-request-review:
