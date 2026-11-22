@@ -53,12 +53,15 @@ jobs:
           # Claude, while the OpenAI credit PR-Agent and the first OCR runs used
           # is spent. Claude also writes these pull requests, so this is not the
           # independent review of AGENT-WORKFLOW.md rule 4: PR-Agent, on OpenAI,
-          # stays that review. The action's default body (thinking disabled)
-          # is in the form Anthropic accepts.
+          # stays that review.
           llm_url: https://api.anthropic.com
           llm_auth_token: ${{ secrets.ANTHROPIC_API_KEY }}
           llm_model: claude-sonnet-5-5
           llm_use_anthropic: 'true'
+          # The action's default body, {"thinking": {"type": "disabled"}}, is a
+          # 400 on Claude Sonnet 5.5 (run 45071344142). An empty body leaves
+          # the model's default adaptive thinking.
+          llm_extra_body: '{}'
           max_tokens_budget: '2000000'
           route_severity_below: 'low'
           route_categories: 'style,documentation'
