@@ -33,10 +33,10 @@ has "$job_if" "github.event.action == 'labeled' && github.event.label.name == 'o
 it "the other events skip drafts"
 has "$job_if" "github.event.action != 'labeled' && github.event.pull_request.draft == false"
 
-it "the workflow token has nothing; the job can read code and write pull request comments only"
+it "the workflow token has nothing; the job can read code, comment, and take the label off"
 has "$w" "permissions: {}"
-has "$w" "      contents: read"; has "$w" "      pull-requests: write"
-lacks "$w" '^ *(contents|actions|issues|packages|id-token): *write'
+has "$w" "      contents: read"; has "$w" "      pull-requests: write"; has "$w" "      issues: write"
+lacks "$w" '^ *(contents|actions|packages|id-token|checks|statuses|deployments): *write'
 
 it "the action and the CLI are pinned: the action to a full commit, the CLI to a version"
 printf '%s\n' "$w" | grep -qE '^ *- uses: alibaba/open-code-review@[0-9a-f]{40}$' && ok || bad "action not pinned to a 40-character commit"
@@ -45,10 +45,11 @@ has "$w" "ocr_version: '1.14.1'"
 it "the model is OpenAI's, not Claude: Claude writes the pull requests here"
 has "$w" "llm_url: https://api.openai.com/v1"
 has "$w" "llm_use_anthropic: 'false'"
-lacks "$w" 'llm_model: .*claude'
+printf '%s\n' "$w" | grep -qiE 'llm_model: .*(claude|anthropic)' && bad "a Claude model is configured" || ok
 
-it "the key is named once, on the review step"
+it "the key is named once, as the action's llm_auth_token input, never in a run: script"
 [ "$(printf '%s\n' "$w" | grep -c 'secrets.OPENAI_API_KEY')" = 1 ] && ok || bad "OPENAI_API_KEY named more than once"
+printf '%s\n' "$w" | grep -qE '^ +llm_auth_token: \$\{\{ secrets\.OPENAI_API_KEY \}\}$' && ok || bad "the key is not the llm_auth_token input"
 
 it "the review is capped in tokens"
 printf '%s\n' "$w" | grep -qE "max_tokens_budget: '[1-9][0-9]*'" && ok || bad "no token cap"

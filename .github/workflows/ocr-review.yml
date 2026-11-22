@@ -40,6 +40,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      # Labels on a pull request are issue labels: removing one needs this.
+      issues: write
     steps:
       # v1.14.1, pinned to the tag's commit.
       - uses: alibaba/open-code-review@284ff013f0705ae6cac4c8dfbffa2f2551886d56

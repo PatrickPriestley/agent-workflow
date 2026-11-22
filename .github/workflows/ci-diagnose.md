@@ -96,6 +96,8 @@ pre-agent-steps:
       echo "$mode" > "$out/mode.txt"
       gh run view "$run_id" --repo "$REPO" \
         --json name,event,headBranch,headSha,conclusion,url,jobs,workflowName > "$out/run.json" 2> "$out/run.err" || { echo "::error::cannot read run $run_id"; cat "$out/run.err"; exit 1; }
+      conclusion=$(jq -r .conclusion "$out/run.json")
+      [ "$conclusion" = failure ] || { echo "::error::run $run_id concluded '$conclusion', not failure: nothing to diagnose"; exit 1; }
       head_sha=$(jq -r .headSha "$out/run.json")
       workflow_name=$(jq -r .workflowName "$out/run.json")
       [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected head sha"; exit 1; }
@@ -110,9 +112,9 @@ pre-agent-steps:
       # The failing commit as data: fetched, then written into a worktree. This
       # executes none of its files (hooks and filters come from git config,
       # which the commit cannot set).
-      git fetch -q origin "$head_sha"
-      git -c core.hooksPath=/dev/null worktree add -q --detach "$out/head" "$head_sha"
-      base=$(git merge-base origin/main "$head_sha")
+      git fetch -q origin "$head_sha" || { echo "::error::cannot fetch $head_sha from origin (a fork's or a deleted commit?)"; exit 1; }
+      git -c core.hooksPath=/dev/null worktree add -q --detach "$out/head" "$head_sha" || { echo "::error::cannot check out $head_sha"; exit 1; }
+      base=$(git merge-base origin/main "$head_sha") || { echo "::error::no merge base between origin/main and $head_sha"; exit 1; }
       {
         echo "head=$head_sha"
         echo "merge_base=$base"
@@ -145,6 +147,9 @@ pre-agent-steps:
       wc -l "$out/failed.log"; jq -c . "$out/prs.json"; jq -c '[.[] | {conclusion, duration_seconds}]' "$out/main-runs.json"
 
 safe-outputs:
+  # A backtest can post nothing: its safe outputs are only previewed in the
+  # run summary, whatever the agent asks for. A live run posts.
+  staged: ${{ github.event_name == 'workflow_dispatch' }}
   # Threat detection gets engine.env too, so its TMPDIR must exist in the
   # detection job as well (without it the scan crashed in mkdtemp and the
   # output was posted unscanned). Fail closed: no verdict, nothing posted.
