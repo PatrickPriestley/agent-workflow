@@ -46,10 +46,16 @@ checkout:
 # the agent does not re-judge it.
 pre-agent-steps:
   - name: red-check the changed tests
+    env:
+      # The pull request's own title and description, passed as data through
+      # the environment and written to a file; never part of the script text.
+      PR_TITLE: ${{ github.event.issue.title }}
+      PR_BODY: ${{ github.event.issue.body }}
     run: |
       set -u
       out=/tmp/gh-aw/agent/verify
       mkdir -p "$out"
+      printf '# %s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$out/description.md"
       base=$(git merge-base origin/main HEAD)
       {
         echo "head=$(git rev-parse HEAD)"
@@ -86,6 +92,8 @@ The rules are in `AGENT-WORKFLOW.md`. The review checklist is
 
 - `/tmp/gh-aw/agent/verify/range.txt`: the head and merge-base commits and the
   files the pull request changes.
+- `/tmp/gh-aw/agent/verify/description.md`: the pull request's title and
+  description, for step 4. It is the author's account, not evidence.
 - `/tmp/gh-aw/agent/verify/red-sh.json` and `red-js.json`: `red-check` results for
   the changed bash and Node test files. Each file is `red` (fails on the base
   with an assertion: the test shows the change is needed), `green` (passes on the
