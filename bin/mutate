@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""mutate: do the tests notice when the lines a branch changes are broken?
+
+  mutate [BASE..HEAD] [--json] [--strict] [--timeout SECONDS] [--max N] [--py-lines N]
+         [--deadline SECONDS]
+
+For each shell script the range adds or modifies, and that has a test beside it
+(`x` is tested by `x.test.sh`), mutate makes small changes to the changed lines
+one at a time: a comparison flipped, a negation dropped, `&&` and `||`
+swapped, an exit status inverted, a guard line deleted, an item dropped from a
+`for` list. After each it runs the test. A mutant the test fails on is
+`killed`; one it passes on `survived`: a change like that would go unnoticed.
+A mutant that `bash -n` rejects is `invalid` and not counted.
+
+Changed Python files are handed to mutmut 2.x (`--use-patch-file`, so only the
+changed lines are mutated), with the test command `.mutate-tests` names for
+the file: one `<glob> <command>` per line, `#` for comments. A Python file with
+no entry there, or a script with no test beside it, is reported `no test`.
+Without mutmut on PATH (or $MUTMUT), Python files are reported `not run`.
+mutmut runs every mutant of the changed lines, so a Python file with more than
+--py-lines changed lines (default 40) is reported `too large` instead, and one
+mutmut run stops after 20 times --timeout.
+
+Each file's test must pass on the head first, or the file is reported
+`baseline fails` and not mutated. Everything runs in a temporary worktree of
+the head; mutate itself never writes to the working tree, the index or the
+branch. A test that runs longer than --timeout (default 300) is killed with
+everything it started, and the mutant reported `timed out`; after --deadline
+seconds (default: none) no further mutant is started.
+
+A mutant is a broken copy of a script, and its test runs it: a mutated guard
+such as `[ -n "$d" ] && rm -rf "$d"` can do real damage. The tests run with
+HOME and TMPDIR pointed into a scratch directory, which protects only what a
+script reaches through those. Run mutate where the scripts' tests are already
+safe to run, such as CI or a container.
+
+The default range is the merge base with origin/main (or main) to HEAD.
+--json prints one document instead of lines. Exit: 0 report written (with
+--strict: and nothing survived), 1 --strict and a mutant survived, 2 usage or
+setup problem.
+"""
+import fnmatch
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+DEADLINE = [None]
+
+USAGE = "usage: mutate [BASE..HEAD] [--json] [--strict] [--timeout SECONDS] [--max N] [--py-lines N] [--deadline SECONDS]"
+
+# (name, pattern, replacement): applied once per match on a changed line.
+SHELL_SWAPS = [
+    ("-eq -> -ne", r" -eq ", " -ne "), ("-ne -> -eq", r" -ne ", " -eq "),
+    ("-lt -> -ge", r" -lt ", " -ge "), ("-ge -> -lt", r" -ge ", " -lt "),
+    ("-gt -> -le", r" -gt ", " -le "), ("-le -> -gt", r" -le ", " -gt "),
+    ("== -> !=", r" == ", " != "), ("!= -> ==", r" != ", " == "),
+    ("-z -> -n", r" -z ", " -n "), ("-n -> -z", r" -n ", " -z "),
+    ("&& -> ||", r" && ", " || "), ("|| -> &&", r" \|\| ", " && "),
+    ("drop !", r"(?:(?<=^)|(?<=[\s(]))! ", ""),
+    ("exit 0 -> exit 1", r"\bexit 0\b", "exit 1"),
+    ("exit N -> exit 0", r"\bexit [1-9][0-9]*\b", "exit 0"),
+    ("return 0 -> return 1", r"\breturn 0\b", "return 1"),
+    ("return N -> return 0", r"\breturn [1-9][0-9]*\b", "return 0"),
+    ("true -> false", r"(?<![\w-])true(?![\w-])", "false"),
+    ("false -> true", r"(?<![\w-])false(?![\w-])", "true"),
+]
+GUARD = re.compile(r"^\s*(\[\[?|test\s).*(\|\||&&)")
+FOR_LIST = re.compile(r"^(\s*for\s+\w+\s+in\s+)([^;]+?)(\s*;\s*do\b.*)$")
+
+
+def die(msg, code=2):
+    print(f"mutate: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def git(*args, cwd=None, check=True):
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        die(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def shell_mutants(line):
+    """Every mutant of one line: (operator name, mutated line)."""
+    if line.lstrip().startswith("#"):
+        return []
+    out = []
+    for name, pat, rep in SHELL_SWAPS:
+        for m in re.finditer(pat, line):
+            out.append((name, line[: m.start()] + rep + line[m.end():]))
+    if GUARD.match(line):
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(("delete guard", indent + ":"))
+    m = FOR_LIST.match(line)
+    if m:
+        words = m.group(2).split()
+        if len(words) > 1:
+            for i, w in enumerate(words):
+                rest = " ".join(words[:i] + words[i + 1:])
+                out.append((f"drop '{w}' from list", m.group(1) + rest + m.group(3)))
+    seen, uniq = set(), []
+    for name, new in out:
+        if new != line and new not in seen:
+            seen.add(new)
+            uniq.append((name, new))
+    return uniq
+
+
+def changed_lines(base, head, path, cwd):
+    """Line numbers of `path` at head that the range adds or changes."""
+    diff = git("diff", "-U0", "--no-color", f"{base}..{head}", "--", path, cwd=cwd)
+    nums = []
+    for m in re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", diff, re.M):
+        start, count = int(m.group(1)), int(m.group(2) or "1")
+        nums.extend(range(start, start + count))
+    return nums
+
+
+def is_shell(path, wt):
+    if path.endswith(".test.sh") or "/fixtures/" in f"/{path}" or "/testdata/" in f"/{path}":
+        return False
+    if path.endswith(".sh"):
+        return True
+    if "." in os.path.basename(path):
+        return False
+    try:
+        with open(os.path.join(wt, path), "rb") as f:
+            first = f.readline(200).decode("utf-8", "replace")
+    except OSError:
+        return False
+    return first.startswith("#!") and re.search(r"\b(ba)?sh\b", first) is not None
+
+
+SCRATCH_ENV = {}
+
+
+def run(cmd, cwd, timeout):
+    """Run a test in its own process group; on timeout, kill the whole group."""
+    env = dict(os.environ, **SCRATCH_ENV)
+    p = subprocess.Popen(cmd, cwd=cwd, shell=isinstance(cmd, str), stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, env=env, start_new_session=True)
+    try:
+        out, _ = p.communicate(timeout=timeout)
+        return p.returncode, out
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.communicate()
+        return None, "timed out"
+
+
+def past_deadline():
+    return DEADLINE[0] is not None and time.monotonic() > DEADLINE[0]
+
+
+def read_test_map(wt):
+    entries = []
+    try:
+        with open(os.path.join(wt, ".mutate-tests")) as f:
+            for raw in f:
+                line = raw.strip()
+                if line and not line.startswith("#"):
+                    glob, _, cmd = line.partition(" ")
+                    if cmd.strip():
+                        entries.append((glob, cmd.strip()))
+    except OSError:
+        pass
+    return entries
+
+
+def mutate_shell(path, wt, base, head, timeout, budget):
+    test = path + ".test.sh"
+    entry = {"file": path, "kind": "shell", "test": test, "mutants": []}
+    if not os.path.exists(os.path.join(wt, test)):
+        entry["status"] = "no test"
+        return entry
+    rc, out = run(["bash", test], wt, timeout)
+    if rc != 0:
+        entry["status"] = "baseline fails"
+        entry["detail"] = out.strip().splitlines()[-1:] if out.strip() else []
+        return entry
+    full = os.path.join(wt, path)
+    with open(full) as f:
+        original = f.read()
+    lines = original.split("\n")
+    try:
+        for n in changed_lines(base, head, path, wt):
+            if n < 1 or n > len(lines):
+                continue
+            for name, new in shell_mutants(lines[n - 1]):
+                if budget[0] <= 0 or past_deadline():
+                    entry["truncated"] = "deadline" if past_deadline() else "max"
+                    raise StopIteration
+                budget[0] -= 1
+                mutated = lines[: n - 1] + [new] + lines[n:]
+                with open(full, "w") as f:
+                    f.write("\n".join(mutated))
+                if subprocess.run(["bash", "-n", path], cwd=wt, capture_output=True).returncode != 0:
+                    result = "invalid"
+                else:
+                    rc, _ = run(["bash", test], wt, timeout)
+                    result = "survived" if rc == 0 else ("timed out" if rc is None else "killed")
+                entry["mutants"].append({"line": n, "op": name, "result": result,
+                                         "code": new.strip()})
+    except StopIteration:
+        pass
+    finally:
+        with open(full, "w") as f:
+            f.write(original)
+    entry["status"] = "mutated"
+    return entry
+
+
+def mutate_python(path, wt, base, head, timeout, test_map, py_lines):
+    entry = {"file": path, "kind": "python", "mutants": []}
+    cmd = next((c for g, c in test_map if fnmatch.fnmatch(path, g)), None)
+    if cmd is None:
+        entry["status"] = "no test"
+        return entry
+    entry["test"] = cmd
+    n = len(changed_lines(base, head, path, wt))
+    if n > py_lines:
+        entry["status"] = "too large"
+        entry["detail"] = [f"{n} changed lines, above --py-lines {py_lines}"]
+        return entry
+    mutmut = os.environ.get("MUTMUT") or shutil.which("mutmut")
+    if not mutmut:
+        entry["status"] = "not run"
+        entry["detail"] = ["mutmut not installed (pip install 'mutmut[patch]==2.5.1')"]
+        return entry
+    rc, out = run(cmd, wt, timeout)
+    if rc != 0:
+        entry["status"] = "baseline fails"
+        entry["detail"] = out.strip().splitlines()[-1:] if out.strip() else []
+        return entry
+    patch = os.path.join(wt, ".mutate.patch")
+    with open(patch, "w") as f:
+        f.write(git("diff", "--no-color", f"{base}..{head}", "--", path, cwd=wt))
+    if past_deadline():
+        entry["status"] = "not run"
+        entry["detail"] = ["past --deadline"]
+        return entry
+    budget_s = timeout * 20
+    if DEADLINE[0] is not None:
+        budget_s = max(1, min(budget_s, int(DEADLINE[0] - time.monotonic())))
+    mm_rc, mm_out = run([mutmut, "run", "--paths-to-mutate", path, "--tests-dir", ".", "--runner", cmd,
+                         "--use-patch-file", patch, "--no-progress"], wt, budget_s)
+    if mm_rc is None:
+        entry["truncated"] = "mutmut"
+    elif mm_rc & 1:
+        # mutmut 2.x exit codes are bit flags: 1 a fatal error; 2, 4, 8 survived,
+        # timed out and suspicious mutants.
+        entry["status"] = "not run"
+        entry["detail"] = ["mutmut failed: " + (mm_out.strip().splitlines() or ["no output"])[-1]]
+        return entry
+    xml = subprocess.run([mutmut, "junitxml"], cwd=wt, capture_output=True, text=True).stdout
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        entry["status"] = "not run"
+        entry["detail"] = ["mutmut produced no results"]
+        return entry
+    for case in root.iter("testcase"):
+        line = int(case.get("line") or 0)
+        if case.find("skipped") is not None:
+            result = "invalid"
+        elif case.find("failure") is not None:
+            result = "survived"
+        elif case.find("error") is not None:
+            # mutmut's junit export files timed-out and suspicious mutants as errors.
+            result = "timed out"
+        else:
+            result = "killed"
+        entry["mutants"].append({"line": line, "op": "mutmut " + (case.get("name") or ""),
+                                 "result": result, "code": ""})
+    entry["status"] = "mutated"
+    return entry
+
+
+def main(argv):
+    rng, as_json, strict, timeout, cap, py_lines, deadline = None, False, False, 300, 200, 40, None
+    args = list(argv)
+    while args:
+        a = args.pop(0)
+        if a == "--json":
+            as_json = True
+        elif a == "--strict":
+            strict = True
+        elif a in ("--timeout", "--max", "--py-lines", "--deadline"):
+            if not args or not args[0].isdigit():
+                die(USAGE)
+            v = int(args.pop(0))
+            if a == "--timeout":
+                timeout = v
+            elif a == "--max":
+                cap = v
+            elif a == "--py-lines":
+                py_lines = v
+            else:
+                deadline = v
+        elif a.startswith("-"):
+            die(USAGE)
+        elif rng is None:
+            rng = a
+        else:
+            die(USAGE)
+    if subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True).returncode != 0:
+        die("not inside a git repository")
+    root = git("rev-parse", "--show-toplevel").strip()
+    if rng:
+        if "..." in rng or ".." not in rng:
+            die("RANGE must look like BASE..HEAD")
+        b, h = rng.split("..", 1)
+        base = git("rev-parse", "--verify", f"{b}^{{commit}}", cwd=root).strip()
+        head = git("rev-parse", "--verify", f"{h}^{{commit}}", cwd=root).strip()
+    else:
+        head = git("rev-parse", "HEAD", cwd=root).strip()
+        base = ""
+        for cand in ("origin/HEAD", "origin/main", "origin/master", "main", "master"):
+            if subprocess.run(["git", "rev-parse", "--verify", "--quiet", cand], cwd=root,
+                              capture_output=True).returncode == 0:
+                base = git("merge-base", "HEAD", cand, cwd=root).strip()
+                break
+        if not base:
+            die("cannot find a base branch; pass BASE..HEAD")
+
+    files = [f for f in git("diff", "--name-only", "--no-renames", "--diff-filter=AM", "-z",
+                            f"{base}..{head}", cwd=root).split("\0") if f]
+    wt = tempfile.mkdtemp(prefix="mutate.", dir=os.environ.get("TMPDIR"))
+    os.rmdir(wt)
+    git("worktree", "add", "--detach", "-q", wt, head, cwd=root)
+    scratch = tempfile.mkdtemp(prefix="mutate-scratch.", dir=os.environ.get("TMPDIR"))
+    for d in ("home", "tmp"):
+        os.makedirs(os.path.join(scratch, d))
+    SCRATCH_ENV.update(HOME=os.path.join(scratch, "home"), TMPDIR=os.path.join(scratch, "tmp"))
+    if deadline is not None:
+        DEADLINE[0] = time.monotonic() + deadline
+    report = []
+    try:
+        test_map = read_test_map(wt)
+        budget = [cap]
+        for f in files:
+            if f.endswith(".py") and not re.search(r"(^|/)(test_[^/]*|[^/]*_test)\.py$|(^|/)tests?/", f):
+                report.append(mutate_python(f, wt, base, head, timeout, test_map, py_lines))
+            elif is_shell(f, wt):
+                report.append(mutate_shell(f, wt, base, head, timeout, budget))
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=root, capture_output=True)
+        shutil.rmtree(wt, ignore_errors=True)
+        shutil.rmtree(scratch, ignore_errors=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=root, capture_output=True)
+
+    counts = {"killed": 0, "survived": 0, "invalid": 0, "timed out": 0}
+    for e in report:
+        for m in e["mutants"]:
+            counts[m["result"]] = counts.get(m["result"], 0) + 1
+    counted = counts["killed"] + counts["survived"] + counts["timed out"]
+    summary = (f"{counts['killed'] + counts['timed out']} of {counted} mutants killed, "
+               f"{counts['survived']} survived, {counts['invalid']} invalid, "
+               f"in {sum(1 for e in report if e['status'] == 'mutated')} file(s)")
+    status = "fail" if counts["survived"] else ("skip" if not counted else "pass")
+    if as_json:
+        print(json.dumps({"check": "mutate", "status": status, "base": base, "head": head,
+                          "files": report, "counts": counts, "summary": summary}))
+    else:
+        for e in report:
+            if e["status"] != "mutated":
+                extra = f" ({'; '.join(e.get('detail', []))})" if e.get("detail") else ""
+                print(f"{e['file']}: {e['status']}{extra}")
+                continue
+            print(f"{e['file']}: tested by {e['test']}")
+            for m in e["mutants"]:
+                flag = "SURVIVED" if m["result"] == "survived" else m["result"]
+                code = f"  [{m['code']}]" if m["code"] and m["result"] == "survived" else ""
+                print(f"  {e['file']}:{m['line']}  {m['op']:<28} {flag}{code}")
+            why = e.get("truncated")
+            if why == "max":
+                print(f"  (stopped at --max {cap} mutants)")
+            elif why == "deadline":
+                print(f"  (stopped at --deadline {deadline} seconds)")
+            elif why == "mutmut":
+                print("  (mutmut stopped at its time limit)")
+        print(f"mutate: {summary}")
+    return 1 if strict and counts["survived"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

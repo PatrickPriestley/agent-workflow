@@ -1,0 +1,55 @@
+name: mutation
+
+# Do the tests notice when the lines a pull request changes are broken? bin/mutate
+# mutates each changed line of a shell script that has a test beside it, and hands
+# changed Python files to mutmut with the test .mutate-tests names, then reports which
+# mutants survived. Report only for now: the job passes whatever survives, and the
+# report is in the job summary.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  mutate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install mutmut
+        run: pip install 'mutmut[patch]==2.5.1'
+      - name: bin/mutate's own tests
+        run: bash bin/mutate.test.sh
+      - name: Mutate the lines this pull request changes (report only)
+        # shell: bash adds pipefail, so a usage or setup failure of bin/mutate fails the
+        # step instead of hiding behind tee. Survivors do not: without --strict it exits 0.
+        # --deadline keeps the run inside the job limit; the report below still runs.
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: bin/mutate "origin/$BASE_REF..HEAD" --max 60 --timeout 120 --deadline 1500 | tee "$RUNNER_TEMP/mutate.txt"
+      - name: Write the report to the job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Mutation report'
+            echo
+            echo 'A **SURVIVED** mutant is a change to a line this pull request touches that no test noticed.'
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/mutate.txt" 2>/dev/null || echo "bin/mutate wrote no report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
