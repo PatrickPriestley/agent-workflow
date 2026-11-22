@@ -5,3 +5,6 @@ plugins/change-record/evals/results/
 # compiled Python, written when the plugin's scripts run
 __pycache__/
 *.pyc
+
+# Hegel's local example database, written when properties/ run
+.hegel/
