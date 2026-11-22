@@ -141,8 +141,10 @@ Run these two commands once, exactly as written:
    edit tool, in the shape of `properties/pr_size.py`: `@hegel.test(test_cases=25)`
    on a function that draws inputs and asserts, called under
    `if __name__ == "__main__":`. Take the path of the script under test as
-   the first command-line argument (`sys.argv[1]`), so the same file runs
-   against the head and the base, and run the script from the property with
+   the first command-line argument and make it absolute at once
+   (`os.path.abspath(sys.argv[1])`: a case may run it from a scratch
+   directory), so the same file runs against the head and the base, and run
+   the script from the property with
    `subprocess` (`bash <path>` or `python3 <path>`). Build any scratch files
    under `tempfile` (TMPDIR is set). Keep each case fast.
 4. **Run each** as one plain command, with nothing before it:
