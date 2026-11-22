@@ -232,8 +232,12 @@ the GitHub API. If a file is empty or missing, say so and work with the rest.
    line: later errors often follow from an earlier one. Read `commit.txt`: a
    message that names the failure or a known limitation is a lead to check.
 2. **Reproduce it.** If the failing command is a test in this repository
-   (`bash <file>.test.sh`, `node --test <file>`), run that file from
-   `/tmp/gh-aw/agent/ci/head` and quote the result. If it needs something this sandbox lacks
+   (`bash <file>.test.sh`, `node --test <file>`), run that file in the
+   worktree by its full path, as one plain command:
+   `bash /tmp/gh-aw/agent/ci/head/<file>.test.sh` or
+   `node --test /tmp/gh-aw/agent/ci/head/<file>`. `TMPDIR` is already set.
+   In an earlier run the shell allowlist refused the same test with a
+   `VAR=value` prefix and when joined to `cd` with `&&`. Quote the result. If it needs something this sandbox lacks
    (PostgreSQL, macOS, a secret, network beyond npm), say "not reproduced" and
    why. Never claim a reproduction you did not run.
 3. **New or old?** Use `main-runs.json`. A main run counts as healthy only if
