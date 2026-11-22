@@ -46,9 +46,11 @@ it "the model is Anthropic's Claude, over its own protocol"
 has "$w" "llm_url: https://api.anthropic.com"
 has "$w" "llm_use_anthropic: 'true'"
 printf '%s\n' "$w" | grep -qE "^ +llm_model: claude-[a-z0-9.-]+$" && ok || bad "no claude-* model"
-# The Anthropic API rejects unknown body fields: no reasoning_effort, and no empty-object override of
-# the action's default body, which disables thinking in a form Anthropic accepts.
-lacks "$w" 'llm_reasoning_effort|llm_extra_body'
+# The action's default body is {"thinking": {"type": "disabled"}}, which Claude Sonnet 5.5 rejects
+# with a 400 (run 45071344142). An empty body leaves the model's default adaptive thinking.
+# reasoning_effort is not an Anthropic field.
+has "$w" "llm_extra_body: '{}'"
+lacks "$w" 'llm_reasoning_effort|"disabled"'
 
 it "the key is named once, as the action's llm_auth_token input, never in a run: script"
 [ "$(printf '%s\n' "$w" | grep -c 'secrets.ANTHROPIC_API_KEY')" = 1 ] && ok || bad "ANTHROPIC_API_KEY not named exactly once"
