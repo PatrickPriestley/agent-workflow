@@ -119,7 +119,10 @@ GitHub API; everything you need is in the checkout and these files.
    returns or validations in the diff: break the guard in the working tree, run
    the test file that should catch it, note whether a test failed, then restore
    the file (`git checkout -- <file>`). A guard whose removal no test notices is
-   a finding; name it. Before you finish, `git status --porcelain` must be empty.
+   a finding; name it. Before you finish, `git status --porcelain` must show
+   nothing outside `.github/`. gh-aw restores `.github/` from the base branch
+   before you start, so files there can already differ from the pull request's
+   head; leave them as they are and do not report them.
 4. **Claims in the PR description.** For each command the description says was
    run, run it if the sandbox allows and compare the output. A claim you could
    not reproduce is a finding; a claim you could not run is "not checked".
