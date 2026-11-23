@@ -57,6 +57,8 @@ jobs:
         run: bash bin/ci-workflow.test.sh
       - name: Open Code Review workflow
         run: bash bin/ocr-workflow.test.sh
+      - name: red-check workflow
+        run: bash bin/red-check-workflow.test.sh
 
   # A job of its own, so these suites run whatever happens in the job above, and a step per
   # suite that runs even after an earlier one failed, so one red suite does not hide the next.
