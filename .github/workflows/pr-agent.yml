@@ -3,6 +3,7 @@ name: pr-agent
 # PR-Agent (https://github.com/The-PR-Agent/pr-agent) reviews each pull request against the
 # rules in AGENT-WORKFLOW.md, through pr-agent/skills/workflow-review, and posts its review as a
 # comment. It is a second check: the review rule 4 asks for is agent-review, before the push.
+# Off by default (see the job's if:); set the variable PR_AGENT_ENABLED to 'true' to run it.
 #
 # The model is OpenAI's, called with an OpenAI API key and no base URL. Setup, under
 # Settings > Secrets and variables > Actions:
@@ -40,7 +41,10 @@ concurrency:
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    # Off unless the repository variable PR_AGENT_ENABLED is 'true' (Settings > Secrets and
+    # variables > Actions > Variables). Open Code Review (ocr-review.yml) reviews each pull
+    # request; PR-Agent is kept for when an OpenAI review is wanted again.
+    if: vars.PR_AGENT_ENABLED == 'true' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
