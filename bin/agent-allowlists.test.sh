@@ -55,6 +55,8 @@ it "the Claude agent workflows were all found (ci-diagnose, ci-fix, property-sco
 # Claude Code matches "bash bin/:*" only against "bash bin/" and a space, never
 # "bash bin/x.test.sh" (run 45173430477), so every test file must be listed exactly.
 tests="$(cd "$root" && git ls-files '*.test.sh' 'skills/plan/scripts/test-*.sh' 'plugins/change-record/outcome-evals/checks/selftest.sh' | sed 's/^/bash /'; cd "$root" && git ls-files '*.test.cjs' '*.test.js' '*.test.mjs' | sed 's/^/node --test /')"
+it "the test-file list is not empty, so the checks below can fail"
+[ "$(printf '%s\n' "$tests" | grep -c .)" -ge 2 ] && ok || bad "found no test files"
 lists() {  # WORKFLOW PREFIX: every test file has its exact entry in the lock
   local miss; miss="$(printf '%s\n' "$tests" | while read -r runner file; do
     case "$runner" in node) runner="node --test"; file="${file#--test }";; esac
@@ -68,6 +70,32 @@ lists verify ""; lists verify /tmp/gh-aw/agent/verify/base/
 it "ci-diagnose's lock lists every test file in the failing commit's worktree"; lists ci-diagnose /tmp/gh-aw/agent/ci/head/
 it "no lock keeps a directory prefix, which matches nothing below it"
 grep -hoE 'Bash\((bash|node --test) [^)]*/:\*\)' "$root"/.github/workflows/*.lock.yml | head -1 | grep -q . && bad "a directory prefix is still there" || ok
+# bin/agent-allowlists-sync itself, in a scratch repository with three marked workflows.
+sb="$(mktemp -d "${TMPDIR:-/tmp}/allowlists-sync.XXXXXX")"; trap 'rm -rf "$sb"' EXIT
+(
+  cd "$sb" && git init -q -b main && mkdir -p bin .github/workflows
+  cp "$root/bin/agent-allowlists-sync" bin/
+  printf '#!/usr/bin/env bash\n' > bin/a.test.sh
+  for n in ci-fix verify ci-diagnose; do
+    printf 'tools:\n  bash:\n    # BEGIN test files\n    # END test files\nnetwork: {}\n' > ".github/workflows/$n.md"
+  done
+  git add -A && git -c user.name=t -c user.email=t@t commit -qm init
+) >/dev/null
+sb_sync() { (cd "$sb" && bin/agent-allowlists-sync "$@") >/dev/null 2>&1; }
+it "sync: --check exits 1 on a stale block, and writing makes it pass"
+sb_sync --check; [ $? -eq 1 ] && ok || bad "--check passed a stale block"
+sb_sync; sb_sync --check && ok || bad "still stale after writing"
+grep -qF '    - "bash bin/a.test.sh"' "$sb/.github/workflows/ci-fix.md" && ok || bad "entry not written"
+grep -qF 'network: {}' "$sb/.github/workflows/ci-fix.md" && ok || bad "lines after the block were lost"
+it "sync: a workflow with no BEGIN marker is an error, not a silent pass"
+sed -i '/# BEGIN test files/d' "$sb/.github/workflows/verify.md"
+sb_sync --check; [ $? -eq 2 ] && ok || bad "--check did not fail on a missing BEGIN"
+sb_sync; [ $? -eq 2 ] && ok || bad "write did not fail on a missing BEGIN"
+it "sync: a BEGIN with no END is an error, and the file is left as it was"
+(cd "$sb" && git checkout -q -- .github/workflows/verify.md)
+sed -i '/# END test files/d' "$sb/.github/workflows/ci-diagnose.md"; before="$(cat "$sb/.github/workflows/ci-diagnose.md")"
+sb_sync; [ $? -eq 2 ] && ok || bad "write did not fail on a missing END"
+[ "$(cat "$sb/.github/workflows/ci-diagnose.md")" = "$before" ] && ok || bad "the file was changed"
 it "the sources' test-file blocks are what bin/agent-allowlists-sync writes"
 (cd "$root" && bin/agent-allowlists-sync --check) && ok || bad "run bin/agent-allowlists-sync, then gh aw compile"
 it "ci-diagnose's prompt does not repeat the old claim that cd with && is refused"

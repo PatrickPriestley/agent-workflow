@@ -7,7 +7,8 @@
 #
 # Claude Code matches "bash bin/:*" only against "bash bin/" followed by a space or nothing,
 # never "bash bin/x.test.sh" (seen in run 45173430477), so each test file is listed exactly.
-# Each workflow marks its block with "# BEGIN test files" and "# END test files" lines.
+# Each workflow marks its block with "# BEGIN test files" and "# END test files" lines; exit 2
+# when they are missing or out of order, with no file changed.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 check=false; [ "${1:-}" = --check ] && check=true
@@ -27,10 +28,16 @@ stale=0
 sync() {  # FILE PREFIX...
   local file="$1"; shift
   local block; block="$(entries "$@")"
+  # Exactly one BEGIN followed by one END, or the file is left alone: a lost END would
+  # otherwise drop everything after BEGIN, and a lost BEGIN would pass unnoticed.
   local new; new="$(BLOCK="$block" awk '
-    /^ *# BEGIN test files/ { print; print ENVIRON["BLOCK"]; skip = 1; next }
-    /^ *# END test files/ { skip = 0 }
-    !skip { print }' "$file")"
+    /^ *# BEGIN test files/ { if (began++) bad = 1; print; print ENVIRON["BLOCK"]; skip = 1; next }
+    /^ *# END test files/ { if (!skip) bad = 1; skip = 0; ended++ }
+    !skip { print }
+    END { if (bad || began != 1 || ended != 1) exit 3 }' "$file")" || {
+    echo "agent-allowlists-sync: $file needs one \"# BEGIN test files\" line and one \"# END test files\" line after it" >&2
+    exit 2
+  }
   if [ "$new" != "$(cat "$file")" ]; then
     if $check; then echo "agent-allowlists-sync: $file is out of date" >&2; stale=1
     else printf '%s\n' "$new" > "$file"; echo "agent-allowlists-sync: updated $file"; fi
