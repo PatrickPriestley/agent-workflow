@@ -57,16 +57,21 @@ tools:
     - "git rev-parse:*"
     - "git worktree add:*"
     # The repository's own tests and tools, as the descriptions name them, by
-    # path prefix: no `bash -c` and no script from anywhere else. Those tests
-    # can still write files, by design; nothing leaves the run but the one
-    # comment (read-only token, no push output, the checkout is discarded).
+    # path prefix.
+    # A path prefix is not a boundary: `<prefix>/../x` matches it, the agent can
+    # write under /tmp, and the tests it runs are the pull request's own code.
+    # The prefixes rule out one-line escapes (`bash -c`, `sed e`, git aliases)
+    # and say what the agent is for; the sandbox (firewalled network, read-only
+    # token, threat detection, safe outputs only) is what contains it.
     - "bash bin/:*"
     - "bash plugins/:*"
     - "bash pr-agent/:*"
     - "bash evals/:*"
     - "bash install.test.sh"
     - "bash /tmp/gh-aw/agent/verify/base/:*"
-    - "node --test:*"
+    - "node --test evals/:*"
+    - "node --test plugins/:*"
+    - "node --test /tmp/gh-aw/agent/verify/base/:*"
 
 network:
   allowed:

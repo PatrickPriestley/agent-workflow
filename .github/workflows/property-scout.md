@@ -52,7 +52,6 @@ tools:
     - "tail:*"
     - "grep:*"
     - "wc:*"
-    - "sed -n:*"
     - "git log:*"
     - "git diff:*"
     - "git show:*"
