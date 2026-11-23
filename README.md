@@ -248,11 +248,13 @@ the receiver's code; PR-Agent makes one call over the diff after it.
   reviewer, hands-on output, Conventional Commits and no AI attribution. It is kept out of
   `skills/` so that authoring agents do not load it.
 
-`.github/workflows/pr-agent.yml` runs it on each pull request (opened, reopened, ready for
-review, and on every push to it; not drafts or forks) and posts the review as a comment. Only `/review` runs. The model
-is OpenAI's, called with an OpenAI API key. To turn it on, add under Settings > Secrets and
-variables > Actions:
+`.github/workflows/pr-agent.yml` is off by default: Open Code Review (`ocr-review.yml`)
+reviews each pull request instead. When on, it runs when a pull request opens, reopens or
+leaves draft (not on pushes, drafts or forks) and posts the review as a comment. Only
+`/review` runs. The model is OpenAI's, called with an OpenAI API key. To turn it on, add
+under Settings > Secrets and variables > Actions:
 
+- variable `PR_AGENT_ENABLED=true`. Without it the job is skipped.
 - secret `OPENAI_API_KEY`: an OpenAI API key. Without it the job ends with a notice.
 - optional variable `PR_AGENT_MODEL`: another OpenAI model, under the bare name PR-Agent knows
   it by. The default is `gpt-6.1-sol`. Claude and local models are refused, since Claude

@@ -34,6 +34,8 @@ printf '%s\n' "$w" | grep -v '^ *#' | grep -q 'synchronize' && bad "a push still
 printf '%s\n' "$w" | grep -qE 'issue_comment|pull_request_target' && bad "comment or target triggers present" || ok
 has "$w" "github.event.pull_request.draft == false"
 has "$w" "github.event.pull_request.head.repo.full_name == github.repository"
+it "off unless the repository variable PR_AGENT_ENABLED is 'true'"
+has "$w" "if: vars.PR_AGENT_ENABLED == 'true' && "
 
 it "the token gets no more than it needs"
 has "$w" "permissions: {}"
