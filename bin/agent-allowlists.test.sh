@@ -59,7 +59,7 @@ it "the test-file list is not empty, so the checks below can fail"
 [ "$(printf '%s\n' "$tests" | grep -c .)" -ge 2 ] && ok || bad "found no test files"
 lists() {  # WORKFLOW PREFIX: every test file has its exact entry in the lock
   local miss; miss="$(printf '%s\n' "$tests" | while read -r runner file; do
-    case "$runner" in node) runner="node --test"; file="${file#--test }";; esac
+    if [ "$runner" = node ]; then runner="node --test"; file="${file#--test }"; fi
     grep -qF "Bash($runner $2$file)" "$root/.github/workflows/$1.lock.yml" || printf '%s ' "$runner $2$file"
   done)"
   [ -z "$miss" ] && ok || bad "missing from $1.lock.yml: $miss"
@@ -88,12 +88,13 @@ sb_sync; sb_sync --check && ok || bad "still stale after writing"
 grep -qF '    - "bash bin/a.test.sh"' "$sb/.github/workflows/ci-fix.md" && ok || bad "entry not written"
 grep -qF 'network: {}' "$sb/.github/workflows/ci-fix.md" && ok || bad "lines after the block were lost"
 it "sync: a workflow with no BEGIN marker is an error, not a silent pass"
-sed -i '/# BEGIN test files/d' "$sb/.github/workflows/verify.md"
+drop() { grep -v "$1" "$2" > "$2.tmp" && mv "$2.tmp" "$2"; }  # portable sed -i '/re/d'
+drop '# BEGIN test files' "$sb/.github/workflows/verify.md"
 sb_sync --check; [ $? -eq 2 ] && ok || bad "--check did not fail on a missing BEGIN"
 sb_sync; [ $? -eq 2 ] && ok || bad "write did not fail on a missing BEGIN"
 it "sync: a BEGIN with no END is an error, and the file is left as it was"
 (cd "$sb" && git checkout -q -- .github/workflows/verify.md)
-sed -i '/# END test files/d' "$sb/.github/workflows/ci-diagnose.md"; before="$(cat "$sb/.github/workflows/ci-diagnose.md")"
+drop '# END test files' "$sb/.github/workflows/ci-diagnose.md"; before="$(cat "$sb/.github/workflows/ci-diagnose.md")"
 sb_sync; [ $? -eq 2 ] && ok || bad "write did not fail on a missing END"
 [ "$(cat "$sb/.github/workflows/ci-diagnose.md")" = "$before" ] && ok || bad "the file was changed"
 it "the sources' test-file blocks are what bin/agent-allowlists-sync writes"
