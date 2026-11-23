@@ -63,6 +63,8 @@ jobs:
         run: bash bin/verify-workflow.test.sh
       - name: Agent allowlists
         run: bash bin/agent-allowlists.test.sh
+      - name: Property Scout workflow
+        run: bash bin/property-scout-workflow.test.sh
 
   # A job of its own, so these suites run whatever happens in the job above, and a step per
   # suite that runs even after an earlier one failed, so one red suite does not hide the next.

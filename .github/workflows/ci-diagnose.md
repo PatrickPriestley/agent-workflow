@@ -90,6 +90,7 @@ tools:
     - "bash /tmp/gh-aw/agent/ci/head/bin/mutate.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/ocr-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/pr-size.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/property-scout-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/red-check-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/verify-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/install.test.sh"
