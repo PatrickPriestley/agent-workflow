@@ -1,6 +1,6 @@
 ---
 name: agent-review
-description: Use when finished work needs an independent review by a different kind of agent before it is pushed, or when a plan or design should be attacked before implementing it.
+description: Use when finished work should get a review by a different kind of agent before it is pushed, or when a plan or design should be attacked before implementing it.
 ---
 
 # Agent Review

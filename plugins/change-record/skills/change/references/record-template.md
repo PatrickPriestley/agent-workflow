@@ -38,7 +38,7 @@ when the total passes the size limit.
 
 ## Checks
 How this will be shown to work: the test command, the real-use commands (main path and one
-error path), what the independent reviewer should attack.
+error path), what a reviewer should attack.
 
 ## Outcome
 Filled at the end: what shipped, what did not, open findings, the real-use output.

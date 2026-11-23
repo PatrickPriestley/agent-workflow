@@ -1,8 +1,8 @@
 # Review findings are claims
 
-An independent review runs on every PR, by a model family other than the author's: in CI
-(PR-Agent with agent-workflow's review skill, or your own), or locally before the push with
-`agent-review code --goal "<the record's Goal>"`. Either way:
+A review may run on the PR in CI (Open Code Review, PR-Agent with agent-workflow's review
+skill, or your own), or locally before the push with
+`agent-review code --goal "<the record's Goal>"`. Whichever ran:
 
 - **Probe each finding** against the real code before acting on it. Run the input it
   describes. A wrong fix applied on trust ships a bug.

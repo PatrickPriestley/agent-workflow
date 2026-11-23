@@ -39,13 +39,10 @@ file format or device):
   is removed. Name any guard you cannot match to such a test.
 - If the description reports mutation results, they should name the guards, not only a count.
 
-## 4. Independent review and hands-on evidence
+## 4. Hands-on evidence
 
 For a change in behaviour, the PR description should contain:
 
-- The `Reviewed by: <kind> <model>` line from `agent-review`, naming a model family other than
-  the author's. A local model (Ollama, LM Studio, llama.cpp) does not count. "Reviewed, no
-  findings" with no reviewer named is not a review.
 - The commands run against the real program and their output, including at least one error
   path. Output quoted for code the diff later changed is stale.
 

@@ -4,9 +4,9 @@ A lightweight development loop that any coding agent can follow (Claude Code, Co
 Cursor, Gemini), plus the two commands that make it hold:
 
 - `skills/feature-loop`: probe, short design note, build red before green, mutation-check,
-  independent review, push and open a PR. Stops only for merges, releases, deletions,
+  check the size, push and open a PR. Stops only for merges, releases, deletions,
   impossible requests and real ambiguity.
-- `skills/agent-review` and `bin/agent-review`: an independent review by a different kind
+- `skills/agent-review` and `bin/agent-review`: an optional review by a different kind
   of agent, run headless and read-only (`codex exec`, `claude -p`, `cursor-agent -p`,
   `gemini -p`, `opencode run`).
 - `bin/commit-gate`: git hooks that refuse a commit when the tests fail, when the subject is

@@ -4,7 +4,7 @@
 #   pr-agent/check-model.sh MODEL [FALLBACKS] [--exclude WORD]...
 #
 # MODEL is PR-Agent's config.model, FALLBACKS its config.fallback_models (a JSON list,
-# default []). Refuses an empty model, any local provider (AGENT-WORKFLOW.md rule 4), and any
+# default []). Refuses an empty model, any local provider, and any
 # model or fallback whose name contains an --exclude word, ignoring case: pass the families
 # that author the pull requests, so the reviewer is never one of them.
 # Used by pr-agent/try.sh and .github/workflows/pr-agent.yml. Exit 0 ok, 2 refused or misused.
@@ -25,7 +25,7 @@ done
 [ -n "$model" ] || fail "no model: set CONFIG__MODEL (the repository variable PR_AGENT_MODEL on GitHub) to a hosted model of another family than the author's, for example openrouter/<provider>/<model>. PR-Agent's own default is an OpenAI model."
 local_re='(^|["[:space:],[])(ollama|ollama_chat|lm_studio|lmstudio|llamacpp|llama\.cpp|llamafile|local|hosted_vllm|vllm)/'
 for m in "$model" "$fallbacks"; do
-  printf '%s\n' "$m" | grep -iqE "$local_re" && fail "refusing a local model ($m): a review by one does not count (AGENT-WORKFLOW.md rule 4)"
+  printf '%s\n' "$m" | grep -iqE "$local_re" && fail "refusing a local model ($m): a review by one does not count"
   for x in ${excludes[@]+"${excludes[@]}"}; do
     printf '%s\n' "$m" | grep -iqF -- "$x" && fail "refusing $m: it names \"$x\", a family that authors these pull requests"
   done

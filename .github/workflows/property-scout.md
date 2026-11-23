@@ -27,7 +27,7 @@ permissions:
   issues: read
 
 # Claude, as for CI diagnosis and CI fix (OpenAI refuses Codex for this
-# organization). Proposing tests is not the independent review of rule 4.
+# organization).
 engine:
   id: claude
   env:

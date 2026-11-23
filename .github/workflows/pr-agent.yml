@@ -2,7 +2,7 @@ name: pr-agent
 
 # PR-Agent (https://github.com/The-PR-Agent/pr-agent) reviews each pull request against the
 # rules in AGENT-WORKFLOW.md, through pr-agent/skills/workflow-review, and posts its review as a
-# comment. It is a second check: the review rule 4 asks for is agent-review, before the push.
+# comment. It is optional; Open Code Review (ocr-review.yml) reviews each pull request.
 # Off by default (see the job's if:); set the variable PR_AGENT_ENABLED to 'true' to run it.
 #
 # The model is OpenAI's, called with an OpenAI API key and no base URL. Setup, under

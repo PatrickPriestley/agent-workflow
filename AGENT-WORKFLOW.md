@@ -31,18 +31,9 @@ here. These rules apply to every change, whichever loop it goes through.
 3. **Mutation-check the guards** the change adds or touches: break each `if`, early return
    and validation in turn, see a test fail, restore it at once. A survivor gets a test that
    fails without it; delete it only if no input can reach it, and say why in the commit.
-4. **Independent review.** Before anything that changes behaviour is pushed, a model family
-   other than the author's reads the diff. The review counts only if the reply is complete,
-   ending with the end marker the prompt asked for. Findings are claims: probe each one, fix
-   verified ones test-first, dismiss one only when a probe or cited code shows it cannot
-   happen. `agent-review code` runs one headless; if the reviewer fails it switches to another
-   model, then to OpenCode Go. Never review with a local model (Ollama, LM Studio, llama.cpp):
-   such a review does not count. If no other family answers, say so and push: Open Code Review
-   on the pull request is then the review. It is from the author's family, so it is not
-   independent: the commit and pull request say so, and its findings are handled the same way.
-   Name the reviewer actually used when reporting the review. Never send secret files (`.env`, keys, credentials) to a reviewer.
-5. **Ask first** before merging into the main branch, releasing or deleting, unless the
+4. **Ask first** before merging into the main branch, releasing or deleting, unless the
    request already asked for it. Pushing a branch and opening a PR need no approval. Never answer another agent's trust, permission, login or update prompt.
-6. **Commits** are Conventional Commits (`feat:`, `fix(scope):`, ...) and carry no AI
+   Never send secret files (`.env`, keys, credentials) to another model or agent.
+5. **Commits** are Conventional Commits (`feat:`, `fix(scope):`, ...) and carry no AI
    attribution: no `Co-Authored-By`, `Claude-Session` or "Generated with" lines, in messages
    or in files. `commit-gate enable` enforces both in a repository.

@@ -9,9 +9,7 @@ description: On the "verify" label, re-run the commands a pull request's descrip
 # old Codex /verify that needs a model; red-check and mutation checks now run on
 # every pull request without one (red-check.yml, mutation.yml).
 #
-# Claude, because OpenAI refuses Codex for this organization. Re-running commands
-# is not the independent review of AGENT-WORKFLOW.md rule 4; that stays with
-# PR-Agent. Started only by someone who can add labels (write access); gh-aw
+# Claude, because OpenAI refuses Codex for this organization. Started only by someone who can add labels (write access); gh-aw
 # removes the label when the run starts, and adding it again re-runs.
 on:
   label_command:
