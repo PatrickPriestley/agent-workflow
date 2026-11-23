@@ -39,6 +39,48 @@ has "$w" "Never add a failing property"
 has "$w" "Never change, rename or delete a file"
 has "$w" "already in \`properties/\`"
 has "$w" "No AI attribution"
+it "the push is a plain patch, so threat detection can read it"
+has "$front" "    patch-format: am"; has "$l" 'patch_format\":\"am'
+
+# The threat-detection guard itself, run as GitHub runs a step (bash -e -o pipefail)
+# against patches git format-patch writes for each kind of change.
+guard="$(awk '/- name: Only new files under properties\// {g=1; next}
+  g && /^        run: \|/ {r=1; next} r && /^          / {print substr($0, 11); next} r {exit}' "$md")"
+G="$(mktemp -d "${TMPDIR:-/tmp}/scout-guard.XXXXXX")"; trap 'rm -rf "$G"' EXIT
+(
+  cd "$G" && mkdir repo && cd repo && git init -q -b main
+  mkdir -p properties bin; printf 'old\n' > properties/old.py; printf 'x\n' > bin/tool
+  git add -A && git -c user.name=t -c user.email=t@t commit -qm base
+) >/dev/null
+patch_for() {  # NAME, then shell to change the repo -> $G/NAME/aw-1.patch
+  mkdir -p "$G/$1"; local name="$1"; shift
+  (cd "$G/repo" && git checkout -q -B "$name" main && eval "$*" && git add -A &&
+   git -c user.name=t -c user.email=t@t commit -qm "$name" &&
+   git format-patch -q -1 --stdout > "$G/$name/aw-1.patch") >/dev/null 2>&1
+}
+guard_on() {  # NAME -> exit code of the guard with that case's files as /tmp/gh-aw
+  printf '%s\n' "$guard" | sed "s|/tmp/gh-aw/|$G/$1/|g" > "$G/guard.sh"
+  bash --noprofile --norc -e -o pipefail "$G/guard.sh" >/dev/null 2>&1
+}
+patch_for add   'printf "new\n" > properties/scout_new.py'
+patch_for edit  'printf "weaker\n" > properties/old.py'
+patch_for del   'git rm -q properties/old.py'
+patch_for move  'git mv properties/old.py properties/renamed.py'
+patch_for out   'printf "new\n" > bin/scout.py'
+patch_for deep  'mkdir -p properties/sub && printf "new\n" > properties/sub/x.py'
+patch_for mixed 'printf "new\n" > properties/scout_a.py; printf "weaker\n" > properties/old.py'
+mkdir -p "$G/none" "$G/bundle"; : > "$G/bundle/aw-1.bundle"
+it "the guard was found in the workflow"; [ -n "$guard" ] && ok || bad "no guard step"
+it "the guard passes a new property file, and no patch at all"
+guard_on add && ok || bad "refused a new properties/*.py"
+guard_on none && ok || bad "refused a run with no patch"
+it "the guard refuses an edit, a deletion or a rename of an existing property"
+for c in edit del move; do guard_on "$c" && bad "$c passed" || ok; done
+it "the guard refuses a file outside properties/ or in a subfolder, even beside a new property"
+for c in out deep mixed; do guard_on "$c" && bad "$c passed" || ok; done
+it "the guard refuses a bundle, which it cannot read"
+guard_on bundle && bad "a bundle passed" || ok
+
 it "this test runs in CI"
 grep -qF 'bash bin/property-scout-workflow.test.sh' "$root/.github/workflows/test.yml" && ok || bad "not in test.yml"
 

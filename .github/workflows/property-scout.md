@@ -95,12 +95,41 @@ safe-outputs:
     steps:
       - name: Create TMPDIR for the detector
         run: mkdir -p /tmp/gh-aw/agent/tmp /tmp/gh-aw/agent/pip-cache
+      # allowed-files limits paths, not what happens to them: an edit or deletion of an
+      # existing property would pass it. The push needs this job to succeed, so it fails
+      # here unless every file in the agent's patch is new and under properties/. A git
+      # bundle cannot be read this way and fails closed (patch-format: am, below).
+      - name: Only new files under properties/
+        run: |
+          set -u
+          shopt -s nullglob
+          bundles=(/tmp/gh-aw/aw-*.bundle /tmp/gh-aw/*/aw-*.bundle)
+          if [ "${#bundles[@]}" -gt 0 ]; then
+            echo "::error::Property Scout's push came as a git bundle, which this check cannot read; nothing is pushed"
+            exit 1
+          fi
+          bad=""
+          for p in /tmp/gh-aw/aw-*.patch /tmp/gh-aw/*/aw-*.patch; do
+            bad="$bad$(awk '
+              function done() { if (path != "" && !(isnew && path ~ /^properties\/[^\/]+\.py$/)) print path }
+              /^diff --git / { done(); path = $4; sub(/^b\//, "", path); isnew = 0; next }
+              /^new file mode / { isnew = 1 }
+              /^(deleted file mode|rename from|rename to|copy from|copy to|similarity index) / { isnew = 0; path = path " (" $1 " " $2 ")" }
+              END { done() }' "$p")"
+          done
+          if [ -n "$bad" ]; then
+            printf '  %s\n' $bad
+            echo "::error::Property Scout may only add new files under properties/; nothing is pushed"
+            exit 1
+          fi
   push-to-pull-request-branch:
     target: triggering
     max: 1
     if-no-changes: ignore
     # Exclusive: gh-aw refuses the push if any file in it is outside properties/.
     allowed-files: ["properties/*.py"]
+    # A plain patch, so the threat-detection step above can read it.
+    patch-format: am
     protected-files: blocked
     # 32 KB of patch. gh-aw has no file-count limit for this output (max-patch-files
     # applies to create-pull-request only); the prompt asks for at most three files.
