@@ -40,5 +40,30 @@ it "green files are annotated, and every verdict goes to the job summary"
 has "$w" 'select(.verdict == "green")'
 has "$w" '>> "$GITHUB_STEP_SUMMARY"'
 
+# Run the step itself, as GitHub runs a "shell: bash" step (bash -e -o pipefail), with a
+# stub in place of red-check that answers with a given exit code.
+step="$(awk '/- name: red-check the changed tests/ {s=1} s && /^        run: \|/ {r=1; next}
+  r && /^          / {print substr($0, 11); next} r && NF {exit}' "$wf")"
+T="$(mktemp -d "${TMPDIR:-/tmp}/red-check-step.XXXXXX")"; trap 'rm -rf "$T"' EXIT
+run_step() {  # EXIT_CODE JSON -> sets rc and log
+  printf '#!/usr/bin/env bash\nprintf "%%s" %q\nexit %s\n' "$2" "$1" > "$T/stub"
+  printf '%s\n' "$step" | sed "s|^rc=.*|rc=$T/stub|; s|^range=.*|range=a..b|" > "$T/step.sh"
+  rm -rf "$T/rt"; mkdir -p "$T/rt"; : > "$T/summary"
+  log="$(RUNNER_TEMP="$T/rt" GITHUB_STEP_SUMMARY="$T/summary" bash --noprofile --norc -e -o pipefail "$T/step.sh" 2>&1)"; rc=$?
+}
+green='{"status":"fail","summary":"1 green","files":[{"file":"bin/x.test.sh","verdict":"green","detail":"passes on the base"}]}'
+it "the step's script was found in the workflow"; [ -n "$step" ] && ok || bad "no run: block for the red-check step"
+it "under bash -e, a green verdict (red-check exit 1) is reported, not a failed job"
+run_step 1 "$green"
+[ "$rc" -eq 0 ] && ok || bad "step exited $rc: $log"
+printf '%s' "$log" | grep -qF '::warning file=bin/x.test.sh::' && ok || bad "no annotation: $log"
+grep -qF '| bash | `bin/x.test.sh` | green |' "$T/summary" && ok || bad "no summary row"
+it "under bash -e, all red (exit 0) passes"
+run_step 0 '{"status":"pass","summary":"1 red","files":[{"file":"bin/x.test.sh","verdict":"red","detail":"fails on the base"}]}'
+[ "$rc" -eq 0 ] && ok || bad "step exited $rc: $log"
+it "a usage error (2) or a crash (127, no JSON) fails the step"
+run_step 2 ''; [ "$rc" -eq 2 ] && ok || bad "usage error: step exited $rc"
+run_step 127 ''; [ "$rc" -eq 2 ] && ok || bad "crash: step exited $rc"
+
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
