@@ -26,8 +26,11 @@ on:
 
 permissions: {}
 
+# A newer review replaces an older one for the same pull request. Any other label event
+# (verify, properties, ...) gets a group of its own and skips at once, so it never cancels
+# a review in progress.
 concurrency:
-  group: ocr-review-${{ github.event.pull_request.number }}
+  group: ocr-review-${{ github.event.pull_request.number }}-${{ (github.event.action != 'labeled' || github.event.label.name == 'ocr-review') && 'review' || github.run_id }}
   cancel-in-progress: true
 
 jobs:
