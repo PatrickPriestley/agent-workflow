@@ -54,22 +54,79 @@ tools:
     - "git status:*"
     - "git rev-parse:*"
     - "git worktree add:*"
-    # The repository's own tests and tools, as the descriptions name them, by
-    # path prefix.
-    # A path prefix is not a boundary: `<prefix>/../x` matches it, the agent can
-    # write under /tmp, and the tests it runs are the pull request's own code.
-    # The prefixes rule out one-line escapes (`bash -c`, `sed e`, git aliases)
-    # and say what the agent is for; the sandbox (firewalled network, read-only
-    # token, threat detection, safe outputs only) is what contains it.
-    - "bash bin/:*"
-    - "bash plugins/:*"
-    - "bash pr-agent/:*"
-    - "bash evals/:*"
+    # The tools descriptions report results from, with their arguments.
+    - "bash bin/mutate:*"
+    - "bash bin/pr-size:*"
+    - "bash plugins/change-record/bin/red-check:*"
+    # The repository's own test files, at the head and in the merge-base worktree.
+    # Each test file is listed exactly: Claude Code does not match "bash bin/:*"
+    # against "bash bin/x.test.sh". bin/agent-allowlists-sync writes the block
+    # below; bin/agent-allowlists.test.sh fails when a test file is missing. The
+    # tests are the pull request's own code: the list rules out one-line escapes
+    # (`bash -c`, `sed e`, git aliases), and the sandbox (firewalled network,
+    # read-only token, threat detection, safe outputs only) contains the rest.
+    # BEGIN test files
+    - "bash bin/agent-allowlists.test.sh"
+    - "bash bin/agent-review.test.sh"
+    - "bash bin/ci-workflow.test.sh"
+    - "bash bin/commit-gate.test.sh"
+    - "bash bin/mutate.test.sh"
+    - "bash bin/ocr-workflow.test.sh"
+    - "bash bin/pr-size.test.sh"
+    - "bash bin/red-check-workflow.test.sh"
+    - "bash bin/verify-workflow.test.sh"
     - "bash install.test.sh"
-    - "bash /tmp/gh-aw/agent/verify/base/:*"
-    - "node --test evals/:*"
-    - "node --test plugins/:*"
-    - "node --test /tmp/gh-aw/agent/verify/base/:*"
+    - "bash plugins/change-record/bin/dispatch.test.sh"
+    - "bash plugins/change-record/bin/record-check.test.sh"
+    - "bash plugins/change-record/bin/record-review.test.sh"
+    - "bash plugins/change-record/bin/red-check.test.sh"
+    - "bash plugins/change-record/bin/transcripts-compare.test.sh"
+    - "bash plugins/change-record/bin/transcripts-grade.test.sh"
+    - "bash plugins/change-record/bin/transcripts-judge.test.sh"
+    - "bash plugins/change-record/bin/transcripts-store.test.sh"
+    - "bash plugins/change-record/bin/transcripts.test.sh"
+    - "bash plugins/change-record/outcome-evals/checks/selftest.sh"
+    - "bash plugins/change-record/outcome-evals/run.test.sh"
+    - "bash plugins/change-record/store/schema.test.sh"
+    - "bash pr-agent/pr-agent.test.sh"
+    - "bash pr-agent/try.test.sh"
+    - "bash pr-agent/verify-image.test.sh"
+    - "bash pr-agent/workflow.test.sh"
+    - "bash skills/plan/scripts/test-pre-commit-green-phase.sh"
+    - "bash skills/plan/scripts/test-pretooluse-green-phase.sh"
+    - "node --test evals/context.test.cjs"
+    - "node --test plugins/change-record/evals/cases.test.cjs"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/agent-allowlists.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/agent-review.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/ci-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/commit-gate.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/mutate.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/ocr-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/pr-size.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/red-check-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/verify-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/install.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/dispatch.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/record-check.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/record-review.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/red-check.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/transcripts-compare.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/transcripts-grade.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/transcripts-judge.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/transcripts-store.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/bin/transcripts.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/outcome-evals/checks/selftest.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/outcome-evals/run.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/plugins/change-record/store/schema.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/pr-agent/pr-agent.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/pr-agent/try.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/pr-agent/verify-image.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/pr-agent/workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/skills/plan/scripts/test-pre-commit-green-phase.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/skills/plan/scripts/test-pretooluse-green-phase.sh"
+    - "node --test /tmp/gh-aw/agent/verify/base/evals/context.test.cjs"
+    - "node --test /tmp/gh-aw/agent/verify/base/plugins/change-record/evals/cases.test.cjs"
+    # END test files
 
 network:
   allowed:

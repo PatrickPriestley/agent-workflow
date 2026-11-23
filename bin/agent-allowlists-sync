@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# agent-allowlists-sync: write the exact test-file entries into the shell allowlists of the
+# gh-aw agent workflows that run this repository's tests.
+#
+#   bin/agent-allowlists-sync          rewrite the blocks, then recompile with gh aw compile
+#   bin/agent-allowlists-sync --check  exit 1 if any block is out of date
+#
+# Claude Code matches "bash bin/:*" only against "bash bin/" followed by a space or nothing,
+# never "bash bin/x.test.sh" (seen in run 45173430477), so each test file is listed exactly.
+# Each workflow marks its block with "# BEGIN test files" and "# END test files" lines.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+check=false; [ "${1:-}" = --check ] && check=true
+[ $# -eq 0 ] || $check || { echo "usage: agent-allowlists-sync [--check]" >&2; exit 2; }
+
+bash_tests() { git ls-files '*.test.sh' 'skills/plan/scripts/test-*.sh' 'plugins/change-record/outcome-evals/checks/selftest.sh' | sort -u; }
+node_tests() { git ls-files '*.test.cjs' '*.test.js' '*.test.mjs' | sort -u; }
+entries() {  # PREFIX... -> one '- "..."' line per test file, for each path prefix given
+  local p
+  for p in "$@"; do
+    bash_tests | while read -r f; do printf '    - "bash %s%s"\n' "$p" "$f"; done
+    node_tests | while read -r f; do printf '    - "node --test %s%s"\n' "$p" "$f"; done
+  done
+}
+
+stale=0
+sync() {  # FILE PREFIX...
+  local file="$1"; shift
+  local block; block="$(entries "$@")"
+  local new; new="$(BLOCK="$block" awk '
+    /^ *# BEGIN test files/ { print; print ENVIRON["BLOCK"]; skip = 1; next }
+    /^ *# END test files/ { skip = 0 }
+    !skip { print }' "$file")"
+  if [ "$new" != "$(cat "$file")" ]; then
+    if $check; then echo "agent-allowlists-sync: $file is out of date" >&2; stale=1
+    else printf '%s\n' "$new" > "$file"; echo "agent-allowlists-sync: updated $file"; fi
+  fi
+}
+w=.github/workflows
+sync "$w/ci-fix.md" ""
+sync "$w/verify.md" "" /tmp/gh-aw/agent/verify/base/
+sync "$w/ci-diagnose.md" /tmp/gh-aw/agent/ci/head/
+exit "$stale"

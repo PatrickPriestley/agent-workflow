@@ -76,13 +76,44 @@ tools:
     # Tests from the failing commit's worktree, by full path. No `git -C`: it
     # reaches any git subcommand, `-c alias.x=!sh` included. The worktree
     # shares this repository's objects, so `git show <sha>:<path>` reads it.
-    # A path prefix is not a boundary: `<prefix>/../x` matches it, the agent can
-    # write under /tmp, and the tests it runs are the pull request's own code.
-    # The prefixes rule out one-line escapes (`bash -c`, `sed e`, git aliases)
-    # and say what the agent is for; the sandbox (firewalled network, read-only
-    # token, threat detection, safe outputs only) is what contains it.
-    - "bash /tmp/gh-aw/agent/ci/head/:*"
-    - "node --test /tmp/gh-aw/agent/ci/head/:*"
+    # Each test file is listed exactly: Claude Code does not match "bash bin/:*"
+    # against "bash bin/x.test.sh". bin/agent-allowlists-sync writes the block
+    # below; bin/agent-allowlists.test.sh fails when a test file is missing. The
+    # tests are the pull request's own code: the list rules out one-line escapes
+    # (`bash -c`, `sed e`, git aliases), and the sandbox (firewalled network,
+    # read-only token, threat detection, safe outputs only) contains the rest.
+    # BEGIN test files
+    - "bash /tmp/gh-aw/agent/ci/head/bin/agent-allowlists.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/agent-review.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/ci-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/commit-gate.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/mutate.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/ocr-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/pr-size.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/red-check-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/verify-workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/install.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/dispatch.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/record-check.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/record-review.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/red-check.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/transcripts-compare.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/transcripts-grade.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/transcripts-judge.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/transcripts-store.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/bin/transcripts.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/outcome-evals/checks/selftest.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/outcome-evals/run.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/plugins/change-record/store/schema.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/pr-agent/pr-agent.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/pr-agent/try.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/pr-agent/verify-image.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/pr-agent/workflow.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/skills/plan/scripts/test-pre-commit-green-phase.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/skills/plan/scripts/test-pretooluse-green-phase.sh"
+    - "node --test /tmp/gh-aw/agent/ci/head/evals/context.test.cjs"
+    - "node --test /tmp/gh-aw/agent/ci/head/plugins/change-record/evals/cases.test.cjs"
+    # END test files
 
 network:
   allowed:
