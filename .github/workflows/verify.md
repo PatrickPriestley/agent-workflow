@@ -49,7 +49,6 @@ tools:
     - "tail:*"
     - "grep:*"
     - "wc:*"
-    - "sed -n:*"
     - "jq:*"
     - "git log:*"
     - "git diff:*"
@@ -57,8 +56,16 @@ tools:
     - "git status:*"
     - "git rev-parse:*"
     - "git worktree add:*"
-    # The repository's own tests and tools, as the descriptions name them.
-    - "bash:*"
+    # The repository's own tests and tools, as the descriptions name them, by
+    # path prefix: no `bash -c` and no script from anywhere else. Those tests
+    # can still write files, by design; nothing leaves the run but the one
+    # comment (read-only token, no push output, the checkout is discarded).
+    - "bash bin/:*"
+    - "bash plugins/:*"
+    - "bash pr-agent/:*"
+    - "bash evals/:*"
+    - "bash install.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/:*"
     - "node --test:*"
 
 network:

@@ -27,10 +27,15 @@ has "$w" "check bash --run 'bash {files}' --match '**/*.test.sh' --red-pattern '
 has "$w" "check node --run 'node --test {files}' --match '**/*.test.cjs' --match '**/*.test.js'"
 has "$w" "check properties --run 'python3 -I {files}' --match 'properties/*.py'"
 has "$w" "pip install 'hegeltest==0.5.1'"
-it "report only: a verdict never fails the job, red-check failing to run does"
-has "$w" '[ "$code" -eq 2 ] && { cat "$out/$name.err"; worst=2; }'
+it "report only: a verdict (exit 0 or 1) never fails the job; any other exit, or no JSON, does"
+has "$w" 'if [ "$code" -gt 1 ] || ! jq -e . "$out/$name.json" >/dev/null 2>&1; then'
 has "$w" 'exit "$worst"'
 lacks "$w" '--strict|--require'
+it "a file name or detail from the pull request cannot inject a workflow command or a table row"
+printf '%s\n' "$w" | grep -qF 'gsub("[\\n\\r,:]"; "")' && ok || bad "annotation file name not sanitised"
+printf '%s\n' "$w" | grep -qF 'def clean: gsub("[\\n\\r|`]"; " ");' && ok || bad "summary not sanitised"
+printf '%s\n' "$w" | grep -qF '`\(.file | clean)` | \(.verdict) | \(.detail | clean) |' && ok || bad "file and detail not cleaned"
+
 it "green files are annotated, and every verdict goes to the job summary"
 has "$w" 'select(.verdict == "green")'
 has "$w" '>> "$GITHUB_STEP_SUMMARY"'

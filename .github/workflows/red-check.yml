@@ -50,7 +50,12 @@ jobs:
             bash "$rc" "$range" "$@" --json > "$out/$name.json" 2> "$out/$name.err"
             local code=$?
             echo "$name: exit $code"
-            [ "$code" -eq 2 ] && { cat "$out/$name.err"; worst=2; }
+            # 0 and 1 are verdicts (1: a green file, or all inconclusive). Anything else,
+            # or no JSON at all, means red-check did not run: a usage error (2), a crash,
+            # a missing interpreter (126, 127) or a signal.
+            if [ "$code" -gt 1 ] || ! jq -e . "$out/$name.json" >/dev/null 2>&1; then
+              cat "$out/$name.err"; worst=2
+            fi
             return 0
           }
           check bash --run 'bash {files}' --match '**/*.test.sh' --red-pattern '^[[:space:]]*FAIL[[:space:]]'
@@ -64,7 +69,10 @@ jobs:
             echo '| Kind | File | Verdict | Detail |'
             echo '|---|---|---|---|'
             for name in bash node properties; do
-              jq -r --arg k "$name" '.files[]? | "| \($k) | `\(.file)` | \(.verdict) | \(.detail) |"' "$out/$name.json" 2>/dev/null
+              # File names and details come from the pull request: no newline, carriage
+              # return or table bar reaches the summary.
+              jq -r --arg k "$name" 'def clean: gsub("[\\n\\r|`]"; " ");
+                .files[]? | "| \($k) | `\(.file | clean)` | \(.verdict) | \(.detail | clean) |"' "$out/$name.json" 2>/dev/null
             done
             echo
             for name in bash node properties; do
@@ -72,6 +80,8 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
           for name in bash node properties; do
-            jq -r '.files[]? | select(.verdict == "green") | "::warning file=\(.file)::red-check: passes on the base commit, so it does not show this change is needed"' "$out/$name.json" 2>/dev/null
+            # A file name can hold a newline and "::error::": strip what could end the
+            # annotation or start another (red-check does the same in its own output).
+            jq -r '.files[]? | select(.verdict == "green") | "::warning file=\(.file | gsub("[\\n\\r,:]"; ""))::red-check: passes on the base commit, so it does not show this change is needed"' "$out/$name.json" 2>/dev/null
           done
           exit "$worst"
