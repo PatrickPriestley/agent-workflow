@@ -47,8 +47,10 @@ jobs:
           worst=0
           check() {  # name, then red-check's arguments
             local name="$1"; shift
-            bash "$rc" "$range" "$@" --json > "$out/$name.json" 2> "$out/$name.err"
-            local code=$?
+            # GitHub runs this step with bash -e: catch the exit code on the same line, or a
+            # verdict of 1 ends the step before it is reported.
+            local code=0
+            bash "$rc" "$range" "$@" --json > "$out/$name.json" 2> "$out/$name.err" || code=$?
             echo "$name: exit $code"
             # 0 and 1 are verdicts (1: a green file, or all inconclusive). Anything else,
             # or no JSON at all, means red-check did not run: a usage error (2), a crash,
