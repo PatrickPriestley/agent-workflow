@@ -74,6 +74,7 @@ tools:
     - "bash bin/mutate.test.sh"
     - "bash bin/ocr-workflow.test.sh"
     - "bash bin/pr-size.test.sh"
+    - "bash bin/property-scout-workflow.test.sh"
     - "bash bin/red-check-workflow.test.sh"
     - "bash bin/verify-workflow.test.sh"
     - "bash install.test.sh"
@@ -145,7 +146,6 @@ pre-agent-steps:
       echo "run=$run_id"; wc -l "$out/failed.log"; cat "$out/range.txt"
 
 safe-outputs:
-  max-patch-files: 5
   # Threat detection gets engine.env too, so its TMPDIR must exist there as
   # well. Fail closed: no verdict, nothing pushed or posted.
   threat-detection:
@@ -160,7 +160,8 @@ safe-outputs:
     # No workflow, agent-instruction, dependency or governance file is pushed:
     # a fix that needs one is for a person.
     protected-files: blocked
-    # A fix is small: at most 64 KB of patch (and 5 files, below).
+    # A fix is small: at most 64 KB of patch. gh-aw has no file-count limit for this
+    # output (max-patch-files applies to create-pull-request only).
     max-patch-size: 64
   add-comment:
     target: triggering
