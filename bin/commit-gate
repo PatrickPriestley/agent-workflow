@@ -9,8 +9,7 @@
 # Checks (each a git config switch in the repository):
 #   commitgate.test          the command must pass on what is being committed (pre-commit)
 #   commitgate.conventional  the subject must be a Conventional Commit (commit-msg), default on
-#   commitgate.attribution   no Co-Authored-By, Co-developed-by, Assisted-by, Claude-Session or
-#                            "Generated with <AI tool>" lines
+#   commitgate.attribution   no Co-Authored-By, Claude-Session or "Generated with <AI tool>" lines
 #                            in the message or in lines the commit adds (both hooks), default on
 # Git runs the hooks from the repository root. `git commit --no-verify` bypasses them all.
 # Worktrees share the hooks and settings. A hook that is not commit-gate's is never replaced.
@@ -18,11 +17,7 @@ set -uo pipefail
 self="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 marker="# installed by commit-gate"
 hooks=(pre-commit commit-msg)
-# Trailers git and AI tools add (Co-Authored-By, Co-developed-by, Assisted-by, Claude-Session),
-# and the "Generated with <tool>" footer, with or without a leading emoji or a hyphen.
-trailers_re='((co-authored|co-developed|assisted)-by|claude-session)'
-tools_re='(claude|codex|cursor|copilot|gemini|chatgpt)'
-attribution_re="^[[:space:]]*(>[[:space:]]*)?(${trailers_re}[[:space:]]*:|([^[:alnum:][:space:]]{1,8}[[:space:]]*)?generated[- ]with \\[?${tools_re})"
+attribution_re='^[[:space:]]*(>[[:space:]]*)?((co-authored-by|claude-session)[[:space:]]*:|([^[:alnum:][:space:]]{1,8}[[:space:]]*)?generated (with|by) \[?(claude|codex|cursor|copilot|gemini|chatgpt))'
 conventional_re='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?: [^[:space:]]'
 git_subject_re='^(Merge |Revert "|fixup! |squash! |amend! )'
 

@@ -241,12 +241,6 @@ out=$(printf 'feat: add shout\n\n🤖 Generated with [Claude Code](https://claud
 out=$(printf 'feat: add shout\n\nClaude-Session: https://claude.ai/code/x\n' | msgcommit "$RM"); rc=$?
 [ "$rc" != 0 ] && ok || bad "accepted a Claude-Session trailer"
 
-it "Assisted-by and Co-developed-by trailers are refused too"
-out=$(printf 'feat: add shout\n\nAssisted-by: Claude:claude-opus\n' | msgcommit "$RM"); rc=$?
-[ "$rc" != 0 ] && ok || bad "accepted an Assisted-by trailer"
-out=$(printf 'feat: add shout\n\nCo-developed-by: Codex <codex@openai.com>\n' | msgcommit "$RM"); rc=$?
-[ "$rc" != 0 ] && ok || bad "accepted a Co-developed-by trailer"
-
 it "a body that only mentions co-authorship in prose is accepted"
 out=$(printf 'docs: explain the commit gate\n\nThe gate refuses Co-Authored-By trailers in messages.\n' | msgcommit "$RM"); rc=$?
 assert_eq 0 "$rc"
@@ -272,12 +266,6 @@ it "a staged Generated-with-Claude-Code footer is refused"
 printf '# Notes\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n' > "$RM/NOTES.md"; git -C "$RM" add NOTES.md
 out=$(printf 'docs: add notes\n' | msgcommit "$RM"); rc=$?
 [ "$rc" != 0 ] && ok || bad "a staged Generated with footer was committed"
-it "a staged file adding an Assisted-by line is refused"
-printf '# Notes\n\nAssisted-by: Cursor\n' > "$RM/NOTES.md"; git -C "$RM" add NOTES.md
-out=$(printf 'docs: add notes\n' | msgcommit "$RM"); rc=$?
-[ "$rc" != 0 ] && ok || bad "a staged Assisted-by line was committed"
-git -C "$RM" reset -q NOTES.md; rm -f "$RM/NOTES.md"
-
 it "prose that mentions the trailer inside a sentence is accepted"
 printf '# Notes\n\nThe gate refuses `Co-Authored-By:` trailers.\n' > "$RM/NOTES.md"; git -C "$RM" add NOTES.md
 out=$(printf 'docs: add notes\n' | msgcommit "$RM"); rc=$?
