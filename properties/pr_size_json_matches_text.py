@@ -69,7 +69,8 @@ def test_json_matches_text(tc):
         js = run(d, "--json", *extra)
 
     data = json.loads(js)
-    m = re.search(r"(\d+) reviewable lines added in (\S+)", text)
+    # The range is two hex abbreviations; a comma follows it when there are no generated files.
+    m = re.search(r"(\d+) reviewable lines added in ([0-9a-f]+\.\.[0-9a-f]+)", text)
     assert m, text
     assert data["reviewable"] == int(m.group(1)), (data, text)
     assert data["range"] == m.group(2), (data, text)
