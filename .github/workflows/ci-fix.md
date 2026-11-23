@@ -53,14 +53,18 @@ tools:
     - "tail:*"
     - "grep:*"
     - "wc:*"
-    - "sed -n:*"
     - "jq:*"
     - "git log:*"
     - "git diff:*"
     - "git show:*"
     - "git status:*"
     - "git rev-parse:*"
-    - "bash:*"
+    # The repository's own tests, by path prefix: no `bash -c`.
+    - "bash bin/:*"
+    - "bash plugins/:*"
+    - "bash pr-agent/:*"
+    - "bash evals/:*"
+    - "bash install.test.sh"
     - "node --test:*"
 
 network:

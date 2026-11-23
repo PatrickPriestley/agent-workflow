@@ -69,15 +69,17 @@ tools:
     - "tail:*"
     - "grep:*"
     - "wc:*"
-    - "sed -n:*"
     - "jq:*"
     - "git log:*"
     - "git diff:*"
     - "git show:*"
     - "git status:*"
     - "git rev-parse:*"
-    - "git -C:*"
-    - "bash:*"
+    # Tests only from the failing commit's worktree, by full path: no
+    # `bash -c`, no other script. `git -C` is gone: it reaches any git
+    # subcommand, `-c alias.x=!sh` included. The worktree shares this
+    # repository's objects, so `git show <sha>:<path>` from here reads it.
+    - "bash /tmp/gh-aw/agent/ci/head/:*"
     - "node --test:*"
 
 network:
@@ -236,8 +238,7 @@ the GitHub API. If a file is empty or missing, say so and work with the rest.
    worktree by its full path, as one plain command:
    `bash /tmp/gh-aw/agent/ci/head/<file>.test.sh` or
    `node --test /tmp/gh-aw/agent/ci/head/<file>`. `TMPDIR` is already set.
-   In an earlier run the shell allowlist refused the same test with a
-   `VAR=value` prefix and when joined to `cd` with `&&`. Quote the result. If it needs something this sandbox lacks
+   Put nothing before it: a `VAR=value` prefix is refused. Quote the result. If it needs something this sandbox lacks
    (PostgreSQL, macOS, a secret, network beyond npm), say "not reproduced" and
    why. Never claim a reproduction you did not run.
 3. **New or old?** Use `main-runs.json`. A main run counts as healthy only if
