@@ -14,7 +14,8 @@
 # --json prints one JSON object instead of the text, for scripts:
 #   {"reviewable": N, "generated": N, "aim": N, "stop": N, "range": "abc1234..def5678",
 #    "verdict": "within" | "over" | "split"}
-# with no per-commit list; --fail and --github work the same with it.
+# with no per-commit list. --fail works the same with it; --github then writes only the
+# step summary, no ::warning:: line, so stdout stays one JSON object.
 #
 # Exit: 0 whatever the size; with --fail, 1 above the stop limit; 2 for a usage problem.
 set -uo pipefail
@@ -100,7 +101,8 @@ if ! $json && [ "$reviewable" -gt "$stop" ]; then
 fi
 
 if $github; then
-  [ "$reviewable" -gt "$aim" ] && echo "::warning title=PR size::$reviewable reviewable lines added, $verdict"
+  # Under --json, stdout stays one JSON object: no annotation, only the step summary.
+  ! $json && [ "$reviewable" -gt "$aim" ] && echo "::warning title=PR size::$reviewable reviewable lines added, $verdict"
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
       echo "### PR size"
