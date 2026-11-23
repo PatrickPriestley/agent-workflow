@@ -124,6 +124,28 @@ out="$(bash "$PS" main...feature 2>&1)"; assert_eq 2 "$?"; has "$out" "two dots"
 out="$(bash "$PS" --stop many 2>&1)"; assert_eq 2 "$?"; has "$out" "whole numbers"
 out="$(bash "$PS" --aim 500 --stop 100 2>&1)"; assert_eq 2 "$?"; has "$out" "is above the stop limit"
 
+it "--json prints one JSON object with the same count and verdict as the text, and nothing else"
+jfield() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[sys.argv[1]])' "$1" 2>/dev/null; }
+# small is within the aim, big above the stop, and mid (aim 1000 from the test above) within.
+for r in small mid big; do
+  cd "$TMPROOT/$r" || exit 1
+  text="$(bash "$PS" 2>/dev/null)"; js="$(bash "$PS" --json 2>/dev/null)"
+  assert_eq "$(count "$text")" "$(printf '%s' "$js" | jfield reviewable)"
+  case "$text" in *"within the"*) want=within ;; *"over the"*) want=over ;; *"above the"*) want=split ;; *) want="?" ;; esac
+  assert_eq "$want" "$(printf '%s' "$js" | jfield verdict)"
+done
+cd "$TMPROOT/mid"; assert_eq over "$(bash "$PS" --json --aim 500 2>/dev/null | jfield verdict)"
+cd "$TMPROOT/big"; js="$(bash "$PS" --json 2>/dev/null)"
+printf '%s' "$js" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' 2>/dev/null && ok || bad "not one JSON document: $js"
+assert_eq "400 1000" "$(printf '%s' "$js" | jfield aim) $(printf '%s' "$js" | jfield stop)"
+lacks "$js" "added lines per commit"
+it "--json keeps the generated count, the range and --fail"
+cd "$TMPROOT/big"; bash "$PS" --json --fail >/dev/null 2>&1; assert_eq 1 "$?"
+cd "$TMPROOT/mid"; bash "$PS" --json --fail >/dev/null 2>&1; assert_eq 0 "$?"
+js="$(bash "$PS" --json 2>/dev/null)"
+assert_eq 0 "$(printf '%s' "$js" | jfield generated)"
+printf '%s' "$js" | jfield range | grep -qE '^[0-9a-f]{7,}\.\.[0-9a-f]{7,}$' && ok || bad "range: $js"
+
 it "without --github, no annotation and no step summary, even above the aim"
 cd "$TMPROOT/big"; S="$TMPROOT/quiet-summary.md"; : > "$S"
 out="$(GITHUB_STEP_SUMMARY="$S" bash "$PS" 2>&1)"
