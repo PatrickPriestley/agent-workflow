@@ -15,8 +15,8 @@ Agent-agnostic. Every change, every agent. The `change` skill says how.
    A survivor gets a test or a reason in the record.
 5. **Use what you built as its user would,** main path and one error path, and paste the
    commands and output into the record's Outcome.
-6. **An independent review runs on every PR** by a model family other than the author's.
-   Findings are claims: probe each, fix verified ones test-first, dismiss only with evidence.
+6. **Review findings are claims,** whoever reviewed: probe each, fix verified ones test-first,
+   dismiss only with evidence.
 7. **Ask before merging into the default branch, releasing or deleting.** Pushing a branch and
    opening a PR need no approval. Never answer another agent's trust, permission or login prompt.
 8. **Commits are Conventional Commits** (`feat:`, `fix(scope):`, ...).

@@ -173,8 +173,7 @@ repository` and kept with the brief in `.git/record-review/<id>/`. Exit 0 is a c
 review; 3 means the answer did not end with the end marker, so run it again; 4 that the
 reviewer failed or ran past `--timeout` (default 900 seconds); 5 that it changed the working
 tree, in which case its review is not used. The reviewer is the same model family as the
-author, so this is no substitute for the independent review of the code: it finds what a
-record leaves out, not what a second family would decide otherwise. It is not cheap: the
+author, and it reviews the record, not the code: it finds what a record leaves out. It is not cheap: the
 first real review, of a record of 147 lines, took a fresh Claude session five minutes, 38
 turns of reading the repository and 3.62 dollars.
 
@@ -844,9 +843,9 @@ like anything a real agent wrote.
 
 ## What is not here yet
 
-- **The independent review as a CI check** of its own. Use `agent-review` locally before the
-  push, or the `agent-workflow` PR-Agent workflow in CI; the skill treats findings from
-  either the same way. A `review-check` that fails the PR on a critical finding until the
+- **A code review as a CI check** of its own. Use `agent-review` locally before the push, or
+  a reviewer in CI (Open Code Review, or the `agent-workflow` PR-Agent workflow); the skill
+  treats findings from any of them the same way. A `review-check` that fails the PR on a critical finding until the
   author replies with evidence is the next piece.
 - **Mutation testing as a CI check.** The skill says to run the language's tool where one
   exists; wiring each tool's output into a check is per-language work.

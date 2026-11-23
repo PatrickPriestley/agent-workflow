@@ -58,9 +58,9 @@ For each task:
 5. **Use it.** Run the real program as its user would, main path and one error path. Paste
    the commands and output into the record's Outcome.
 6. **Push** the branch and open the PR. The first line of the PR body is
-   `Change: docs/changes/<id>.md`, on its own, so a reader or a check finds the record. The
-   independent review runs there. Treat each finding as a claim
-   (`references/review-findings.md`); re-push until nothing critical or important remains.
+   `Change: docs/changes/<id>.md`, on its own, so a reader or a check finds the record. If a
+   review runs there, treat each finding as a claim (`references/review-findings.md`);
+   re-push until nothing critical or important remains.
 
 Finish on a green suite only. Set the record's status to `done` and report what shipped,
 what did not, and the open minor findings. When tempted to skip a step, read
