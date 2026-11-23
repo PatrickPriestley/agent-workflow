@@ -75,12 +75,16 @@ tools:
     - "git show:*"
     - "git status:*"
     - "git rev-parse:*"
-    # Tests only from the failing commit's worktree, by full path: no
-    # `bash -c`, no other script. `git -C` is gone: it reaches any git
-    # subcommand, `-c alias.x=!sh` included. The worktree shares this
-    # repository's objects, so `git show <sha>:<path>` from here reads it.
+    # Tests from the failing commit's worktree, by full path. No `git -C`: it
+    # reaches any git subcommand, `-c alias.x=!sh` included. The worktree
+    # shares this repository's objects, so `git show <sha>:<path>` reads it.
+    # A path prefix is not a boundary: `<prefix>/../x` matches it, the agent can
+    # write under /tmp, and the tests it runs are the pull request's own code.
+    # The prefixes rule out one-line escapes (`bash -c`, `sed e`, git aliases)
+    # and say what the agent is for; the sandbox (firewalled network, read-only
+    # token, threat detection, safe outputs only) is what contains it.
     - "bash /tmp/gh-aw/agent/ci/head/:*"
-    - "node --test:*"
+    - "node --test /tmp/gh-aw/agent/ci/head/:*"
 
 network:
   allowed:

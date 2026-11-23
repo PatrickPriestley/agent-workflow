@@ -59,13 +59,19 @@ tools:
     - "git show:*"
     - "git status:*"
     - "git rev-parse:*"
-    # The repository's own tests, by path prefix: no `bash -c`.
+    # The repository's own tests, by path prefix.
+    # A path prefix is not a boundary: `<prefix>/../x` matches it, the agent can
+    # write under /tmp, and the tests it runs are the pull request's own code.
+    # The prefixes rule out one-line escapes (`bash -c`, `sed e`, git aliases)
+    # and say what the agent is for; the sandbox (firewalled network, read-only
+    # token, threat detection, safe outputs only) is what contains it.
     - "bash bin/:*"
     - "bash plugins/:*"
     - "bash pr-agent/:*"
     - "bash evals/:*"
     - "bash install.test.sh"
-    - "node --test:*"
+    - "node --test evals/:*"
+    - "node --test plugins/:*"
 
 network:
   allowed:

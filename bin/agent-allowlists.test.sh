@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Tests for the shell allowlists of the gh-aw agent workflows, in each source
-# and its lock: none may allow a command that runs other commands or reaches
-# every subcommand (bare bash, bash -c, sed, git -C, git -c, env, xargs, eval).
+# Tests for the shell allowlists of the gh-aw agent workflows, read from each
+# lock's --allowed-tools list (what Claude is actually given). Every Bash entry
+# must be one of the known forms below; anything else fails, so a new or widened
+# grant has to be added here on purpose.
+#
+# A prefix such as "bash bin/:*" is not a boundary (bin/../x matches it, and the
+# tests it runs are the pull request's own code). These checks rule out the
+# one-line escapes: bare Bash, bash -c, sed, git -C/-c, env, xargs, eval, sh.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
@@ -9,25 +14,45 @@ pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n       %s\n' "$CURRENT" "$1"; }
-lacks() { printf '%s' "$1" | grep -qE -- "$2" && bad "unexpected [$(printf '%s' "$1" | grep -oE -- "$2" | head -1)]" || ok; }
 
-# Allowlist entries: quoted "- " items in the source's tools.bash, Bash(...) in the lock.
-risky_src='^ *- "(bash(:\*)?|bash -c[^"]*|sed[^"]*|git -C[^"]*|git -c[^"]*|env[^"]*|xargs[^"]*|eval[^"]*|sh[^"]*)"$'
-risky_lock='Bash\((bash(:\*)?|bash -c[^)]*|sed[^)]*|git -C[^)]*|git -c[^)]*|env[^)]*|xargs[^)]*|eval[^)]*|sh(:[^)]*)?)\)'
+safe='^(cd:\*|safeoutputs:\*'
+safe+='|(cat|ls|head|tail|grep|wc|jq|yq|sort|uniq|echo|printf|pwd|date)(:\*)?'   # yq: added by gh-aw to every list
+safe+='|git (log|diff|show|status|rev-parse)(:\*)?|git worktree add:\*'
+safe+='|git (add|branch|checkout|commit|merge|rm|switch)(:\*)?'                    # added by gh-aw for push-to-pull-request-branch
+safe+='|bash (bin|plugins|pr-agent|evals)/:\*|bash install\.test\.sh'
+safe+='|(bash|node --test) /tmp/gh-aw/agent/(ci/head|verify/base)/:\*'
+safe+='|node --test (evals|plugins)/:\*'
+safe+='|python3 -m venv /tmp/gh-aw/agent/venv|/tmp/gh-aw/agent/venv/bin/pip install hegeltest==0\.5\.1|/tmp/gh-aw/agent/venv/bin/python -I:\*'
+safe+=')$'
 
-for name in ci-diagnose ci-fix property-scout verify; do
-  md="$root/.github/workflows/$name.md"; lock="$root/.github/workflows/$name.lock.yml"
-  tools="$(awk '/^tools:/{t=1;next} t&&/^[a-z]/{t=0} t' "$md" 2>/dev/null)"
-  it "$name: the source and lock exist and the source has a bash allowlist"
-  [ -n "$tools" ] && [ -s "$lock" ] && ok || bad "$md or $lock missing, or no tools:"
-  it "$name: no entry in the source runs other commands or every git subcommand"
-  lacks "$tools" "$risky_src"
-  it "$name: nor in the lock"
-  lacks "$(cat "$lock" 2>/dev/null)" "$risky_lock"
+# Codex cannot take a shell allowlist (gh aw v1.2.2 rejects one), so a codex
+# workflow is checked for having no edit tool and no write output instead.
+checked=0
+for md in "$root"/.github/workflows/*.md; do
+  name="$(basename "$md" .md)"; lock="${md%.md}.lock.yml"
+  engine="$(awk '/^engine:/{if($2!="")print $2; else e=1; next} e&&/^  id:/{print $2; exit}' "$md")"
+  [ -n "$engine" ] || continue
+  if [ "$engine" = codex ]; then
+    it "$name (codex, no allowlist possible): no edit tool and no push or pull request output"
+    grep -qE '^  edit:|push-to-pull-request-branch:|create-pull-request:' "$md" && bad "codex workflow can write" || ok
+    continue
+  fi
+  checked=$((checked+1))
+  tools="$(grep -o -- "--allowed-tools '\\\\''[^']*'" "$lock" 2>/dev/null | head -1 | sed "s/^--allowed-tools '\\\\''//; s/'\$//; s/\\\\\$//")"
+  it "$name: the lock has an --allowed-tools list"; [ -n "$tools" ] && ok || bad "none in $lock"
+  bash_entries="$(printf '%s' "$tools" | tr ',' '\n' | grep -E '^Bash(\(|$)')"
+  it "$name: no bare Bash (every command)"
+  printf '%s\n' "$bash_entries" | grep -qx 'Bash' && bad "bare Bash granted" || ok
+  it "$name: every Bash entry is a known form, with no .."
+  odd="$(printf '%s\n' "$bash_entries" | sed -n 's/^Bash(\(.*\))$/\1/p' | grep -vE "$safe"; printf '%s\n' "$bash_entries" | grep -F '..')"
+  [ -z "$odd" ] && ok || bad "unexpected: $(printf '%s' "$odd" | tr '\n' ' ')"
 done
+it "the Claude agent workflows were all found (ci-diagnose, ci-fix, property-scout, verify)"
+[ "$checked" -ge 4 ] && ok || bad "only $checked checked"
 
-it "ci-diagnose runs tests only from the failing commit's worktree"
-grep -qF -- '- "bash /tmp/gh-aw/agent/ci/head/:*"' "$root/.github/workflows/ci-diagnose.md" && ok || bad "no worktree bash prefix"
+it "ci-diagnose runs tests only from the failing commit's worktree, in the lock"
+grep -qF 'Bash(bash /tmp/gh-aw/agent/ci/head/:*)' "$root/.github/workflows/ci-diagnose.lock.yml" && \
+grep -qF 'Bash(node --test /tmp/gh-aw/agent/ci/head/:*)' "$root/.github/workflows/ci-diagnose.lock.yml" && ok || bad "worktree prefixes missing from the lock"
 it "ci-diagnose's prompt does not repeat the old claim that cd with && is refused"
 grep -q 'joined to `cd` with `&&`' "$root/.github/workflows/ci-diagnose.md" && bad "old sentence still there" || ok
 it "this test runs in CI"
