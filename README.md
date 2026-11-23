@@ -226,6 +226,7 @@ the reply had no end marker; 4 means every reviewer tried failed or timed out; 5
     pr-size                          # the branch since main: reviewable lines added, and a verdict
     pr-size BASE..HEAD               # an explicit range
     pr-size --fail                   # exit 1 above the stop limit
+    pr-size --json                   # one JSON object: reviewable, generated, aim, stop, range, verdict
     git config prsize.aim 400        # the defaults; prsize.stop 1000
     git config --add prsize.exclude 'docs/api/**'   # more generated paths to leave out
 

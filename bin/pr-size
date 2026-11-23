@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pr-size: how many reviewable lines a branch adds, and whether to split it.
 #
-#   pr-size [BASE..HEAD] [--aim N] [--stop N] [--fail] [--github]
+#   pr-size [BASE..HEAD] [--aim N] [--stop N] [--fail] [--github] [--json]
 #
 # Counts added lines from the merge base with main (or an explicit BASE..HEAD) to HEAD,
 # leaving out generated files: lockfiles, fixtures/, captures/, testdata/, __snapshots__/,
@@ -11,19 +11,25 @@
 # Aim at 400 lines, split above 1,000 (git config prsize.aim and prsize.stop, or --aim and
 # --stop). Above the stop limit it lists added lines per commit, to show where to split.
 # --github also writes a ::warning:: above the aim and a table to $GITHUB_STEP_SUMMARY.
+# --json prints one JSON object instead of the text, for scripts:
+#   {"reviewable": N, "generated": N, "aim": N, "stop": N, "range": "abc1234..def5678",
+#    "verdict": "within" | "over" | "split"}
+# with no per-commit list. --fail works the same with it; --github then writes only the
+# step summary, no ::warning:: line, so stdout stays one JSON object.
 #
 # Exit: 0 whatever the size; with --fail, 1 above the stop limit; 2 for a usage problem.
 set -uo pipefail
-usage() { echo "usage: pr-size [BASE..HEAD] [--aim N] [--stop N] [--fail] [--github]" >&2; exit 2; }
+usage() { echo "usage: pr-size [BASE..HEAD] [--aim N] [--stop N] [--fail] [--github] [--json]" >&2; exit 2; }
 fail() { echo "pr-size: $*" >&2; exit 2; }
 
-range=""; aim=""; stop=""; fail_above=false; github=false
+range=""; aim=""; stop=""; fail_above=false; github=false; json=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --aim) [ -n "${2:-}" ] || usage; aim="$2"; shift 2 ;;
     --stop) [ -n "${2:-}" ] || usage; stop="$2"; shift 2 ;;
     --fail) fail_above=true; shift ;;
     --github) github=true; shift ;;
+    --json) json=true; shift ;;
     -*) usage ;;
     *) [ -z "$range" ] || usage; range="$1"; shift ;;
   esac
@@ -74,13 +80,19 @@ generated=$(( $(added "$base" "$head" .) - reviewable ))
 
 short="$(git rev-parse --short "$base")..$(git rev-parse --short "$head")"
 note=""; [ "$generated" -gt 0 ] && note=" ($generated more in generated files, not counted)"
-if [ "$reviewable" -gt "$stop" ]; then verdict="above the $stop-line stop: split it before review, by task (see feature-loop)"
-elif [ "$reviewable" -gt "$aim" ]; then verdict="over the $aim-line aim; it can stay one pull request if it is one task"
-else verdict="within the $aim-line aim"
+if [ "$reviewable" -gt "$stop" ]; then verdict="above the $stop-line stop: split it before review, by task (see feature-loop)"; kind=split
+elif [ "$reviewable" -gt "$aim" ]; then verdict="over the $aim-line aim; it can stay one pull request if it is one task"; kind=over
+else verdict="within the $aim-line aim"; kind=within
 fi
-echo "pr-size: $reviewable reviewable lines added in $short$note, $verdict"
+if $json; then
+  # Every value is a number or a fixed word, and the range is two hex abbreviations.
+  printf '{"reviewable": %d, "generated": %d, "aim": %d, "stop": %d, "range": "%s", "verdict": "%s"}\n' \
+    "$reviewable" "$generated" "$aim" "$stop" "$short" "$kind"
+else
+  echo "pr-size: $reviewable reviewable lines added in $short$note, $verdict"
+fi
 
-if [ "$reviewable" -gt "$stop" ]; then
+if ! $json && [ "$reviewable" -gt "$stop" ]; then
   echo "pr-size: added lines per commit, oldest first (review or split along these):"
   git rev-list --reverse "$base..$head" | while read -r c; do
     parent="$(git rev-parse --verify --quiet "$c^" || git hash-object -t tree /dev/null)"
@@ -89,7 +101,8 @@ if [ "$reviewable" -gt "$stop" ]; then
 fi
 
 if $github; then
-  [ "$reviewable" -gt "$aim" ] && echo "::warning title=PR size::$reviewable reviewable lines added, $verdict"
+  # Under --json, stdout stays one JSON object: no annotation, only the step summary.
+  ! $json && [ "$reviewable" -gt "$aim" ] && echo "::warning title=PR size::$reviewable reviewable lines added, $verdict"
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
       echo "### PR size"
