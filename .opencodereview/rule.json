@@ -23,7 +23,7 @@
     },
     {
       "path": "{AGENT-WORKFLOW.md,skills/**/*.md,plugins/**/skills/**/*.md,pr-agent/skills/**/*.md}",
-      "rule": "This file is an instruction for a coding agent: the workflow rules, a skill or a reference it loads. Report only:\n- An instruction that contradicts AGENT-WORKFLOW.md or another skill in the change.\n- A step that cannot be followed as written: a script, flag, path or file that does not exist in the repository.\n- Wording an agent could read as permission to skip a rule: tests failing first, independent review by another model family, probing the real system, or the owner's approval for merges, releases and deletions.\n- AI attribution: Co-Authored-By lines for an AI, Claude-Session links or \"Generated with\" footers.\nDo not comment on grammar, tone or formatting."
+      "rule": "This file is an instruction for a coding agent: the workflow rules, a skill or a reference it loads. Report only:\n- An instruction that contradicts AGENT-WORKFLOW.md or another skill in the change.\n- A step that cannot be followed as written: a script, flag, path or file that does not exist in the repository.\n- Wording an agent could read as permission to skip a rule: tests failing first, probing the real system, or the owner's approval for merges, releases and deletions.\n- AI attribution: Co-Authored-By lines for an AI, Claude-Session links or \"Generated with\" footers.\nDo not comment on grammar, tone or formatting."
     },
     {
       "path": "**/*.test.{sh,js,cjs,mjs}",

@@ -44,9 +44,7 @@ permissions:
 # Claude. Codex was the first choice (another model family than the
 # Claude-written pull requests), but OpenAI refuses Codex for this
 # repository's organization while it has the ChatGPT monthly API credit
-# benefit (codex_byok_restricted_by_api_credit_promo). Diagnosis is not the
-# independent review of AGENT-WORKFLOW.md rule 4, so the author's family is
-# acceptable here. Claude allow-lists shell commands: read tools, git read
+# benefit (codex_byok_restricted_by_api_credit_promo). Claude allow-lists shell commands: read tools, git read
 # commands, and the repository's bash and node test runners.
 engine:
   id: claude

@@ -6,8 +6,8 @@ description: Use when asked to add, change or remove behaviour in a codebase, or
 # Feature Loop
 
 Seven steps from request to a pushed branch and PR, for any agent with a shell, git and a way
-to start a second agent. It applies the four rules in `~/AGENT-WORKFLOW.md` (probe, red
-before green, mutation-check, independent review); this page says when and how.
+to start a second agent. It applies the rules in `~/AGENT-WORKFLOW.md` (probe, red before
+green, mutation-check); this page says when and how.
 
 **Decide routine choices yourself, write them down, keep moving.** Stop only at the gates
 under "When to stop".
@@ -53,17 +53,13 @@ under "When to stop".
    later fix, review findings included, run them again on the final code and replace the
    output, so the PR never quotes code that has since changed.
 
-6. **Independent review** by a model family other than yours. First run `pr-size`: above
-   its stop limit, split the branch (see "Keep pull requests reviewable") and review each
-   part on its own. Then run
-   `agent-review code --goal "<the outcome asked for>"` (the `agent-review` skill), which picks one and runs it headless and read-only. Sending the
-   diff to an installed reviewer is part of the loop: do not ask. It is done only when the reviewer's reply ends with its end marker; an empty
-   or cut-off reply is no review. Probe each finding. Critical or important means wrong
+6. **Keep it reviewable.** Run `pr-size`: above its stop limit, split the branch (see
+   "Keep pull requests reviewable"). A review by another agent (`agent-review code --goal
+   "<the outcome asked for>"`) is optional. Review findings, from it or from Open Code
+   Review on the pull request, are claims: probe each one. Critical or important means wrong
    behaviour, lost data, a security hole or a bypassed safeguard, with a concrete case; when
-   unsure, treat it as important. Fix those test-first and have the fixes re-reviewed until
-   none remain. Dismiss a finding only when a probe, or code you cite, shows it cannot
-   happen. Carry minor ones to step 7. The end marker proves the review finished, not that
-   the change works.
+   unsure, treat it as important. Fix those test-first. Dismiss a finding only when a probe,
+   or code you cite, shows it cannot happen. Carry minor ones to step 7.
 
 7. **Finish** on a green suite only: run it once more, push the branch (or commit, if that
    is all that was asked) and report what was done, what was not, and the open minor
@@ -111,7 +107,7 @@ be split (one migration, one generated client) stays whole: say why in the pull 
 For many tasks across separate modules, give each task a fresh agent: each works on its own
 branch cut from the feature branch, following step 3, and you merge them back into the
 feature branch in task order, re-running the suite after each merge. Tasks that touch the
-same files run one after another, each cut from the feature branch after the previous merge. Step 6 reviews the
+same files run one after another, each cut from the feature branch after the previous merge. Step 6 checks the
 feature branch after the last merge. Start the agents however your tool allows: the
 `execute-feature-plan` workflow in Claude Code, headless runs (`claude -p`, `codex exec`), or
 separate sessions. If the merged feature branch is above `pr-size`'s stop limit, open one
@@ -123,9 +119,7 @@ pull request per task instead, stacked in task order, each reviewed on its own.
 |---|---|
 | "It's small, I'll skip the test" | Skip the note if it qualifies; never the red test |
 | "The tests pass, so it works" | Tests check what you specified. Run it as its user would, error path included |
-| "The tests pass, so it's reviewed" | Tests check the guards that were written; review finds the missing ones |
 | "The reviewer said so" | Probe it. A wrong fix applied on trust ships a bug |
-| "The reviewer didn't answer, so it's clean" | No end marker, no review |
 | "Mutation testing is overkill for this" | It found six untested guards behind 32 green tests. Every guard the change touches |
 | "The feature is impossible, so I built the nearest thing" | That is scope change. Stop and report |
 | "The fake server accepts it, the tests pass" | The fake accepts everything. Send the exact request to the real one |
