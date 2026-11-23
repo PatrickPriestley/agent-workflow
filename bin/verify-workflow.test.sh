@@ -27,8 +27,8 @@ has "$w" "  contents: read"; lacks "$w" ': *write'
 has "$w" "    continue-on-error: false"
 it "a comment is the only write"
 has "$w" "  add-comment:"; lacks "$w" 'push-to-pull-request-branch|create-pull-request|create-issue|submit-pull-request-review'
-it "bash runs only the repository's scripts and the merge-base worktree"
-has "$w" '- "bash bin/:*"'; has "$w" '- "bash /tmp/gh-aw/agent/verify/base/:*"'
+it "bash runs the repository's test files, exactly, at the head and in the merge-base worktree"
+has "$w" '- "bash bin/verify-workflow.test.sh"'; has "$w" '- "bash /tmp/gh-aw/agent/verify/base/bin/verify-workflow.test.sh"'
 lacks "$w" '"bash:\*"|"bash -c|"sed|"cd:\*"|"python'
 it "the pull request's text reaches the step through the environment, never the script"
 has "$w" 'PR_BODY: ${{ github.event.pull_request.body }}'
@@ -38,7 +38,7 @@ it "the step stops when there is no merge base with main"
 has "$w" 'base=$(git merge-base origin/main HEAD) || { echo "::error::no merge base with origin/main"; exit 1; }'
 it "the lock matches: labeled trigger, Anthropic key, no OpenAI secret, the narrowed bash"
 has "$l" "      - labeled"; has "$l" "ANTHROPIC_API_KEY"; lacks "$l" 'OPENAI_API_KEY|CODEX_API_KEY'
-has "$l" "Bash(bash bin/:*)"; lacks "$l" 'Bash\(bash:\*\)|Bash\(sed -n'
+has "$l" "Bash(bash bin/verify-workflow.test.sh)"; lacks "$l" 'Bash\(bash bin/:\*\)'; lacks "$l" 'Bash\(bash:\*\)|Bash\(sed -n'
 
 echo; echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

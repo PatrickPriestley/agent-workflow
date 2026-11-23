@@ -296,6 +296,11 @@ tracked files because PR-Agent reads the working tree. Each run is kept in `.git
     bash pr-agent/verify-image.test.sh
     claude plugin eval . --scaffold --allow-tools Bash Write Edit   # skill evals, with and without
 
+After adding or renaming a test file, run `bin/agent-allowlists-sync` and recompile the
+agent workflows (`gh aw compile ci-fix verify ci-diagnose`). Those agents may run only the
+test files their allowlists name, one by one, and `bin/agent-allowlists.test.sh` fails in CI
+until the new file is listed.
+
 The repository is also a Claude Code plugin (`.claude-plugin/plugin.json`), which is what
 lets `claude plugin eval` load the skill. The eval cases in `evals/` run each scenario with
 and without the skill in an isolated session.

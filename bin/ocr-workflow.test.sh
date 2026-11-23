@@ -64,5 +64,25 @@ it "after a label run the label is removed whatever happened, so adding it again
 has "$w" "if: always() && github.event.action == 'labeled'"
 has "$w" '--remove-label ocr-review'
 
+it "another label (verify, properties) never shares a review's concurrency group, so it cannot cancel it"
+group="$(printf '%s\n' "$w" | sed -n 's/^  group: //p')"
+printf '%s' "$group" | python3 -c '
+import re, sys
+g = sys.stdin.read()
+def run(action, label):
+    # Evaluate the ${{ }} parts the way GitHub does, for these few operators.
+    def ev(m):
+        e = m.group(1).replace("&&", " and ").replace("||", " or ")
+        e = e.replace("github.event.pull_request.number", "45").replace("github.run_id", "\"RUN\"")
+        e = e.replace("github.event.action", repr(action)).replace("github.event.label.name", repr(label))
+        return str(eval(e))
+    return re.sub(r"\$\{\{(.*?)\}\}", ev, g)
+review = run("opened", "")
+assert run("labeled", "ocr-review") == review, "an ocr-review label run is not in the review group"
+assert run("reopened", "") == review
+for label in ("verify", "properties", "ci-fix"):
+    assert run("labeled", label) != review, label + " shares the review group"
+' && ok || bad "group: $group"
+
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
