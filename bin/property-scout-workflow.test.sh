@@ -81,6 +81,82 @@ for c in out deep mixed; do guard_on "$c" && bad "$c passed" || ok; done
 it "the guard refuses a bundle, which it cannot read"
 guard_on bundle && bad "a bundle passed" || ok
 
+# The step that runs the new properties, run as GitHub runs it (bash -e -o pipefail), with a
+# stub docker that runs the command here and records its arguments.
+runstep="$(awk '/- name: The new properties hold/ {g=1; next}
+  g && /^        run: \|/ {r=1; next} r && /^          / {print substr($0, 11); next} r && /^ *$/ {print ""; next} r {exit}' "$md")"
+R="$(mktemp -d "${TMPDIR:-/tmp}/scout-run.XXXXXX")"
+[ -n "${KEEP:-}" ] || trap 'rm -rf "$G" "$R"' EXIT
+mkdir -p "$R/bin"
+cat > "$R/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+# build: read the Dockerfile, fail if asked. run: map -v SRC:DST, keep -e, run the command.
+printf '%s\n' "$*" >> "$STUB_LOG"
+if [ "$1" = build ]; then cat > /dev/null; [ -z "${STUB_BUILD_FAILS:-}" ]; exit; fi
+shift; src=""; dst=""; envs=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -v) src="${2%%:*}"; rest="${2#*:}"; dst="${rest%%:*}"; shift 2 ;;
+    -e) envs+=("$2"); shift 2 ;;
+    -u|-w|--network|--tmpfs|--pids-limit|--memory) shift 2 ;;
+    --rm|--read-only) shift ;;
+    scout-props) shift; break ;;
+    *) shift ;;
+  esac
+done
+args=(); for a in "$@"; do args+=("${a/#$dst/$src}"); done
+[ "${args[2]:-}" = python ] && args[2]=python3
+exec env "${envs[@]/#HOME=*/HOME=$HOME}" "${args[@]}"
+STUB
+chmod +x "$R/bin/docker"
+(
+  cd "$R" && git init -q -b main up && cd up && mkdir properties && printf 'x\n' > properties/old.py
+  git add -A && git -c user.name=t -c user.email=t@t commit -qm base && cd .. && git clone -q up ws
+) >/dev/null 2>&1
+head_sha="$(git -C "$R/up" rev-parse HEAD)"
+case_patch() {  # NAME, then files as path=content -> $R/NAME/aw-1.patch from a commit on head
+  local name="$1"; shift; mkdir -p "$R/$name" "$R/rt-$name"
+  (cd "$R/up" && git checkout -q -B "$name" "$head_sha" &&
+   for kv in "$@"; do printf '%b' "${kv#*=}" > "${kv%%=*}"; done && git add -A &&
+   git -c user.name=t -c user.email=t@t commit -qm "$name" &&
+   git format-patch -q -1 --stdout > "$R/$name/aw-1.patch"; git checkout -q --detach "$head_sha") >/dev/null 2>&1
+}
+holds='print("p: properties held")\n'
+fails='import sys\nsys.exit("AssertionError: counterexample")\n'
+quiet='print("ran")\n'
+case_patch good  "properties/good.py=$holds"
+case_patch bad   "properties/bad.py=$fails"
+case_patch quiet "properties/quiet.py=$quiet"
+case_patch mixed "properties/a.py=$holds" "properties/b.py=$fails"
+mkdir -p "$R/none" "$R/rt-none" "$R/broken" "$R/rt-broken"
+printf 'From 0 Mon Sep 17 00:00:00 2001\nSubject: x\n\n---\n garbage\n' > "$R/broken/aw-1.patch"
+step_on() {  # NAME [build-fails] -> exit code of the step with that case's patch dir as /tmp/gh-aw
+  printf '%s\n' "$runstep" | sed "s|/tmp/gh-aw/|$R/$1/|g" > "$R/step.sh"; : > "$R/docker.log"
+  (cd "$R" && PATH="$R/bin:$PATH" STUB_LOG="$R/docker.log" GITHUB_WORKSPACE="$R/ws" HEAD_SHA="$head_sha" \
+    RUNNER_TEMP="$R/rt-$1" STUB_BUILD_FAILS="${2:-}" bash --noprofile --norc -e -o pipefail "$R/step.sh") >"$R/$1.out" 2>&1
+}
+it "the run step was found in the workflow"; [ -n "$runstep" ] && ok || bad "no run step"
+it "a new property that holds passes, and so does a run with no patch"
+step_on good && ok || bad "refused a holding property: $(tail -5 "$R/good.out")"
+step_on none && ok || bad "refused no patch"
+it "a property that fails, or that exits 0 without saying it held, blocks the push"
+step_on bad && bad "a failing property passed" || ok
+step_on quiet && bad "a property that never said it held passed" || ok
+it "every new property runs, and one failing among several blocks the push and is named"
+step_on mixed && bad "mixed passed" || ok
+grep -qF '== properties/b.py' "$R/mixed.out" && ok || bad "stopped before the second file: $(cat "$R/mixed.out")"
+grep -qF '::error file=properties/b.py::' "$R/mixed.out" && ok || bad "the failing file is not named"
+it "a patch that does not apply, or an image that does not build, blocks the push"
+step_on broken && bad "a broken patch passed" || ok
+cp -r "$R/good" "$R/good2"; mkdir -p "$R/rt-good2"; step_on good2 fail && bad "a failed image build passed" || ok
+it "the properties run with no network, a read-only source, a time limit and a pinned image"
+step_on good
+grep -q -- '--network none' "$R/docker.log" && ok || bad "no --network none: $(cat "$R/docker.log")"
+grep -q -- '--read-only' "$R/docker.log" && ok || bad "not read-only"
+grep -q -- ':/w:ro' "$R/docker.log" && ok || bad "source not mounted read-only"
+grep -q -- 'scout-props timeout 300 python -I' "$R/docker.log" && ok || bad "no time limit"
+printf '%s' "$runstep" | grep -qE 'FROM python:3\.12-slim@sha256:[0-9a-f]{64}' && ok || bad "image not pinned by digest"
+
 it "this test runs in CI"
 grep -qF 'bash bin/property-scout-workflow.test.sh' "$root/.github/workflows/test.yml" && ok || bad "not in test.yml"
 

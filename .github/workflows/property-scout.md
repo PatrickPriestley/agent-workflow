@@ -122,6 +122,48 @@ safe-outputs:
             echo "::error::Property Scout may only add new files under properties/; nothing is pushed"
             exit 1
           fi
+      # The prompt says to push only properties that held; on #50 one that failed was
+      # pushed. So run each new property here, on the pull request's head with the
+      # patch applied, and fail (blocking the push) unless it exits 0 and says it held.
+      # The properties are agent-written code that runs the pull request's scripts:
+      # they run in a container with no network, the source read-only, and a time
+      # limit, so they cannot reach the threat detection that runs after this step.
+      - name: The new properties hold
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -u
+          shopt -s nullglob
+          patches=(/tmp/gh-aw/aw-*.patch /tmp/gh-aw/*/aw-*.patch)
+          if [ "${#patches[@]}" -eq 0 ]; then echo "no patch: nothing to run"; exit 0; fi
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected head sha"; exit 1; }
+          w="$(mktemp -d "${RUNNER_TEMP:-/tmp}/scout-check.XXXXXX")"
+          git -C "$GITHUB_WORKSPACE" fetch -q --no-tags origin "$HEAD_SHA" &&
+            git -C "$GITHUB_WORKSPACE" worktree add -q --detach "$w/src" "$HEAD_SHA" ||
+            { echo "::error::cannot check out the pull request's head; nothing is pushed"; exit 1; }
+          for p in "${patches[@]}"; do
+            git -C "$w/src" -c user.name=scout -c user.email=scout@localhost am -q "$p" ||
+              { echo "::error::the agent's patch does not apply to the head; nothing is pushed"; exit 1; }
+          done
+          new="$(git -C "$w/src" diff --name-only --diff-filter=A "$HEAD_SHA" -- 'properties/*.py')"
+          if [ -z "$new" ]; then echo "no new property files"; exit 0; fi
+          docker build -q -t scout-props - <<'IMAGE' >/dev/null || { echo "::error::cannot build the property image; nothing is pushed"; exit 1; }
+          FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+          RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null && rm -rf /var/lib/apt/lists/* && pip install -q --no-cache-dir 'hegeltest==0.5.1'
+          IMAGE
+          failed=0
+          while IFS= read -r f; do
+            echo "== $f"
+            out="$(docker run --rm --network none --read-only --tmpfs /tmp:exec --tmpfs /home/scout \
+              -e HOME=/home/scout -e TMPDIR=/tmp -u "$(id -u):$(id -g)" --pids-limit 512 --memory 2g \
+              -v "$w/src:/w:ro" -w /tmp scout-props timeout 300 python -I "/w/$f" 2>&1 </dev/null)" && rc=0 || rc=$?
+            printf '%s\n' "$out" | tail -n 20
+            if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -q 'held'; then
+              echo "::error file=$f::this property did not hold on the pull request's head (exit $rc); nothing is pushed"
+              failed=1
+            fi
+          done <<< "$new"
+          exit "$failed"
   push-to-pull-request-branch:
     target: triggering
     max: 1
@@ -215,7 +257,9 @@ Run these two commands once, exactly as written:
      <short head sha> (25 cases)."
    - Run each once from the repository root, with no argument, as one plain
      command: `/tmp/gh-aw/agent/venv/bin/python -I properties/<file>.py`. It must
-     print that its properties held; if not, drop it.
+     print that its properties held; if not, drop it. Threat detection runs each
+     new file again and blocks the whole push if any fails, so one bad property
+     loses the others too.
    - Commit the new files with a Conventional Commit message,
      `test(properties): <what the properties check>`, whose body lists each
      property in one line. No AI attribution: no `Co-Authored-By`,
