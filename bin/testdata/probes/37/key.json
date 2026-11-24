@@ -13,5 +13,6 @@
  ],
  "counterexample": "yarn.lock",
  "false_claim": null,
- "claim_terms": []
+ "claim_terms": [],
+ "planted_sha": "e6772afe04e5f3f394fea8ac79959e47f8e27846"
 }

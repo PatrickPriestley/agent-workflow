@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""probe-evidence: collect what the review loops left on a probe's pull request.
+
+  python3 -I bin/probe-evidence PR --repo OWNER/REPO [--sha COMMIT] > evidence.json
+
+Reads, with `gh api`: the pull request's head; the latest conclusion of each workflow run on
+COMMIT (default the head; pass the planted commit, since CI fix may push after it); every
+inline review comment (path, line, original_line, body); and every issue comment (body).
+Prints the JSON bin/probe-score reads. A workflow with no conclusion yet is left out, so it
+scores as no data. Exit 0; 1 when an API call fails (nothing is printed); 2 for usage.
+"""
+import json
+import re
+import subprocess
+import sys
+
+PER_PAGE = 100
+
+
+def die(msg, code=2):
+    print(f"probe-evidence: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def api(path):
+    out = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+    if out.returncode != 0:
+        die(f"gh api {path} failed: {out.stderr.strip()}", 1)
+    try:
+        return json.loads(out.stdout)
+    except ValueError:
+        die(f"gh api {path} returned something other than JSON", 1)
+
+
+def pages(path):
+    items, page = [], 1
+    while True:
+        got = api(f"{path}?per_page={PER_PAGE}&page={page}")
+        items.extend(got)
+        if len(got) < PER_PAGE:
+            return items
+        page += 1
+
+
+def main(argv):
+    args, repo, sha = [], None, None
+    it = iter(argv[1:])
+    for a in it:
+        if a == "--repo":
+            repo = next(it, None)
+        elif a == "--sha":
+            sha = next(it, None)
+        else:
+            args.append(a)
+    if len(args) != 1 or not args[0].isdigit():
+        die("usage: probe-evidence PR --repo OWNER/REPO [--sha COMMIT]")
+    if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        die("--repo takes OWNER/REPO")
+    if sha is not None and not re.fullmatch(r"[0-9a-f]{40}", sha):
+        die("--sha takes a 40-digit commit id")
+    pr, base = int(args[0]), f"repos/{repo}"
+    head = api(f"{base}/pulls/{pr}")["head"]["sha"]
+    at = sha or head
+    latest = {}
+    for run in api(f"{base}/actions/runs?head_sha={at}&per_page={PER_PAGE}")["workflow_runs"]:
+        if run.get("conclusion") and (run["name"] not in latest or run["run_number"] > latest[run["name"]]["run_number"]):
+            latest[run["name"]] = run
+    evidence = {
+        "pr": pr,
+        "head": head,
+        "checks_at": at,
+        "checks": {name: run["conclusion"] for name, run in sorted(latest.items())},
+        "review_comments": [{"path": c.get("path"), "line": c.get("line"), "original_line": c.get("original_line"),
+                             "body": c.get("body", "")} for c in pages(f"{base}/pulls/{pr}/comments")],
+        "comments": [{"body": c.get("body", "")} for c in pages(f"{base}/issues/{pr}/comments")],
+    }
+    json.dump(evidence, sys.stdout, indent=1)
+    print()
+
+
+if __name__ == "__main__":
+    main(sys.argv)

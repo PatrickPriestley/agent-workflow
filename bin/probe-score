@@ -2,9 +2,11 @@
 """probe-score: one verdict per review loop for a probe, from its answer key and evidence.
 
   python3 -I bin/probe-score KEY.json EVIDENCE.json > rows.jsonl
+  python3 -I bin/probe-score --markdown KEY.json EVIDENCE.json   # a table, for a comment
 
-KEY (the planter's answer key): id, pr, kind, loud, file, lines [first, last], terms (strings
-any catching loop should mention), counterexample, false_claim (or null), claim_terms.
+KEY (the planter's answer key): id, pr, kind, loud, planted_sha (the commit with the bug),
+file, lines [first, last], terms (strings any catching loop should mention), counterexample,
+false_claim (or null), claim_terms.
 
 EVIDENCE (collected from the probe's pull request): pr, head, checks {workflow: conclusion},
 review_comments [{path, line, original_line, body}], comments [{body}]. An agent's comment is
@@ -20,7 +22,7 @@ import re
 import sys
 
 LOOPS = ["tests", "properties", "mutation", "ocr", "ci-diagnose", "ci-fix", "verify", "property-scout"]
-KEY_FIELDS = ["id", "pr", "kind", "loud", "file", "lines", "terms", "counterexample", "false_claim", "claim_terms"]
+KEY_FIELDS = ["id", "pr", "kind", "loud", "planted_sha", "file", "lines", "terms", "counterexample", "false_claim", "claim_terms"]
 NEAR = 3  # an inline comment this many lines from the planted lines counts as on them
 
 
@@ -110,9 +112,26 @@ def scout(evidence, key):
     return "judge", "a property failed, but not visibly on the planted bug"
 
 
+def cell(text):
+    return str(text).replace("\\", "\\\\").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def markdown(key, rows):
+    caught = sum(r["verdict"] == "caught" for r in rows)
+    ran = sum(r["verdict"] not in ("not run", "no data") for r in rows)
+    out = [f"### Probe {cell(key['id'])}: {cell(key['kind'])}, {'loud' if key['loud'] else 'silent'}",
+           "", f"Planted in `{cell(key['file'])}` lines {key['lines'][0]}-{key['lines'][1]}"
+           f" at `{cell(key['planted_sha'][:7])}`. Caught by {caught} of the {ran} loops that ran.", "",
+           "| Loop | Verdict | Evidence |", "|---|---|---|"]
+    out += [f"| {cell(r['loop'])} | {cell(r['verdict'])} | {cell(r['evidence'])} |" for r in rows]
+    return "\n".join(out)
+
+
 def main(argv):
+    md = "--markdown" in argv[1:]
+    argv = [a for a in argv if a != "--markdown"]
     if len(argv) != 3:
-        die("usage: probe-score KEY.json EVIDENCE.json")
+        die("usage: probe-score [--markdown] KEY.json EVIDENCE.json")
     key, evidence = load(argv[1]), load(argv[2])
     missing = [f for f in KEY_FIELDS if f not in key]
     if missing:
@@ -127,10 +146,13 @@ def main(argv):
         "verify": verify(evidence, key),
         "property-scout": scout(evidence, key),
     }
-    for loop in LOOPS:
-        verdict, why = results[loop]
-        print(json.dumps({"probe": key["id"], "pr": key["pr"], "kind": key["kind"], "loud": key["loud"],
-                          "loop": loop, "verdict": verdict, "evidence": why}))
+    rows = [{"probe": key["id"], "pr": key["pr"], "kind": key["kind"], "loud": key["loud"],
+             "loop": loop, "verdict": results[loop][0], "evidence": results[loop][1]} for loop in LOOPS]
+    if md:
+        print(markdown(key, rows))
+    else:
+        for r in rows:
+            print(json.dumps(r))
 
 
 if __name__ == "__main__":
