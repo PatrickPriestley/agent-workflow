@@ -1,0 +1,28 @@
+name: probe-guard
+
+# A pull request labelled hold must not be merged, whoever labelled it. The probe planter
+# (probe-plant.md, docs/plans/2026-11-24-probe-loop.md) labels every probe hold, since a probe
+# carries a planted bug; probe-score closes probes once they are scored. Mark this check
+# required in the default branch's protection (Settings > Branches). The label's name says
+# nothing of probes, because the review agents can read labels.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+jobs:
+  not-on-hold:
+    name: not on hold
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Refuse a pull request labelled hold
+        if: contains(github.event.pull_request.labels.*.name, 'hold')
+        run: |
+          echo "::error::this pull request is labelled hold, so it is not to be merged"
+          exit 1
+      - name: Not on hold
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'hold') }}
+        run: echo "not labelled hold"

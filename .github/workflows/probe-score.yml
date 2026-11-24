@@ -1,12 +1,13 @@
 name: probe-score
 
 # Scores a probe (docs/plans/2026-11-24-probe-loop.md) once every review loop on it has
-# finished: opens the planter's sealed answer key, checks it against the hash the probe's
-# pull request carries, collects what each loop left on the pull request at the planted
+# finished: opens the planter's sealed answer key, checks it against the hash the planter
+# recorded on the planted commit, collects what each loop left on the pull request at the planted
 # commit, and posts one verdict per loop (bin/probe-score). Then it closes the probe.
 #
 # Run by hand: Actions > probe-score > Run workflow, with the probe's pull request and the
-# planter run that holds the key. Only pull requests labelled "probe" are scored or closed.
+# planter run that holds the key. Only a pull request labelled hold, with a provenance status
+# on one of its commits, is scored or closed.
 # It runs this repository's own scripts from the default branch, never the probe's code.
 #
 # Setup: a repository secret PROBE_KEY, the planter's sealing secret. No other workflow may
@@ -53,30 +54,47 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check the inputs, and that the pull request is a probe
+      - name: Check the inputs, and that the pull request is on hold
         run: |
           set -u
           [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::pr must be a number"; exit 1; }
           [[ "$KEY_RUN" =~ ^[0-9]+$ ]] || { echo "::error::key_run must be a run id"; exit 1; }
           labels="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
-          printf '%s\n' "$labels" | grep -qx probe || { echo "::error::#$PR is not labelled probe; nothing is scored or closed"; exit 1; }
+          printf '%s\n' "$labels" | grep -qx hold || { echo "::error::#$PR is not labelled hold; nothing is scored or closed"; exit 1; }
           mkdir -p "$W"
 
       - name: Fetch the sealed key
         run: gh run download "$KEY_RUN" --repo "$GITHUB_REPOSITORY" --name probe-key --dir "$W/sealed"
 
-      - name: Check the key against the pull request's hash, and open it
+      - name: Check the key against the hash on the planted commit, and open it
         env:
           PROBE_KEY: ${{ secrets.PROBE_KEY }}
         run: |
           set -u
-          # The planter wrote "probe-key-sha256: <64 hex>" in the description when it opened
-          # the pull request, before any loop ran; a key that does not match is not used.
-          want="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body --jq .body |
-            sed -n 's/.*probe-key-sha256: \([0-9a-f]\{64\}\).*/\1/p' | head -n1)"
-          [ -n "$want" ] || { echo "::error::#$PR carries no probe-key-sha256 line"; exit 1; }
+          # The planter recorded "sha256:<64 hex>" as the provenance commit status on the
+          # planted commit before opening the pull request, where no review agent reads; the
+          # earliest such status counts. A key that does not match it, or that names another
+          # commit, is not used.
+          want=""; planted=""
+          for c in $(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/commits?per_page=100" --jq '.[].sha'); do
+            d="$(gh api "repos/$GITHUB_REPOSITORY/commits/$c/statuses?per_page=100" \
+              --jq '[.[] | select(.context == "provenance")] | last | .description // empty')"
+            if [ -n "$d" ]; then want="${d#sha256:}"; planted="$c"; break; fi
+          done
+          [[ "$want" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::#$PR has no provenance status on any commit"; exit 1; }
           bash bin/probe-key check "$W/sealed/key.sealed" "$want"
           bash bin/probe-key open "$W/sealed/key.sealed" > "$W/key.json"
+          # The key names the commit it was planted in, and the planter could not know the
+          # pull request's number: check the one and add the other.
+          python3 -I -c '
+          import json, sys
+          path, planted, pr = sys.argv[1], sys.argv[2], int(sys.argv[3])
+          k = json.load(open(path))
+          if k.get("planted_sha") != planted:
+              sys.exit("the key names " + str(k.get("planted_sha")) + ", the status is on " + planted)
+          k["pr"] = pr
+          json.dump(k, open(path, "w"), indent=1)
+          ' "$W/key.json" "$planted" "$PR"
 
       - name: Collect the evidence at the planted commit
         run: |

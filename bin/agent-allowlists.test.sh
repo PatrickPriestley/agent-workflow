@@ -68,6 +68,7 @@ it "ci-fix's lock lists every test file at the head"; lists ci-fix ""
 it "verify's lock lists every test file at the head and in the merge-base worktree"
 lists verify ""; lists verify /tmp/gh-aw/agent/verify/base/
 it "ci-diagnose's lock lists every test file in the failing commit's worktree"; lists ci-diagnose /tmp/gh-aw/agent/ci/head/
+it "the planter's lock lists every test file at the head"; lists probe-plant ""
 it "no lock keeps a directory prefix, which matches nothing below it"
 grep -hoE 'Bash\((bash|node --test) [^)]*/:\*\)' "$root"/.github/workflows/*.lock.yml | head -1 | grep -q . && bad "a directory prefix is still there" || ok
 # bin/agent-allowlists-sync itself, in a scratch repository with three marked workflows.
@@ -76,7 +77,7 @@ sb="$(mktemp -d "${TMPDIR:-/tmp}/allowlists-sync.XXXXXX")"; trap 'rm -rf "$sb"' 
   cd "$sb" && git init -q -b main && mkdir -p bin .github/workflows
   cp "$root/bin/agent-allowlists-sync" bin/
   printf '#!/usr/bin/env bash\n' > bin/a.test.sh
-  for n in ci-fix verify ci-diagnose; do
+  for n in ci-fix verify ci-diagnose probe-plant; do
     printf 'tools:\n  bash:\n    # BEGIN test files\n    # END test files\nnetwork: {}\n' > ".github/workflows/$n.md"
   done
   git add -A && git -c user.name=t -c user.email=t@t commit -qm init
@@ -101,8 +102,20 @@ it "the sources' test-file blocks are what bin/agent-allowlists-sync writes"
 (cd "$root" && bin/agent-allowlists-sync --check) && ok || bad "run bin/agent-allowlists-sync, then gh aw compile"
 it "ci-diagnose's prompt does not repeat the old claim that cd with && is refused"
 grep -q 'joined to `cd` with `&&`' "$root/.github/workflows/ci-diagnose.md" && bad "old sentence still there" || ok
-it "no agent workflow names PROBE_KEY, the probe loop's sealing secret"
-grep -l 'PROBE_KEY' "$root"/.github/workflows/*.md "$root"/.github/workflows/*.lock.yml 2>/dev/null | grep -q . && bad "an agent workflow names PROBE_KEY: $(grep -l PROBE_KEY "$root"/.github/workflows/*.md "$root"/.github/workflows/*.lock.yml | tr '\n' ' ')" || ok
+it "the probe loop's secrets, PROBE_KEY and PROBE_TOKEN, appear in no agent workflow but the planter's open-probe job"
+# Outside comments: in a lock only inside the open_probe job; in a source only inside
+# safe-outputs.jobs.open-probe. That job runs after threat detection, outside the agent's sandbox.
+leaks="$(for f in "$root"/.github/workflows/*.lock.yml; do
+  awk -v F="${f##*/}" '/^[[:space:]]*#/ {next} /^jobs:/ {j=1; next} j && /^  [A-Za-z0-9_-]+:$/ {job=$1}
+    /PROBE_(KEY|TOKEN)/ && !(F == "probe-plant.lock.yml" && job == "open_probe:") {print F ": " job}' "$f"
+done; for f in "$root"/.github/workflows/*.md; do
+  awk -v F="${f##*/}" 'NR == 1 && /^---$/ {fm=1; next} fm && /^---$/ {fm=0} /^[[:space:]]*#/ {next}
+    fm && /^safe-outputs:/ {so=1; next} fm && /^[a-z]/ {so=0; inj=0}
+    so && /^  jobs:/ {jobs=1; next} so && jobs && /^    [a-z-]+:$/ {inj=($1 == "open-probe:")}
+    so && /^  [a-z]/ && !/^  jobs:/ {jobs=0; inj=0}
+    /PROBE_(KEY|TOKEN)/ && !(F == "probe-plant.md" && inj) {print F ": " NR}' "$f"
+done)"
+[ -z "$leaks" ] && ok || bad "outside open-probe: $(printf '%s' "$leaks" | tr '\n' ' ')"
 it "this test runs in CI"
 grep -qF 'bash bin/agent-allowlists.test.sh' "$root/.github/workflows/test.yml" && ok || bad "not in test.yml"
 

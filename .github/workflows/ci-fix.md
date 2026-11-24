@@ -76,6 +76,8 @@ tools:
     - "bash bin/pr-size.test.sh"
     - "bash bin/probe-evidence.test.sh"
     - "bash bin/probe-key.test.sh"
+    - "bash bin/probe-open.test.sh"
+    - "bash bin/probe-plant-workflow.test.sh"
     - "bash bin/probe-score-workflow.test.sh"
     - "bash bin/probe-score.test.sh"
     - "bash bin/property-scout-workflow.test.sh"

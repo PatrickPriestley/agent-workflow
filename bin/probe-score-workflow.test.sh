@@ -28,15 +28,18 @@ lacks "$w" 'ref:|head\.sha|head_ref|pull/'
 it "the inputs reach the scripts only through the environment, and are checked as numbers"
 printf '%s\n' "$w" | sed -n '/^    steps:/,$p' | grep -F '${{ inputs.' | grep -vE 'name: probe-score-\$\{\{ inputs.pr \}\}|if: inputs.close' | grep -q . && bad "an input is interpolated into a step" || ok
 has "$w" '[[ "$PR" =~ ^[0-9]+$ ]]'; has "$w" '[[ "$KEY_RUN" =~ ^[0-9]+$ ]]'
-it "only a pull request labelled probe is scored or closed"
-has "$(step 'Check the inputs, and that the pull request is a probe')" 'grep -qx probe'
+it "only a pull request labelled hold is scored or closed"
+has "$(step 'Check the inputs, and that the pull request is on hold')" 'grep -qx hold'
 it "PROBE_KEY reaches one step, the one that checks and opens the key"
 assert_one="$(grep -c 'secrets.PROBE_KEY' "$wf")"; [ "$assert_one" -eq 1 ] && ok || bad "PROBE_KEY appears $assert_one times"
-has "$(step 'Check the key against')" 'PROBE_KEY: ${{ secrets.PROBE_KEY }}'
-it "the key is checked against the pull request's hash before it is opened"
-s="$(step 'Check the key against')"
+has "$(step 'Check the key against the hash on the planted commit')" 'PROBE_KEY: ${{ secrets.PROBE_KEY }}'
+it "the key is checked against the hash on the planted commit before it is opened"
+s="$(step 'Check the key against the hash on the planted commit')"
 printf '%s\n' "$s" | grep -n 'probe-key check\|probe-key open' | cut -d: -f2- | tr -d ' ' | head -2 | tr '\n' ' ' | grep -q '^bashbin/probe-keycheck.*bashbin/probe-keyopen' && ok || bad "check does not come before open: $s"
-has "$s" 'probe-key-sha256: \([0-9a-f]\{64\}\)'
+has "$s" 'select(.context == "provenance")'; has "$s" '[[ "$want" =~ ^[0-9a-f]{64}$ ]]'
+lacks "$w" 'json --jq .body|probe-key-sha256'
+it "the key must name the commit that carries the status, and gets the pull request's number"
+has "$s" 'if k.get("planted_sha") != planted:'; has "$s" 'k["pr"] = pr'
 it "evidence is read at the planted commit, and the scores are kept and posted"
 has "$(step 'Collect the evidence')" '--sha "$sha"'
 has "$w" 'bin/probe-score --markdown'; has "$w" 'retention-days: 90'; has "$w" 'gh pr comment "$PR"'
