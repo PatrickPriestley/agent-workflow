@@ -1,0 +1,18 @@
+{
+ "id": "probe-37",
+ "pr": 37,
+ "kind": "dropped-alternative",
+ "loud": true,
+ "file": "bin/pr-size",
+ "lines": [
+  61,
+  61
+ ],
+ "terms": [
+  "yarn.lock"
+ ],
+ "counterexample": "yarn.lock",
+ "false_claim": null,
+ "claim_terms": [],
+ "planted_sha": "e6772afe04e5f3f394fea8ac79959e47f8e27846"
+}

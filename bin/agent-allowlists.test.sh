@@ -101,6 +101,8 @@ it "the sources' test-file blocks are what bin/agent-allowlists-sync writes"
 (cd "$root" && bin/agent-allowlists-sync --check) && ok || bad "run bin/agent-allowlists-sync, then gh aw compile"
 it "ci-diagnose's prompt does not repeat the old claim that cd with && is refused"
 grep -q 'joined to `cd` with `&&`' "$root/.github/workflows/ci-diagnose.md" && bad "old sentence still there" || ok
+it "no agent workflow names PROBE_KEY, the probe loop's sealing secret"
+grep -l 'PROBE_KEY' "$root"/.github/workflows/*.md "$root"/.github/workflows/*.lock.yml 2>/dev/null | grep -q . && bad "an agent workflow names PROBE_KEY: $(grep -l PROBE_KEY "$root"/.github/workflows/*.md "$root"/.github/workflows/*.lock.yml | tr '\n' ' ')" || ok
 it "this test runs in CI"
 grep -qF 'bash bin/agent-allowlists.test.sh' "$root/.github/workflows/test.yml" && ok || bad "not in test.yml"
 
