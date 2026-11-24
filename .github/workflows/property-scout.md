@@ -128,6 +128,9 @@ safe-outputs:
       # The properties are agent-written code that runs the pull request's scripts:
       # they run in a container with no network, the source read-only, and a time
       # limit, so they cannot reach the threat detection that runs after this step.
+      # It needs this job's checkout (made when there is a patch) and fetches the head
+      # without credentials, which works for a public repository; in a private one the
+      # fetch fails and so does the step, closed.
       - name: The new properties hold
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -158,7 +161,8 @@ safe-outputs:
               -e HOME=/home/scout -e TMPDIR=/tmp -u "$(id -u):$(id -g)" --pids-limit 512 --memory 2g \
               -v "$w/src:/w:ro" -w /tmp scout-props timeout 300 python -I "/w/$f" 2>&1 </dev/null)" && rc=0 || rc=$?
             printf '%s\n' "$out" | tail -n 20
-            if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -q 'held'; then
+            # The exact last line the properties print: "<name>: properties held".
+            if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -qE '^[A-Za-z0-9_.-]+: properties held$'; then
               echo "::error file=$f::this property did not hold on the pull request's head (exit $rc); nothing is pushed"
               failed=1
             fi
@@ -257,7 +261,7 @@ Run these two commands once, exactly as written:
      <short head sha> (25 cases)."
    - Run each once from the repository root, with no argument, as one plain
      command: `/tmp/gh-aw/agent/venv/bin/python -I properties/<file>.py`. It must
-     print that its properties held; if not, drop it. Threat detection runs each
+     print `<name>: properties held` as its last line; if not, drop it. Threat detection runs each
      new file again and blocks the whole push if any fails, so one bad property
      loses the others too.
    - Commit the new files with a Conventional Commit message,

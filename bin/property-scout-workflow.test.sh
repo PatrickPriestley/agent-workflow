@@ -104,8 +104,11 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
+# The time limit is the container's own timeout (asserted from the log below); not every
+# runner has timeout(1), so the stub drops it.
+[ "${1:-}" = timeout ] && shift 2
 args=(); for a in "$@"; do args+=("${a/#$dst/$src}"); done
-[ "${args[2]:-}" = python ] && args[2]=python3
+[ "${args[0]:-}" = python ] && args[0]=python3
 exec env "${envs[@]/#HOME=*/HOME=$HOME}" "${args[@]}"
 STUB
 chmod +x "$R/bin/docker"
@@ -124,10 +127,16 @@ case_patch() {  # NAME, then files as path=content -> $R/NAME/aw-1.patch from a 
 holds='print("p: properties held")\n'
 fails='import sys\nsys.exit("AssertionError: counterexample")\n'
 quiet='print("ran")\n'
+heldfail='print("p: properties held")\nraise SystemExit(1)\n'
+nothold='print("p: properties not held")\n'
 case_patch good  "properties/good.py=$holds"
 case_patch bad   "properties/bad.py=$fails"
 case_patch quiet "properties/quiet.py=$quiet"
 case_patch mixed "properties/a.py=$holds" "properties/b.py=$fails"
+case_patch heldfail "properties/hf.py=$heldfail"
+case_patch nothold  "properties/nh.py=$nothold"
+case_patch editonly "properties/old.py=changed\n"
+case_patch other    "bin/new.py=$holds"
 mkdir -p "$R/none" "$R/rt-none" "$R/broken" "$R/rt-broken"
 printf 'From 0 Mon Sep 17 00:00:00 2001\nSubject: x\n\n---\n garbage\n' > "$R/broken/aw-1.patch"
 step_on() {  # NAME [build-fails] -> exit code of the step with that case's patch dir as /tmp/gh-aw
@@ -139,9 +148,19 @@ it "the run step was found in the workflow"; [ -n "$runstep" ] && ok || bad "no 
 it "a new property that holds passes, and so does a run with no patch"
 step_on good && ok || bad "refused a holding property: $(tail -5 "$R/good.out")"
 step_on none && ok || bad "refused no patch"
+grep -qF 'no patch: nothing to run' "$R/none.out" && ok || bad "no patch did not stop early: $(cat "$R/none.out")"
+assert_none() { [ ! -s "$R/docker.log" ] && ok || bad "docker was used: $(cat "$R/docker.log")"; }
+assert_none
+it "a patch with no new property file (an edit, or a file outside properties/) runs nothing"
+step_on editonly && ok || bad "an edit-only patch was refused: $(cat "$R/editonly.out")"
+grep -qF 'no new property files' "$R/editonly.out" && ok || bad "did not stop early"; assert_none
+step_on other && ok || bad "a non-property file was refused"; assert_none
 it "a property that fails, or that exits 0 without saying it held, blocks the push"
 step_on bad && bad "a failing property passed" || ok
 step_on quiet && bad "a property that never said it held passed" || ok
+it "the exit code and the exact held line are each required"
+step_on heldfail && bad "a property that said held but exited 1 passed" || ok
+step_on nothold && bad "'properties not held' passed" || ok
 it "every new property runs, and one failing among several blocks the push and is named"
 step_on mixed && bad "mixed passed" || ok
 grep -qF '== properties/b.py' "$R/mixed.out" && ok || bad "stopped before the second file: $(cat "$R/mixed.out")"
@@ -155,6 +174,9 @@ grep -q -- '--network none' "$R/docker.log" && ok || bad "no --network none: $(c
 grep -q -- '--read-only' "$R/docker.log" && ok || bad "not read-only"
 grep -q -- ':/w:ro' "$R/docker.log" && ok || bad "source not mounted read-only"
 grep -q -- 'scout-props timeout 300 python -I' "$R/docker.log" && ok || bad "no time limit"
+for flag in '-u ' '--tmpfs /tmp' '--tmpfs /home/scout' '--pids-limit 512' '--memory 2g' '-e HOME=/home/scout' '--rm'; do
+  grep -qF -- "$flag" "$R/docker.log" && ok || bad "missing $flag"
+done
 printf '%s' "$runstep" | grep -qE 'FROM python:3\.12-slim@sha256:[0-9a-f]{64}' && ok || bad "image not pinned by digest"
 
 it "this test runs in CI"
