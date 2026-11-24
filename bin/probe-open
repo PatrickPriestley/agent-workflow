@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""probe-open: check what the planter agent handed over, and build the probe's branch and key.
+
+  python3 -I bin/probe-open AGENT_OUTPUT.json --repo-dir DIR --out DIR --run-id ID --author 'Name <email>'
+
+AGENT_OUTPUT is gh-aw's agent_output.json; it must hold exactly one item of type open_probe
+with title, body, commit_message, patch (a unified diff from the repository root) and key
+(JSON: kind, loud, file, lines, terms, counterexample, false_claim, claim_terms).
+
+It refuses anything that is not a small, blind change to ordinary code: more than 3 files or 80
+changed lines; a workflow, an agent rules file, a test, a fixture, a property or the probe
+tools; a file that does not exist; the word probe (or planted, answer key) anywhere; AI
+attribution; a title that is not a Conventional Commit; a key that does not match the patch.
+
+On success it commits the patch on a new branch <type>/<slug>-<6 hex> from the current
+commit, and writes to --out: key.json (with id probe-<run-id>, planted_sha, pr null; the
+scorer adds the pull request), branch.txt, title.txt, body.md. Exit 0; 1 refused (the reason
+on stderr, the repository left as it was); 2 usage.
+"""
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+
+MAX_FILES, MAX_LINES = 3, 80
+PROTECTED = re.compile(r"(^|/)(\.github/|AGENTS\.md$|CLAUDE\.md$|AGENT-WORKFLOW\.md$|properties/|testdata/|fixtures/|docs/probes/)"
+                       r"|\.test\.|(^|/)test-[^/]*\.sh$|(^|/)bin/probe-")
+GIVEAWAY = re.compile(r"probe|planted|answer key", re.I)
+ATTRIBUTION = re.compile(r"^\s*(co-authored-by|claude-session)\s*:|generated (with|by) \[?(claude|codex|cursor|copilot|gemini|chatgpt)",
+                         re.I | re.M)
+TITLE = re.compile(r"^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?: \S.{0,90}$")
+KEY_TYPES = {"kind": str, "loud": bool, "file": str, "lines": list, "terms": list, "counterexample": str,
+             "false_claim": (str, type(None)), "claim_terms": list}
+
+
+class Refused(Exception):
+    pass
+
+
+def git(repo, *args, stdin=None, check=True):
+    out = subprocess.run(["git", "-C", repo, *args], input=stdin, capture_output=True, text=True)
+    if check and out.returncode != 0:
+        raise Refused(f"git {' '.join(args[:2])} failed: {out.stderr.strip()[:300]}")
+    return out
+
+
+def item_of(path):
+    try:
+        items = json.load(open(path, encoding="utf-8")).get("items", [])
+    except (OSError, ValueError) as e:
+        raise Refused(f"cannot read {path}: {e}")
+    found = [i for i in items if i.get("type") == "open_probe"]
+    if len(found) != 1:
+        raise Refused(f"expected one open_probe item, found {len(found)}")
+    i = found[0]
+    for f in ("title", "body", "commit_message", "patch", "key"):
+        if not isinstance(i.get(f), str) or not i[f].strip():
+            raise Refused(f"open_probe has no {f}")
+    # A diff pasted through a tool call can lose its final newline, which git calls corrupt.
+    if not i["patch"].endswith("\n"):
+        i["patch"] += "\n"
+    return i
+
+
+def check_text(i):
+    for f in ("title", "body", "commit_message", "patch"):
+        if GIVEAWAY.search(i[f]):
+            raise Refused(f"{f} gives the probe away ({GIVEAWAY.search(i[f]).group(0)!r})")
+    for f in ("title", "body", "commit_message"):
+        if ATTRIBUTION.search(i[f]):
+            raise Refused(f"{f} carries AI attribution")
+    if not TITLE.match(i["title"]) or not TITLE.match(i["commit_message"].splitlines()[0]):
+        raise Refused("title and commit subject must be Conventional Commits")
+
+
+def check_key(i):
+    try:
+        key = json.loads(i["key"])
+    except ValueError as e:
+        raise Refused(f"key is not JSON: {e}")
+    for f, t in KEY_TYPES.items():
+        if f not in key or not isinstance(key[f], t):
+            raise Refused(f"key.{f} is missing or of the wrong type")
+    if len(key["lines"]) != 2 or not all(isinstance(n, int) and n > 0 for n in key["lines"]) or key["lines"][0] > key["lines"][1]:
+        raise Refused("key.lines must be [first, last]")
+    return key
+
+
+def check_patch(repo, i, key):
+    stat = git(repo, "apply", "--numstat", "-", stdin=i["patch"], check=False)
+    if stat.returncode != 0:
+        raise Refused(f"the patch does not parse: {stat.stderr.strip()[:200]}")
+    files, changed = [], 0
+    for line in stat.stdout.splitlines():
+        add, rem, path = line.split("\t", 2)
+        files.append(path)
+        changed += int(add) + int(rem) if add.isdigit() and rem.isdigit() else MAX_LINES + 1
+    if not files or len(files) > MAX_FILES:
+        raise Refused(f"the patch touches {len(files)} files; 1 to {MAX_FILES} allowed")
+    if changed > MAX_LINES:
+        raise Refused(f"the patch changes {changed} lines; at most {MAX_LINES}")
+    for path in files:
+        if PROTECTED.search(path):
+            raise Refused(f"the patch touches {path}, which a probe may not")
+        if not os.path.isfile(os.path.join(repo, path)):
+            raise Refused(f"the patch touches {path}, which does not exist")
+    if key["file"] not in files:
+        raise Refused(f"key.file {key['file']} is not in the patch")
+    return files
+
+
+def main(argv):
+    opts, args, it = {}, [], iter(argv[1:])
+    for a in it:
+        if a in ("--repo-dir", "--out", "--run-id", "--author"):
+            opts[a] = next(it, None)
+        else:
+            args.append(a)
+    if len(args) != 1 or None in opts.values() or len(opts) != 4 or not re.fullmatch(r"\d+", opts["--run-id"] or ""):
+        print("usage: probe-open AGENT_OUTPUT.json --repo-dir DIR --out DIR --run-id ID --author 'Name <email>'", file=sys.stderr)
+        return 2
+    repo, out = opts["--repo-dir"], opts["--out"]
+    m = re.fullmatch(r"(.+?) <([^<>@\s]+@[^<>\s]+)>", opts["--author"])
+    if not m:
+        print("probe-open: --author takes 'Name <email>'", file=sys.stderr)
+        return 2
+    start_ref = git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if start_ref == "HEAD":
+        start_ref = git(repo, "rev-parse", "HEAD").stdout.strip()
+    try:
+        i = item_of(args[0])
+        check_text(i)
+        key = check_key(i)
+        check_patch(repo, i, key)
+        if git(repo, "apply", "--check", "-", stdin=i["patch"], check=False).returncode != 0:
+            raise Refused("the patch does not apply to the current commit")
+        kind = TITLE.match(i["title"]).group(1)
+        slug = re.sub(r"[^a-z0-9]+", "-", i["title"].split(": ", 1)[1].lower()).strip("-")[:48].strip("-")
+        branch = f"{kind}/{slug}-{secrets.token_hex(3)}"
+        git(repo, "checkout", "-q", "-b", branch)
+        git(repo, "apply", "-", stdin=i["patch"])
+        with open(os.path.join(repo, key["file"]), encoding="utf-8", errors="replace") as f:
+            length = sum(1 for _ in f)
+        if key["lines"][1] > length:
+            raise Refused(f"key.lines end at {key['lines'][1]}, past the end of {key['file']} ({length} lines)")
+        git(repo, "add", "-A")
+        env_author = ["-c", f"user.name={m.group(1)}", "-c", f"user.email={m.group(2)}"]
+        git(repo, *env_author, "commit", "-q", "-F", "-", stdin=i["commit_message"])
+        sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    except Refused as e:
+        # Every check runs before the commit, and the branch is made from the starting
+        # checkout without moving it; the patch only edits files that exist. So going back
+        # to where it started, and dropping the new branch, restores everything.
+        made = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
+        git(repo, "checkout", "-q", "-f", start_ref, check=False)
+        if made != start_ref and re.fullmatch(r"[a-z]+/.+-[0-9a-f]{6}", made):
+            git(repo, "branch", "-q", "-D", made, check=False)
+        print(f"probe-open: {e}", file=sys.stderr)
+        return 1
+    key.update({"id": f"probe-{opts['--run-id']}", "pr": None, "planted_sha": sha})
+    os.makedirs(out, exist_ok=True)
+    json.dump(key, open(os.path.join(out, "key.json"), "w"), indent=1)
+    open(os.path.join(out, "branch.txt"), "w").write(branch + "\n")
+    open(os.path.join(out, "title.txt"), "w").write(i["title"] + "\n")
+    open(os.path.join(out, "body.md"), "w").write(i["body"].rstrip() + "\n")
+    print(f"probe-open: {branch} at {sha[:7]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
