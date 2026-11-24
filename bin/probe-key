@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# probe-key: seal and open a probe's answer key, and the hash a probe pull request carries.
+#
+#   probe-key seal KEY.json > KEY.sealed    # needs PROBE_KEY; base64 text, safe to upload
+#   probe-key open KEY.sealed > KEY.json    # needs PROBE_KEY
+#   probe-key hash KEY.json                 # SHA-256 of the key, 64 hex digits
+#   probe-key check KEY.sealed HASH         # needs PROBE_KEY; 0 if it opens to a key with HASH
+#
+# The planter seals the key with the PROBE_KEY secret, keeps the sealed file as a run
+# artifact and puts the hash in the probe's pull request, so the key cannot change after
+# the loops have run. Only the scorer has PROBE_KEY; no agent workflow may.
+# Exit: 0 ok; 1 wrong secret, a sealed file that does not open, or a hash that differs;
+# 2 usage.
+set -uo pipefail
+usage() { echo "usage: probe-key seal|open KEY | hash KEY.json | check KEY.sealed HASH" >&2; exit 2; }
+need_secret() { [ -n "${PROBE_KEY:-}" ] || { echo "probe-key: PROBE_KEY is not set" >&2; exit 2; }; }
+need_file() { [ -f "${1:-}" ] || { echo "probe-key: no such file: ${1:-}" >&2; exit 2; }; }
+sha() { openssl dgst -sha256 -r | cut -c1-64; }
+# AES-256-CBC with a salted PBKDF2 key; LibreSSL (macOS) and OpenSSL take the same flags.
+enc() { openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass env:PROBE_KEY "$@"; }
+
+case "${1:-}" in
+  seal) need_secret; need_file "${2:-}"; enc -e -in "$2" | openssl base64 ;;
+  open)
+    need_secret; need_file "${2:-}"
+    # Into a file first, so a wrong secret prints nothing; then the bytes, unchanged.
+    tmp="$(mktemp "${TMPDIR:-/tmp}/probe-key.XXXXXX")"; trap 'rm -f "$tmp"' EXIT
+    openssl base64 -d -in "$2" | enc -d > "$tmp" 2>/dev/null ||
+      { echo "probe-key: cannot open $2 (wrong PROBE_KEY, or not a sealed key)" >&2; exit 1; }
+    cat "$tmp" ;;
+  hash) need_file "${2:-}"; sha < "$2" ;;
+  check)
+    need_secret; need_file "${2:-}"; [ -n "${3:-}" ] || usage
+    got="$(openssl base64 -d -in "$2" | enc -d 2>/dev/null | sha)" ||
+      { echo "probe-key: cannot open $2" >&2; exit 1; }
+    [ "$got" = "$3" ] || { echo "probe-key: $2 does not match $3" >&2; exit 1; }
+    echo "probe-key: $2 matches" ;;
+  *) usage ;;
+esac

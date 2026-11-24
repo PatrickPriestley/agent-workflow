@@ -1,0 +1,29 @@
+{
+ "pr": 37,
+ "head": "e6772afe04e5f3f394fea8ac79959e47f8e27846",
+ "checks": {
+  "test": "failure"
+ },
+ "review_comments": [
+  {
+   "path": "bin/pr-size",
+   "line": null,
+   "original_line": 61,
+   "body": "<!-- ocr-45081693783-1-bd08e82187a44099 -->\n![bug \u00b7 high](https://img.shields.io/badge/bug-high-red)\nRemoving `yarn.lock` from the exclude list means yarn lockfiles are now counted as reviewable lines."
+  }
+ ],
+ "comments": [
+  {
+   "body": "<!-- ocr-summary -->\n\ud83d\udd0d **OpenCodeReview** found **1** issue(s) in this PR."
+  },
+  {
+   "body": "## Failed\n\n- Workflow: `test`, step `pr-size`\n\n`yarn.lock` was dropped from the list of lockfiles excluded from the reviewable-line count.\n\n## Reproduced\n\nRan `bash /tmp/gh-aw/agent/ci/head/bin/pr-size.test.sh`: `passed=45 failed=2`.\n\n## Suggested fix\n\nIn `bin/pr-size`, restore `yarn.lock` to the list of excluded lockfiles.\n\n<!-- gh-aw-workflow-call-id: PatrickPriestley/agent-workflow/ci-diagnose -->\n"
+  },
+  {
+   "body": "**Cause**: `bin/pr-size` line 61: this PR's commit removed `yarn.lock` from the lockfile exclude loop.\n\n**Fix**: `bin/pr-size` \u2014 added `yarn.lock` back to the exclude loop.\n\n**Proved**: `bash bin/pr-size.test.sh` now reports `passed=47 failed=0`.\n\nPushed the fix. Please re-run `test`.\n\n<!-- gh-aw-workflow-call-id: PatrickPriestley/agent-workflow/ci-fix -->\n"
+  },
+  {
+   "body": "| Lockfiles ... never count as reviewable lines | **Failed on this PR's head**, held on `main` (25 cases) |\n\nAssertionError: lockfiles counted: {'Cargo.lock': 1, 'yarn.lock': 1}\n\nSo this is **a real bug introduced by this PR**: the diff removes `yarn.lock` from the excluded-lockfiles loop.\n\n<!-- gh-aw-workflow-call-id: PatrickPriestley/agent-workflow/property-scout -->\n"
+  }
+ ]
+}

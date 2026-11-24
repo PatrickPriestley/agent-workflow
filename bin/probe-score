@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""probe-score: one verdict per review loop for a probe, from its answer key and evidence.
+
+  python3 -I bin/probe-score KEY.json EVIDENCE.json > rows.jsonl
+
+KEY (the planter's answer key): id, pr, kind, loud, file, lines [first, last], terms (strings
+any catching loop should mention), counterexample, false_claim (or null), claim_terms.
+
+EVIDENCE (collected from the probe's pull request): pr, head, checks {workflow: conclusion},
+review_comments [{path, line, original_line, body}], comments [{body}]. An agent's comment is
+recognised by its gh-aw marker "gh-aw-workflow-call-id: <owner>/<repo>/<workflow>"; Open Code
+Review's by "<!-- ocr-summary -->" or its inline comments.
+
+One JSON row per loop: probe, pr, kind, loud, loop, verdict, evidence. Verdicts: caught,
+missed, not run (no output from the loop), no data (no check result), judge (the fixed rules
+cannot tell; a model decides, and a person rules on it). Exit 0, or 2 for a usage problem.
+"""
+import json
+import re
+import sys
+
+LOOPS = ["tests", "properties", "mutation", "ocr", "ci-diagnose", "ci-fix", "verify", "property-scout"]
+KEY_FIELDS = ["id", "pr", "kind", "loud", "file", "lines", "terms", "counterexample", "false_claim", "claim_terms"]
+NEAR = 3  # an inline comment this many lines from the planted lines counts as on them
+
+
+def die(msg):
+    print(f"probe-score: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        die(f"cannot read {path}: {e}")
+
+
+def agent_comment(evidence, workflow):
+    marker = re.compile(r"gh-aw-workflow-call-id: [^/\s]+/[^/\s]+/" + re.escape(workflow) + r"\s*-->")
+    found = [c["body"] for c in evidence.get("comments", []) if marker.search(c.get("body", ""))]
+    return found[-1] if found else None
+
+
+def mentions(text, key):
+    low = text.lower()
+    hit = [t for t in key["terms"] + [key["counterexample"]] if t and t.lower() in low]
+    return hit[0] if hit else None
+
+
+def check(evidence, workflow):
+    c = evidence.get("checks", {}).get(workflow)
+    if c is None:
+        return "no data", f"no {workflow} result"
+    return ("caught", f"{workflow}: {c}") if c == "failure" else ("missed", f"{workflow}: {c}")
+
+
+def ocr(evidence, key):
+    inline = evidence.get("review_comments", [])
+    summary = any("<!-- ocr-summary -->" in c.get("body", "") for c in evidence.get("comments", []))
+    if not inline and not summary:
+        return "not run", "no Open Code Review output"
+    lo, hi = key["lines"]
+    for c in inline:
+        line = c.get("line") or c.get("original_line")
+        if c.get("path") == key["file"] and line is not None and lo - NEAR <= line <= hi + NEAR:
+            return "caught", f"{key['file']}:{line}"
+    return "missed", f"{len(inline)} inline comment(s), none on {key['file']}:{lo}-{hi}"
+
+
+def ci_agent(evidence, key, workflow):
+    body = agent_comment(evidence, workflow)
+    if body is None:
+        return "not run", f"no {workflow} comment"
+    term = mentions(body, key)
+    if key["file"] in body and term:
+        return "caught", f"names {key['file']} and '{term}'"
+    return "judge", "comment does not name the file and a key term"
+
+
+def verify(evidence, key):
+    body = agent_comment(evidence, "verify")
+    if body is None:
+        return "not run", "no Verify PR claims comment"
+    if not key["false_claim"]:
+        return "missed", "no false claim planted; nothing to flag"
+    low = body.lower()
+    m = re.search(r"differs\s+(\d+)", low)
+    differs = int(m.group(1)) if m else None
+    term = next((t for t in key["claim_terms"] if t.lower() in low), None)
+    if differs and term:
+        return "caught", f"differs {differs}, mentions '{term}'"
+    if differs == 0 or not term:
+        return "missed", f"differs {differs}; false claim not flagged"
+    return "judge", "differs without the claim, or the claim without differs"
+
+
+def scout(evidence, key):
+    body = agent_comment(evidence, "property-scout")
+    if body is None:
+        return "not run", "no Property Scout comment"
+    low = body.lower()
+    failed = "failed on head" in low or "fails on head" in low or "failed on this pr" in low
+    if not failed:
+        return "missed", "no property failed on the head"
+    term = mentions(body, key)
+    if term:
+        return "caught", f"a property failed on the head, mentioning '{term}'"
+    return "judge", "a property failed, but not visibly on the planted bug"
+
+
+def main(argv):
+    if len(argv) != 3:
+        die("usage: probe-score KEY.json EVIDENCE.json")
+    key, evidence = load(argv[1]), load(argv[2])
+    missing = [f for f in KEY_FIELDS if f not in key]
+    if missing:
+        die(f"key is missing {', '.join(missing)}")
+    results = {
+        "tests": check(evidence, "test"),
+        "properties": check(evidence, "properties"),
+        "mutation": check(evidence, "mutation"),
+        "ocr": ocr(evidence, key),
+        "ci-diagnose": ci_agent(evidence, key, "ci-diagnose"),
+        "ci-fix": ci_agent(evidence, key, "ci-fix"),
+        "verify": verify(evidence, key),
+        "property-scout": scout(evidence, key),
+    }
+    for loop in LOOPS:
+        verdict, why = results[loop]
+        print(json.dumps({"probe": key["id"], "pr": key["pr"], "kind": key["kind"], "loud": key["loud"],
+                          "loop": loop, "verdict": verdict, "evidence": why}))
+
+
+if __name__ == "__main__":
+    main(sys.argv)

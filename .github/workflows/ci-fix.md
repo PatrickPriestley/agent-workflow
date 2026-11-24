@@ -74,6 +74,8 @@ tools:
     - "bash bin/mutate.test.sh"
     - "bash bin/ocr-workflow.test.sh"
     - "bash bin/pr-size.test.sh"
+    - "bash bin/probe-key.test.sh"
+    - "bash bin/probe-score.test.sh"
     - "bash bin/property-scout-workflow.test.sh"
     - "bash bin/red-check-workflow.test.sh"
     - "bash bin/verify-workflow.test.sh"
