@@ -5,7 +5,9 @@
 
 A probe is an open pull request labelled hold. It is ready when it was opened at least
 --min-age minutes ago (default 30), no workflow run on its branch is still queued, waiting or
-in progress (the review loops have finished), and it carries no score comment yet.
+in progress (the review loops have finished), it carries no score comment yet, and no
+probe-score run for it (run name "probe-score #<pr>") is going. A probe whose scoring failed
+twice is left for a person, so a probe that cannot be scored is not sent again every sweep.
 
 Its key is in the probe-key artifact of the planter run (probe-plant.lock.yml) that opened
 it: the one successful run that was running when the pull request was opened. With none, or
@@ -13,13 +15,16 @@ more than one, the probe is skipped and said so. A wrong match cannot score the 
 probe-score checks the key against the provenance hash on the planted commit first.
 
 Prints one JSON line {"pr", "key_run"} per ready probe, and a line on stderr for each probe it
-skips and why. Reads GitHub with `gh api` (GH_TOKEN). Exit 0; 1 GitHub failed; 2 usage.
+skips and why. A pull request GitHub describes oddly is skipped, not fatal. A full page of
+planter runs is warned about: only the latest 100 are searched. Reads GitHub with `gh api`
+(GH_TOKEN). Exit 0; 1 GitHub failed; 2 usage.
 """
 import datetime as dt
 import json
 import re
 import subprocess
 import sys
+from urllib.parse import quote
 
 GOING = {"queued", "waiting", "requested", "pending", "in_progress"}
 SCORED = ("Scored by probe-score", "### Probe probe-")
@@ -56,6 +61,8 @@ def main(argv):
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}", repo or ""):
             raise ValueError("repo")
         now = when(opts["--now"]) if opts.get("--now") else dt.datetime.now(dt.timezone.utc)
+        if now.tzinfo is None:
+            raise ValueError("--now needs a time zone")
         min_age = int(opts.get("--min-age") or 30)
     except (TypeError, KeyError, ValueError):
         print("usage: probe-ready --repo OWNER/NAME [--now ISO-TIME] [--min-age MINUTES]", file=sys.stderr)
@@ -67,14 +74,19 @@ def main(argv):
     try:
         pulls = [p for p in api(f"repos/{repo}/pulls?state=open&per_page=100")
                  if any(lab.get("name") == "hold" for lab in p.get("labels", []))]
-        planters = None
+        planters = scorers = None
         for p in pulls:
-            n, opened = p["number"], when(p["created_at"])
+            n = p.get("number")
+            try:
+                opened, ref = when(p["created_at"]), p["head"]["ref"]
+            except (KeyError, TypeError, AttributeError, ValueError) as e:
+                skip(n, f"cannot read it from GitHub ({type(e).__name__}: {e})")
+                continue
             age = int((now - opened).total_seconds() // 60)
             if age < min_age:
                 skip(n, f"opened {age} minutes ago; waiting for {min_age}")
                 continue
-            runs = api(f"repos/{repo}/actions/runs?branch={p['head']['ref']}&per_page=100").get("workflow_runs", [])
+            runs = api(f"repos/{repo}/actions/runs?branch={quote(ref, safe='')}&per_page=100").get("workflow_runs", [])
             going = [r for r in runs if r.get("status") in GOING]
             if going:
                 skip(n, f"{len(going)} run still going" if len(going) == 1 else f"{len(going)} runs still going")
@@ -83,8 +95,21 @@ def main(argv):
             if any(any(m in (c.get("body") or "") for m in SCORED) for c in comments):
                 skip(n, "already scored")
                 continue
+            if scorers is None:
+                scorers = api(f"repos/{repo}/actions/workflows/probe-score.yml/runs?per_page=100").get("workflow_runs", [])
+            mine = [r for r in scorers if r.get("display_title") == f"probe-score #{n}"]
+            if any(r.get("status") in GOING for r in mine):
+                skip(n, "being scored")
+                continue
+            failed = sum(r.get("conclusion") == "failure" for r in mine)
+            if failed >= 2:
+                skip(n, f"scoring failed {failed} times; left for a person")
+                continue
             if planters is None:
-                planters = api(f"repos/{repo}/actions/workflows/probe-plant.lock.yml/runs?per_page=50").get("workflow_runs", [])
+                planters = api(f"repos/{repo}/actions/workflows/probe-plant.lock.yml/runs?per_page=100").get("workflow_runs", [])
+                if len(planters) >= 100:
+                    print("probe-ready: only the latest 100 planter runs are searched; an older probe's run may be past them",
+                          file=sys.stderr)
             held = [r for r in planters if r.get("conclusion") == "success"
                     and when(r["created_at"]) <= opened <= when(r["updated_at"])]
             if len(held) != 1:

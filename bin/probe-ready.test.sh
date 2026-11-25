@@ -38,6 +38,10 @@ setup() {  # a clean slate: one ready probe, #69, planted by run 500
     "{\"workflow_runs\": [$(run 400 2026-11-25T14:04:02Z 2026-11-25T14:11:36Z), $(run 500 2026-11-25T16:41:51Z 2026-11-25T16:48:13Z), $(run 600 2026-11-25T18:00:00Z 2026-11-25T18:06:00Z)]}"
   api "repos/$R/actions/runs" '{"workflow_runs": []}'
   api "repos/$R/issues/69/comments" '[{"body": "Verify PR claims: matches 1"}]'
+  api "repos/$R/actions/workflows/probe-score.yml/runs" '{"workflow_runs": []}'
+}
+srun() {  # TITLE STATUS CONCLUSION -> a probe-score run
+  printf '{"id": 1, "display_title": "%s", "created_at": "2026-11-25T17:00:00Z", "updated_at": "2026-11-25T17:01:00Z", "status": "%s", "conclusion": "%s"}' "$1" "$2" "$3"
 }
 ready() {  # [extra args] -> $rc, stdout in $T/out, stderr in $T/err
   : > "$T/gh.log"
@@ -48,8 +52,8 @@ ready() {  # [extra args] -> $rc, stdout in $T/out, stderr in $T/err
 it "an open probe, old enough, with nothing running and no score, is ready, with the run that planted it"
 setup; ready; assert_eq 0 "$rc"
 assert_eq '{"pr": 69, "key_run": 500}' "$(cat "$T/out")"
-it "a pull request without the hold label is never a probe"
-grep -q '70' "$T/out" && bad "listed #70" || ok
+it "a pull request without the hold label is never a probe, even one opened inside a planter run"
+setup; ready; assert_eq '{"pr": 69, "key_run": 500}' "$(cat "$T/out")"
 it "a probe younger than 30 minutes waits"
 setup; NOW=2026-11-25T17:10:00Z ready; assert_eq "0 " "$rc $(cat "$T/out")"
 grep -q '#69: opened 22 minutes ago' "$T/err" && ok || bad "$(cat "$T/err")"
@@ -57,7 +61,7 @@ it "a probe with a run still going on its branch waits"
 setup; api "repos/$R/actions/runs" "{\"workflow_runs\": [$(run 9 2026-11-25T17:20:00Z 2026-11-25T17:21:00Z in_progress '')]}"
 ready; assert_eq "0 " "$rc $(cat "$T/out")"
 grep -q '#69: 1 run still going' "$T/err" && ok || bad "$(cat "$T/err")"
-grep -qF "repos/$R/actions/runs?branch=feat/a" "$T/gh.log" && ok || bad "did not ask for the branch's runs: $(cat "$T/gh.log")"
+grep -qF "repos/$R/actions/runs?branch=feat%2Fa&per_page=100" "$T/gh.log" && ok || bad "did not ask for the branch's runs: $(cat "$T/gh.log")"
 it "a queued or waiting run counts as going too; a finished one does not"
 for st in queued waiting requested pending; do
   setup; api "repos/$R/actions/runs" "{\"workflow_runs\": [$(run 9 2026-11-25T17:20:00Z 2026-11-25T17:21:00Z $st '')]}"
@@ -69,6 +73,31 @@ it "a probe already scored is not scored again"
 setup; api "repos/$R/issues/69/comments" '[{"body": "### Probe probe-500: dropped-alternative, silent\n\n| Loop | Verdict |"}]'
 ready; assert_eq "" "$(cat "$T/out")"
 grep -q '#69: already scored' "$T/err" && ok || bad "$(cat "$T/err")"
+it "the scorer's own close comment also counts as scored"
+setup; api "repos/$R/issues/69/comments" '[{"body": "Scored by probe-score (run 1); probes are never merged."}]'
+ready; assert_eq "" "$(cat "$T/out")"; grep -q '#69: already scored' "$T/err" && ok || bad "$(cat "$T/err")"
+it "a probe being scored now is not sent again"
+setup; api "repos/$R/actions/workflows/probe-score.yml/runs" "{\"workflow_runs\": [$(srun 'probe-score #69' in_progress '')]}"
+ready; assert_eq "" "$(cat "$T/out")"; grep -q '#69: being scored' "$T/err" && ok || bad "$(cat "$T/err")"
+it "a probe whose scoring failed once is tried again; twice, and it is left for a person"
+setup; api "repos/$R/actions/workflows/probe-score.yml/runs" "{\"workflow_runs\": [$(srun 'probe-score #69' completed failure)]}"
+ready; assert_eq '{"pr": 69, "key_run": 500}' "$(cat "$T/out")"
+setup; api "repos/$R/actions/workflows/probe-score.yml/runs" "{\"workflow_runs\": [$(srun 'probe-score #69' completed failure), $(srun 'probe-score #69' completed failure)]}"
+ready; assert_eq "" "$(cat "$T/out")"; grep -q '#69: scoring failed 2 times; left for a person' "$T/err" && ok || bad "$(cat "$T/err")"
+it "only that probe's scorer runs count: #690's are not #69's"
+setup; api "repos/$R/actions/workflows/probe-score.yml/runs" "{\"workflow_runs\": [$(srun 'probe-score #690' in_progress ''), $(srun 'probe-score #690' completed failure), $(srun 'probe-score #690' completed failure)]}"
+ready; assert_eq '{"pr": 69, "key_run": 500}' "$(cat "$T/out")"
+it "the branch is URL-encoded in the query, and the request asks for its runs"
+setup; api "repos/$R/pulls" "[$(pr 69 'feat/a+b&c' 2026-11-25T16:47:25Z)]"; ready
+grep -qF "repos/$R/actions/runs?branch=feat%2Fa%2Bb%26c&per_page=100" "$T/gh.log" && ok || bad "$(grep 'actions/runs?' "$T/gh.log")"
+it "a full page of planter runs is warned about: an older probe's run may be past it"
+setup; many="$(for i in $(seq 100); do printf '%s,' "$(run $((1000+i)) 2026-11-20T00:00:00Z 2026-11-20T00:05:00Z)"; done)"
+api "repos/$R/actions/workflows/probe-plant.lock.yml/runs" "{\"workflow_runs\": [${many%,}]}"
+ready; grep -q 'the latest 100 planter runs' "$T/err" && ok || bad "$(cat "$T/err")"
+it "a pull request GitHub describes oddly is skipped, and the others still listed"
+setup; api "repos/$R/pulls" "[{\"number\": 5, \"created_at\": \"2026-11-25T10:00:00Z\", \"head\": null, \"labels\": [{\"name\": \"hold\"}]}, $(pr 69 feat/a 2026-11-25T16:47:25Z)]"
+ready; assert_eq "0 {\"pr\": 69, \"key_run\": 500}" "$rc $(cat "$T/out")"
+grep -q '#5: cannot read' "$T/err" && ok || bad "$(cat "$T/err")"
 it "the planter run is the one that was running when the probe opened; with none, or two, it is skipped"
 setup; api "repos/$R/actions/workflows/probe-plant.lock.yml/runs" "{\"workflow_runs\": [$(run 400 2026-11-25T14:04:02Z 2026-11-25T14:11:36Z)]}"
 ready; assert_eq "" "$(cat "$T/out")"; grep -q '#69: no planter run' "$T/err" && ok || bad "$(cat "$T/err")"
@@ -91,6 +120,12 @@ ready; assert_eq 1 "$rc"; mv "$T/bin/gh" "$T/bin/gh.fail"; mv "$T/bin/gh.ok" "$T
 it "a bad repository or time is a usage error"
 setup; PATH="$T/bin:$PATH" STUB_LOG=/dev/null STUB_API="$T/api" python3 -I "$here/probe-ready" --repo 'a b' >/dev/null 2>&1; assert_eq 2 "$?"
 NOW=yesterday ready; assert_eq 2 "$rc"
+NOW=2026-11-25T17:30:00 ready; assert_eq 2 "$rc"
+setup; ready --min-age x; assert_eq 2 "$rc"
+ready --repo c/d; assert_eq 2 "$rc"
+PATH="$T/bin:$PATH" STUB_LOG=/dev/null STUB_API="$T/api" python3 -I "$here/probe-ready" --repo >/dev/null 2>&1; assert_eq 2 "$?"
+it "--min-age sets how long a probe waits"
+setup; ready --min-age 60; assert_eq "" "$(cat "$T/out")"; grep -q 'waiting for 60' "$T/err" && ok || bad "$(cat "$T/err")"
 
 it "this test runs in CI"
 grep -qF 'bash bin/probe-ready.test.sh' "$here/../.github/workflows/test.yml" && ok || bad "not in test.yml"

@@ -38,20 +38,31 @@ jobs:
         with:
           persist-credentials: false
       - name: Score each probe that is ready
+        shell: bash
         run: |
           set -u
           ready="$(python3 -I bin/probe-ready --repo "$GITHUB_REPOSITORY")"
           if [ -z "$ready" ]; then echo "no probe is ready to score"; exit 0; fi
-          echo "## Probes sent to probe-score" >> "$GITHUB_STEP_SUMMARY"
-          printf '%s\n' "$ready" | while IFS= read -r line; do
-            # Assigned first, so a line that is not a probe number and run id stops the step.
-            fields="$(printf '%s' "$line" | python3 -I -c '
+          echo "## Dispatched to probe-score" >> "$GITHUB_STEP_SUMMARY"
+          echo "Each is scored, stored and closed by its own probe-score run." >> "$GITHUB_STEP_SUMMARY"
+          # A bad line or a failed dispatch does not stop the others; the run fails at the end.
+          failed=0
+          while IFS= read -r line; do
+            if ! fields="$(printf '%s' "$line" | python3 -I -c '
           import json, sys
           d = json.load(sys.stdin)
           assert type(d["pr"]) is int and type(d["key_run"]) is int and d["pr"] > 0 and d["key_run"] > 0
-          print(d["pr"], d["key_run"])')"
+          print(d["pr"], d["key_run"])' 2>/dev/null)"; then
+              echo "::error::probe-ready gave a line that is not a probe number and run id: $line"
+              failed=1; continue
+            fi
             set -- $fields
-            gh workflow run probe-score.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" \
-              -f pr="$1" -f key_run="$2" -f close=true
-            echo "- #$1, key from run $2" >> "$GITHUB_STEP_SUMMARY"
-          done
+            if gh workflow run probe-score.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" \
+                -f pr="$1" -f key_run="$2" -f close=true; then
+              echo "- #$1, key from run $2" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::could not dispatch #$1"
+              failed=1
+            fi
+          done <<< "$ready"
+          exit "$failed"
