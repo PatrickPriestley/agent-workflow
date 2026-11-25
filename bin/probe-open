@@ -4,15 +4,18 @@
   python3 -I bin/probe-open AGENT_OUTPUT.json --repo-dir DIR --out DIR --run-id ID --author 'Name <email>'
 
 AGENT_OUTPUT is gh-aw's agent_output.json; it must hold exactly one item of type open_probe
-with title, body, commit_message, patch (a unified diff from the repository root) and key
-(JSON: kind, loud, file, lines, terms, counterexample, false_claim, claim_terms).
+with title, body, commit_message, edits and key. edits is JSON: a list of {path, old, new},
+applied in order, where old is exact text that must appear exactly once in path at that point;
+the agent never copies a diff, so whitespace it cannot see cannot break one. key is JSON: kind,
+loud, file, lines, terms, counterexample, false_claim, claim_terms.
 
 It refuses anything that is not a small, blind change to ordinary code: more than 3 files or 80
 changed lines; a workflow, an agent rules file, a test, a fixture, a property or the probe
 tools; a file that does not exist; the word probe (or planted, answer key) anywhere; AI
-attribution; a title that is not a Conventional Commit; a key that does not match the patch.
+attribution; a title that is not a Conventional Commit; a key that does not match the edits.
+The limits are checked on the diff git computes after the edits, not on the agent's account.
 
-On success it commits the patch on a new branch <type>/<slug>-<6 hex> from the current
+On success it commits the edits on a new branch <type>/<slug>-<6 hex> from the current
 commit, and writes to --out: key.json (with id probe-<run-id>, planted_sha, pr null; the
 scorer adds the pull request), branch.txt, title.txt, body.md. Exit 0; 1 refused (the reason
 on stderr, the repository left as it was); 2 usage.
@@ -55,19 +58,29 @@ def item_of(path):
     if len(found) != 1:
         raise Refused(f"expected one open_probe item, found {len(found)}")
     i = found[0]
-    for f in ("title", "body", "commit_message", "patch", "key"):
+    for f in ("title", "body", "commit_message", "edits", "key"):
         if not isinstance(i.get(f), str) or not i[f].strip():
             raise Refused(f"open_probe has no {f}")
-    # A diff pasted through a tool call can lose its final newline, which git calls corrupt.
-    if not i["patch"].endswith("\n"):
-        i["patch"] += "\n"
+    try:
+        edits = json.loads(i["edits"])
+    except ValueError as e:
+        raise Refused(f"edits is not JSON: {e}")
+    if not isinstance(edits, list) or not edits:
+        raise Refused("no edits")
+    for e in edits:
+        if not isinstance(e, dict) or set(e) != {"path", "old", "new"} or not all(isinstance(e[f], str) for f in e) or not e["path"] or not e["old"]:
+            raise Refused("each edit needs path, old and new, as strings, with old not empty")
+    i["edits"] = edits
     return i
 
 
 def check_text(i):
-    for f in ("title", "body", "commit_message", "patch"):
+    for f in ("title", "body", "commit_message"):
         if GIVEAWAY.search(i[f]):
             raise Refused(f"{f} gives the probe away ({GIVEAWAY.search(i[f]).group(0)!r})")
+    for e in i["edits"]:
+        if GIVEAWAY.search(e["new"]):
+            raise Refused(f"edits gives the probe away ({GIVEAWAY.search(e['new']).group(0)!r})")
     for f in ("title", "body", "commit_message"):
         if ATTRIBUTION.search(i[f]):
             raise Refused(f"{f} carries AI attribution")
@@ -88,26 +101,72 @@ def check_key(i):
     return key
 
 
-def check_patch(repo, i, key):
-    stat = git(repo, "apply", "--numstat", "-", stdin=i["patch"], check=False)
-    if stat.returncode != 0:
-        raise Refused(f"the patch does not parse: {stat.stderr.strip()[:200]}")
+def check_paths(repo, edits):
+    files = list(dict.fromkeys(e["path"] for e in edits))
+    if len(files) > MAX_FILES:
+        raise Refused(f"the change touches {len(files)} files; 1 to {MAX_FILES} allowed")
+    root = os.path.realpath(repo)
+    for path in files:
+        full = os.path.join(root, path)
+        # The path must name the file itself: no .., no .git, no backslash, and no symlink
+        # anywhere along it, so the file written is the file the checks looked at.
+        if (os.path.isabs(path) or "\\" in path or any(p in ("", ".", "..", ".git") for p in path.split("/"))
+                or os.path.relpath(os.path.realpath(full), root) != path):
+            raise Refused(f"the edits name {path!r}, which is not a plain path in the repository")
+        if PROTECTED.search(path):
+            raise Refused(f"the change touches {path}, which a probe may not")
+        if not os.path.isfile(full):
+            raise Refused(f"the change touches {path}, which does not exist")
+        # Only tracked files: the cleanup's checkout restores those, and an ignored file
+        # (.env, build output) is neither restored nor shown by git diff.
+        if git(root, "ls-files", "--error-unmatch", "--", path, check=False).returncode != 0:
+            raise Refused(f"the change touches {path}, which git does not track")
+    return files
+
+
+def apply_edits(repo, edits):
+    """Apply every edit in memory, then write the files; nothing is written if one fails."""
+    text = {}
+    for n, e in enumerate(edits, 1):
+        path = e["path"]
+        if path not in text:
+            try:
+                with open(os.path.join(repo, path), encoding="utf-8", newline="") as f:
+                    text[path] = f.read()
+            except (OSError, UnicodeError) as err:
+                raise Refused(f"cannot read {path} as UTF-8 text: {err}")
+        count = text[path].count(e["old"])
+        if count == 0:
+            raise Refused(f"edit {n}: the old text was not found in {path}")
+        if count > 1:
+            raise Refused(f"edit {n}: the old text appears {count} times in {path}; give more of it")
+        if e["old"] == e["new"]:
+            raise Refused(f"edit {n} changes nothing")
+        text[path] = text[path].replace(e["old"], e["new"])
+    for path, t in text.items():
+        try:
+            with open(os.path.join(repo, path), "w", encoding="utf-8", newline="") as f:
+                f.write(t)
+        except OSError as err:
+            raise Refused(f"cannot write {path}: {err}")
+
+
+def check_diff(repo, key):
+    """The limits, on the diff git sees, whatever the edits claimed."""
     files, changed = [], 0
-    for line in stat.stdout.splitlines():
+    for line in git(repo, "diff", "--numstat", "HEAD").stdout.splitlines():
         add, rem, path = line.split("\t", 2)
         files.append(path)
         changed += int(add) + int(rem) if add.isdigit() and rem.isdigit() else MAX_LINES + 1
     if not files or len(files) > MAX_FILES:
-        raise Refused(f"the patch touches {len(files)} files; 1 to {MAX_FILES} allowed")
+        raise Refused(f"the change touches {len(files)} files; 1 to {MAX_FILES} allowed")
     if changed > MAX_LINES:
-        raise Refused(f"the patch changes {changed} lines; at most {MAX_LINES}")
+        raise Refused(f"the diff changes {changed} lines; at most {MAX_LINES}")
     for path in files:
         if PROTECTED.search(path):
-            raise Refused(f"the patch touches {path}, which a probe may not")
-        if not os.path.isfile(os.path.join(repo, path)):
-            raise Refused(f"the patch touches {path}, which does not exist")
+            raise Refused(f"the change touches {path}, which a probe may not")
     if key["file"] not in files:
-        raise Refused(f"key.file {key['file']} is not in the patch")
+        raise Refused(f"key.file {key['file']} is not among the files edited")
     return files
 
 
@@ -129,18 +188,21 @@ def main(argv):
     start_ref = git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     if start_ref == "HEAD":
         start_ref = git(repo, "rev-parse", "HEAD").stdout.strip()
+    # Before the try: its cleanup forces a checkout, which would discard these changes.
+    if git(repo, "status", "--porcelain", check=False).stdout.strip():
+        print("probe-open: the checkout has uncommitted changes", file=sys.stderr)
+        return 1
     try:
         i = item_of(args[0])
         check_text(i)
         key = check_key(i)
-        check_patch(repo, i, key)
-        if git(repo, "apply", "--check", "-", stdin=i["patch"], check=False).returncode != 0:
-            raise Refused("the patch does not apply to the current commit")
+        check_paths(repo, i["edits"])
         kind = TITLE.match(i["title"]).group(1)
         slug = re.sub(r"[^a-z0-9]+", "-", i["title"].split(": ", 1)[1].lower()).strip("-")[:48].strip("-")
         branch = f"{kind}/{slug}-{secrets.token_hex(3)}"
         git(repo, "checkout", "-q", "-b", branch)
-        git(repo, "apply", "-", stdin=i["patch"])
+        apply_edits(repo, i["edits"])
+        check_diff(repo, key)
         with open(os.path.join(repo, key["file"]), encoding="utf-8", errors="replace") as f:
             length = sum(1 for _ in f)
         if key["lines"][1] > length:
@@ -151,7 +213,7 @@ def main(argv):
         sha = git(repo, "rev-parse", "HEAD").stdout.strip()
     except Refused as e:
         # Every check runs before the commit, and the branch is made from the starting
-        # checkout without moving it; the patch only edits files that exist. So going back
+        # checkout without moving it; the edits only change tracked files that exist. So going back
         # to where it started, and dropping the new branch, restores everything.
         made = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
         git(repo, "checkout", "-q", "-f", start_ref, check=False)
