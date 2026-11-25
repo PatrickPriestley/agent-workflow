@@ -99,6 +99,7 @@ tools:
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-properties.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-score-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-score.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/probe-store.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/property-scout-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/red-check-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/verify-workflow.test.sh"

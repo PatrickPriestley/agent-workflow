@@ -278,6 +278,35 @@ assert_eq "tie|main|1|user|text|tie-first tie|main|2|user|text|tie-first-2" \
 it "R8: and each query names its placeholder once, so that nothing else in it is left to fill in"
 assert_eq "1 1" "$(grep -c '<session id>' "$PG/q1.sql") $(grep -c '<words>' "$PG/q2.sql")"
 
+# ---- The probe loop's ledger (docs/plans/2026-11-24-probe-loop.md, Store) ----
+run1="insert into public.probe_runs (probe_id, scorer_run, pr, repository, kind, loud, file, first_line, last_line, planted_sha, caught, ran) values ('probe-45656703509', 45661678361, 69, 'PatrickPriestley/agent-workflow', 'dropped-alternative', false, 'bin/commit-gate', 20, 22, repeat('a', 40), 4, 6)"
+v1="insert into public.probe_verdicts (probe_id, scorer_run, loop, verdict, evidence) values ('probe-45656703509', 45661678361, 'verify', 'caught', 'differs 1, mentions Cursor')"
+it "probes: the hooks' key (anon) may insert a probe and its verdicts, each once"
+assert_eq "INSERT 0 1" "$(as_role anon "$run1")"
+has "$(as_role anon "$run1")" "duplicate key value violates unique constraint"
+assert_eq "INSERT 0 1" "$(as_role anon "$v1")"
+has "$(as_role anon "$v1")" "duplicate key value violates unique constraint"
+it "probes: the same probe scored by a later scorer run is new rows, not an update"
+assert_eq "INSERT 0 1" "$(as_role anon "$(printf '%s' "$run1" | sed 's/45661678361/45661678362/')")"
+it "probes: and the hooks' key can do nothing else with them"
+for t in probe_runs probe_verdicts; do
+  has "$(as_role anon "select count(*) from public.$t")" "permission denied for table $t"
+  has "$(as_role anon "update public.$t set probe_id = 'x'")" "permission denied for table $t"
+  has "$(as_role anon "delete from public.$t")" "permission denied for table $t"
+  has "$(as_role authenticated "select count(*) from public.$t")" "permission denied for table $t"
+done
+assert_eq "2 1" "$(as_role service_role "select (select count(*) from public.probe_runs) || ' ' || (select count(*) from public.probe_verdicts)")"
+it "probes: a verdict needs its probe, a loop and a verdict the scorer knows"
+has "$(as_role anon "$(printf '%s' "$v1" | sed 's/45661678361/1/')")" 'Key is not present in table "probe_runs"'
+has "$(as_role anon "$(printf '%s' "$v1" | sed "s/'verify'/'linter'/")")" "violates check constraint"
+has "$(as_role anon "$(printf '%s' "$v1" | sed "s/'caught'/'maybe'/; s/'verify'/'ocr'/")")" "violates check constraint"
+assert_eq "INSERT 0 1" "$(as_role anon "$(printf '%s' "$v1" | sed "s/'caught'/'failed'/; s/'verify'/'property-scout'/")")"
+it "probes: a run whose lines, counts, commit or id are malformed is refused"
+has "$(as_role anon "$(printf '%s' "$run1" | sed 's/20, 22/22, 20/; s/45661678361/7/')")" "violates check constraint"
+has "$(as_role anon "$(printf '%s' "$run1" | sed 's/4, 6)/7, 6)/; s/45661678361/8/')")" "violates check constraint"
+has "$(as_role anon "$(printf '%s' "$run1" | sed "s/repeat('a', 40)/'abc'/; s/45661678361/9/")")" "violates check constraint"
+has "$(as_role anon "$(printf '%s' "$run1" | sed "s/'probe-45656703509'/'x'/; s/45661678361/10/")")" "violates check constraint"
+
 echo
 echo "store schema: passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

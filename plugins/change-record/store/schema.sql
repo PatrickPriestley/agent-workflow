@@ -202,3 +202,52 @@ do $$ begin
     execute 'alter view public.transcript set (security_invoker = true)';
   end if;
 end $$;
+
+-- ---- The probe loop's ledger (docs/plans/2026-11-24-probe-loop.md, Store) ----
+--
+-- One row per scored probe and one per review loop per probe, inserted by the probe-score
+-- workflow (bin/probe-store) with the publishable key, after it scores a probe pull request.
+-- Scoring a probe again is new rows under the new scorer run, never an update. The answer
+-- key's own words (its terms, counterexample and false claim) stay in the sealed run
+-- artifact; what is kept here is what the scores are read from.
+--
+-- The hooks' key (role `anon`) may INSERT into both and nothing else; reading them is the
+-- read key's, for the weekly report and the improver.
+
+create table if not exists public.probe_runs (
+  probe_id    text    not null check (probe_id ~ '^probe-[0-9]{1,20}$'),  -- probe-<planter run>
+  scorer_run  bigint  not null check (scorer_run > 0),
+  pr          integer not null check (pr > 0),
+  repository  text    not null check (repository ~ '^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$'),
+  kind        text    not null check (length(kind) between 1 and 60),
+  loud        boolean not null,
+  file        text    not null check (length(file) between 1 and 300),
+  first_line  integer not null check (first_line >= 1),
+  last_line   integer not null check (last_line >= first_line),
+  planted_sha text    not null check (planted_sha ~ '^[0-9a-f]{40}$'),
+  caught      integer not null check (caught >= 0),
+  ran         integer not null check (ran >= caught),  -- loops that ran: not "not run", "failed" or "no data"
+  created_at  timestamptz not null default now(),
+  primary key (probe_id, scorer_run)
+);
+
+create table if not exists public.probe_verdicts (
+  probe_id   text   not null,
+  scorer_run bigint not null,
+  loop       text   not null check (loop in ('tests', 'properties', 'mutation', 'ocr', 'ci-diagnose', 'ci-fix', 'verify', 'property-scout')),
+  verdict    text   not null check (verdict in ('caught', 'missed', 'not run', 'failed', 'no data', 'judge')),
+  evidence   text   not null check (length(evidence) <= 2000),
+  created_at timestamptz not null default now(),
+  primary key (probe_id, scorer_run, loop),
+  foreign key (probe_id, scorer_run) references public.probe_runs (probe_id, scorer_run)
+);
+
+alter table public.probe_runs     enable row level security;
+alter table public.probe_verdicts enable row level security;
+revoke all on public.probe_runs, public.probe_verdicts from public, anon, authenticated;
+grant insert on public.probe_runs, public.probe_verdicts to anon;
+grant all on public.probe_runs, public.probe_verdicts to service_role;
+drop policy if exists probe_runs_insert on public.probe_runs;
+drop policy if exists probe_verdicts_insert on public.probe_verdicts;
+create policy probe_runs_insert on public.probe_runs for insert to anon with check (true);
+create policy probe_verdicts_insert on public.probe_verdicts for insert to anon with check (true);

@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""probe-store: keep a scored probe in the transcript store.
+
+  python3 -I bin/probe-store KEY.json ROWS.jsonl --scorer-run ID --repo OWNER/NAME
+
+KEY is the opened answer key; ROWS is what bin/probe-score printed for it. Sends one row to
+probe_runs (the probe, its pull request, kind, loudness, the bug's file and lines, the planted
+commit, and how many loops caught it of those that ran), then one row per loop to
+probe_verdicts, in one request (store/schema.sql). The key's own words (its terms,
+counterexample and false claim) are not sent: they stay in the sealed run artifact.
+
+The store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1), and the key the
+publishable insert-only key in AGENT_TRANSCRIPTS_INSERT_KEY, sent as the apikey header, as
+`transcripts push` sends it. It only inserts: a 409 means already stored. A scored probe is
+keyed by the scorer run, so scoring it again adds rows and changes none.
+
+Exit 0 stored (or already stored); 1 the store refused or did not answer; 2 usage.
+"""
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+NOT_RAN = ("not run", "failed", "no data")
+
+
+def say(m):
+    print(f"probe-store: {m}", file=sys.stderr)
+
+
+def post(url, key, table, body):
+    req = urllib.request.Request(f"{url}/rest/v1/{table}", method="POST", data=json.dumps(body).encode(),
+                                 headers={"apikey": key, "Content-Type": "application/json", "Prefer": "return=minimal"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, ""
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(300).decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError) as e:
+        return None, str(getattr(e, "reason", e))
+
+
+def main(argv):
+    opts, args, it = {}, [], iter(argv[1:])
+    for a in it:
+        if a in ("--scorer-run", "--repo"):
+            opts[a] = next(it, None)
+        else:
+            args.append(a)
+    if (len(args) != 2 or len(opts) != 2 or not re.fullmatch(r"[1-9][0-9]{0,19}", opts.get("--scorer-run") or "")
+            or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}", opts.get("--repo") or "")):
+        say("usage: probe-store KEY.json ROWS.jsonl --scorer-run ID --repo OWNER/NAME")
+        return 2
+    url = (os.environ.get("AGENT_TRANSCRIPTS_URL") or "").rstrip("/")
+    key = os.environ.get("AGENT_TRANSCRIPTS_INSERT_KEY") or ""
+    if not url or not key:
+        say("AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY are both needed")
+        return 2
+    u = urlsplit(url)
+    if u.scheme != "https" and not (u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")):
+        say(f"the store must be https, not {u.scheme}://{u.hostname}")
+        return 2
+    try:
+        k = json.load(open(args[0], encoding="utf-8"))
+        rows = [json.loads(line) for line in open(args[1], encoding="utf-8") if line.strip()]
+        run_id = int(opts["--scorer-run"])
+        run = {"probe_id": k["id"], "scorer_run": run_id, "pr": int(k["pr"]), "repository": opts["--repo"],
+               "kind": k["kind"], "loud": bool(k["loud"]), "file": k["file"],
+               "first_line": int(k["lines"][0]), "last_line": int(k["lines"][1]), "planted_sha": k["planted_sha"],
+               "caught": sum(r["verdict"] == "caught" for r in rows),
+               "ran": sum(r["verdict"] not in NOT_RAN for r in rows)}
+        verdicts = [{"probe_id": k["id"], "scorer_run": run_id, "loop": r["loop"], "verdict": r["verdict"],
+                     "evidence": str(r["evidence"])[:2000]} for r in rows]
+    except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
+        say(f"cannot read the key or the rows: {e}")
+        return 2
+    if not verdicts:
+        say("no verdict rows")
+        return 2
+
+    for table, body in (("probe_runs", run), ("probe_verdicts", verdicts)):
+        status, detail = post(url, key, table, body)
+        if status == 409:
+            print(f"probe-store: {table}: already stored")
+        elif status is not None and 200 <= status < 300:
+            print(f"probe-store: {table}: stored {1 if isinstance(body, dict) else len(body)} row(s)")
+        else:
+            say(f"{table}: the store answered {status if status is not None else 'nothing'}: {detail.strip()[:200]}")
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -83,6 +83,7 @@ tools:
     - "bash bin/probe-properties.test.sh"
     - "bash bin/probe-score-workflow.test.sh"
     - "bash bin/probe-score.test.sh"
+    - "bash bin/probe-store.test.sh"
     - "bash bin/property-scout-workflow.test.sh"
     - "bash bin/red-check-workflow.test.sh"
     - "bash bin/verify-workflow.test.sh"

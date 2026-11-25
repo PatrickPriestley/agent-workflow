@@ -140,7 +140,8 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
 ## Phases
 1. `bin/probe-key`, `bin/probe-score` and their tests, with #37 and #45 as known answers;
    then an evidence collector and the planter and scorer workflows, run by hand.
-   Then `probe_runs` and `probe_verdicts` in the store, inserted by `probe-score`.
+   Then `probe_runs` and `probe_verdicts` in the store, inserted by `probe-score`
+   (`bin/probe-store`; done 2026-11-25, once `store/schema.sql` is run in the project).
 2. Weekly schedule and a report issue with the measures above, read from the store. The
    `feedback` table and its job start recording everyday feedback: the outcomes on each
    merged pull request and the owner's reactions and `wrong:` replies. No model calls.
