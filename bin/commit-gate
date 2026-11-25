@@ -17,7 +17,9 @@ set -uo pipefail
 self="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 marker="# installed by commit-gate"
 hooks=(pre-commit commit-msg)
-attribution_re='^[[:space:]]*(>[[:space:]]*)?((co-authored-by|claude-session)[[:space:]]*:|([^[:alnum:][:space:]]{1,8}[[:space:]]*)?generated (with|by) \[?(claude|codex|cursor|copilot|gemini|chatgpt))'
+# Recognized assistant names in "generated with/by ..." footers: claude, codex, copilot, gemini,
+# chatgpt, windsurf and tabnine.
+attribution_re='^[[:space:]]*(>[[:space:]]*)?((co-authored-by|claude-session)[[:space:]]*:|([^[:alnum:][:space:]]{1,8}[[:space:]]*)?generated (with|by) \[?(claude|codex|copilot|gemini|chatgpt|windsurf|tabnine))'
 conventional_re='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?: [^[:space:]]'
 git_subject_re='^(Merge |Revert "|fixup! |squash! |amend! )'
 
