@@ -124,6 +124,21 @@ jobs:
       - name: Post the scores on the probe
         run: gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$W/score.md"
 
+      - name: Keep the scores in the store
+        # The probe ledger (docs/plans/2026-11-24-probe-loop.md, Store): insert-only, with the
+        # publishable key, which may add rows and nothing else (store/schema.sql). A refusal shows
+        # on the run but does not stop the probe being closed.
+        continue-on-error: true
+        env:
+          AGENT_TRANSCRIPTS_URL: ${{ secrets.AGENT_TRANSCRIPTS_URL }}
+          AGENT_TRANSCRIPTS_INSERT_KEY: ${{ secrets.AGENT_TRANSCRIPTS_INSERT_KEY }}
+        run: |
+          set -u
+          if [ -z "$AGENT_TRANSCRIPTS_URL" ] || [ -z "$AGENT_TRANSCRIPTS_INSERT_KEY" ]; then
+            echo "::warning::the AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY secrets are not both set: the scores are not stored"; exit 0
+          fi
+          python3 -I bin/probe-store "$W/key.json" "$W/rows.jsonl" --scorer-run "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+
       - name: Close the probe
         if: inputs.close
         run: gh pr close "$PR" --repo "$GITHUB_REPOSITORY" --comment "Scored by probe-score (run $GITHUB_RUN_ID); probes are never merged."

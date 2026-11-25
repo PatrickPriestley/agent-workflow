@@ -8,6 +8,7 @@ pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n       %s\n' "$CURRENT" "$1"; }
+assert_eq() { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
 has() { printf '%s' "$1" | grep -qF -- "$2" && ok || bad "missing [$2]"; }
 lacks() { printf '%s' "$1" | grep -qE -- "$2" && bad "unexpected [$2]" || ok; }
 
@@ -45,6 +46,15 @@ has "$(step 'Collect the evidence')" '--sha "$sha"'
 has "$w" 'bin/probe-score --markdown'; has "$w" 'retention-days: 90'; has "$w" 'gh pr comment "$PR"'
 it "closing is optional and never deletes the branch"
 has "$(step 'Close the probe')" 'if: inputs.close'; lacks "$w" 'delete-branch|git push'
+it "the scores are kept in the store after they are posted and before the probe is closed, with the insert key in that step alone"
+kstep="$(step 'Keep the scores in the store')"
+has "$kstep" 'python3 -I bin/probe-store "$W/key.json" "$W/rows.jsonl" --scorer-run "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"'
+has "$kstep" 'AGENT_TRANSCRIPTS_INSERT_KEY: ${{ secrets.AGENT_TRANSCRIPTS_INSERT_KEY }}'
+has "$kstep" 'continue-on-error: true'
+assert_eq 1 "$(printf '%s\n' "$w" | grep -c 'secrets.AGENT_TRANSCRIPTS_INSERT_KEY')"
+printf '%s\n' "$w" | awk '/gh pr comment/ {c=NR} /bin\/probe-store/ {s=NR} /gh pr close/ {x=NR} END {exit !(c && s && x && c < s && s < x)}' && ok || bad "not between the comment and the close"
+it "without the store's secrets the step warns and stores nothing"
+has "$kstep" "::warning::the AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY secrets are not both set"
 it "GitHub accepts the file: no runner context in workflow- or job-level env, where it is not available"
 # GitHub rejects the whole file, so it cannot be dispatched and each push records a failed run.
 bad_env="$(printf '%s\n' "$w" | awk '/^env:$/ || /^    env:$/ {e=length($0) - length(ltrim($0)); in_env=1; next}

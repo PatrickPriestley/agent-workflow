@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# probe-properties: a silent probe must leave the repository's own properties for its file
+# holding, or it is not silent (#69: properties/commit_gate.py caught a "silent" probe).
+#
+#   bash bin/probe-properties KEY.json REPO_DIR
+#
+# KEY is the probe's answer key (loud, file). REPO_DIR is the checkout of the planted branch.
+# For a silent probe, each tracked properties/*.py that names key.file is run against REPO_DIR
+# in the container Property Scout's guard uses: no network, the source read-only, five minutes.
+# The planted code is untrusted and later steps of the job hold the probe's token, so it never
+# runs on the runner itself. A property holds only when it exits 0 and its last line is
+# "<name>: properties held".
+#
+# Exit 0: a loud probe, no property names the file, or every one held. 1: one did not hold, or
+# the image did not build (the probe is refused). 2: usage.
+set -u
+if [ "$#" -ne 2 ] || [ ! -d "$2/.git" ]; then
+  echo "usage: probe-properties KEY.json REPO_DIR (a git checkout)" >&2; exit 2
+fi
+key="$1"; repo="$(cd "$2" && pwd)"
+fields="$(python3 -I -c '
+import json, sys
+k = json.load(open(sys.argv[1]))
+assert isinstance(k["loud"], bool) and isinstance(k["file"], str) and k["file"]
+print("loud" if k["loud"] else "silent", k["file"])' "$key" 2>/dev/null)" || { echo "probe-properties: $key is not a key with loud and file" >&2; exit 2; }
+mode="${fields%% *}"; file="${fields#* }"
+if [ "$mode" = loud ]; then echo "a loud probe: the properties are not checked"; exit 0; fi
+
+props="$(git -C "$repo" ls-files 'properties/*.py' | while IFS= read -r p; do
+  grep -qF -- "$file" "$repo/$p" && echo "$p"; done)"
+if [ -z "$props" ]; then echo "no property names $file"; exit 0; fi
+
+docker build -q -t probe-props - <<'IMAGE' >/dev/null || { echo "::error::cannot build the property image; the probe is refused"; exit 1; }
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null && rm -rf /var/lib/apt/lists/* && pip install -q --no-cache-dir 'hegeltest==0.5.1'
+IMAGE
+failed=0
+while IFS= read -r p; do
+  echo "== $p"
+  out="$(docker run --rm --network none --read-only --tmpfs /tmp:exec --tmpfs /home/props \
+    -e HOME=/home/props -e TMPDIR=/tmp -u "$(id -u):$(id -g)" --pids-limit 512 --memory 2g \
+    -v "$repo:/w:ro" -w /tmp probe-props timeout 300 python -I "/w/$p" 2>&1 </dev/null)" && rc=0 || rc=$?
+  printf '%s\n' "$out" | tail -n 10
+  if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | tail -n 1 | grep -qE '^[A-Za-z0-9_.-]+: properties held$'; then
+    echo "::error file=$p::$p did not hold on the planted branch (exit $rc): the probe is not silent, so it is refused"
+    failed=1
+  fi
+done <<EOF
+$props
+EOF
+exit "$failed"

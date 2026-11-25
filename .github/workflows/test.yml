@@ -73,6 +73,10 @@ jobs:
         run: bash bin/probe-score-workflow.test.sh
       - name: probe-open
         run: bash bin/probe-open.test.sh
+      - name: probe-properties
+        run: bash bin/probe-properties.test.sh
+      - name: probe-store
+        run: bash bin/probe-store.test.sh
       - name: agent-session-collect
         run: bash bin/agent-session-collect.test.sh
       - name: agent-sessions workflow
