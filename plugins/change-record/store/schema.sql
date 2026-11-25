@@ -251,3 +251,41 @@ drop policy if exists probe_runs_insert on public.probe_runs;
 drop policy if exists probe_verdicts_insert on public.probe_verdicts;
 create policy probe_runs_insert on public.probe_runs for insert to anon with check (true);
 create policy probe_verdicts_insert on public.probe_verdicts for insert to anon with check (true);
+
+-- ---- The weekly probe report (docs/plans/2026-11-24-probe-loop.md, Phase 2) ----
+--
+-- probe-report.yml writes the week's report to its run summary with the publishable key, which
+-- may read no table. These two functions are all it may call: they run as their owner and
+-- return totals per loop and an outline of the recent probes, from each probe's latest scoring
+-- only, never a verdict's evidence. The report is not posted where the review agents read.
+
+create or replace function public.probe_report_loops()
+returns table (loop text, probes bigint, caught bigint, missed bigint, not_run bigint, failed bigint,
+               no_data bigint, judge bigint)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with latest as (
+    select distinct on (r.probe_id) r.probe_id, r.scorer_run
+    from public.probe_runs r order by r.probe_id, r.scorer_run desc
+  )
+  select v.loop, count(*),
+         count(*) filter (where v.verdict = 'caught'),  count(*) filter (where v.verdict = 'missed'),
+         count(*) filter (where v.verdict = 'not run'), count(*) filter (where v.verdict = 'failed'),
+         count(*) filter (where v.verdict = 'no data'), count(*) filter (where v.verdict = 'judge')
+  from public.probe_verdicts v join latest l on l.probe_id = v.probe_id and l.scorer_run = v.scorer_run
+  group by v.loop order by v.loop
+$$;
+
+create or replace function public.probe_report_probes(max_rows integer default 12)
+returns table (probe_id text, pr integer, kind text, loud boolean, file text, caught integer, ran integer,
+               scored_at timestamptz)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select * from (
+    select distinct on (r.probe_id) r.probe_id, r.pr, r.kind, r.loud, r.file, r.caught, r.ran, r.created_at
+    from public.probe_runs r order by r.probe_id, r.scorer_run desc
+  ) latest order by latest.created_at desc, latest.probe_id limit greatest(least(max_rows, 100), 0)
+$$;
+
+revoke all on function public.probe_report_loops(), public.probe_report_probes(integer) from public, anon, authenticated;
+grant execute on function public.probe_report_loops(), public.probe_report_probes(integer) to anon, service_role;

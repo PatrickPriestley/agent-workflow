@@ -321,6 +321,36 @@ bad_run "s/4, 6)/7, 6)/" probe_runs_check1
 has "$(as_role anon "$(printf '%s' "$v1" | sed "s/'differs 1, mentions Cursor'/repeat('e', 2001)/")")" 'violates check constraint "probe_verdicts_evidence_check"'
 assert_eq "INSERT 0 1" "$(as_role anon "$(printf '%s' "$v1" | sed "s/'differs 1, mentions Cursor'/repeat('e', 2000)/; s/'verify'/'mutation'/")")"
 
+# ---- The weekly probe report: two functions the publishable key may call ----
+# A later scoring of the same probe: only it counts in the report.
+v2="insert into public.probe_verdicts (probe_id, scorer_run, loop, verdict, evidence) values ('probe-45656703509', 45661678362, 'verify', 'missed', 'secret evidence text')"
+assert_eq "INSERT 0 1" "$(as_role anon "$v2")"
+other="insert into public.probe_runs (probe_id, scorer_run, pr, repository, kind, loud, file, first_line, last_line, planted_sha, caught, ran) values ('probe-45630016303', 45717183157, 68, 'PatrickPriestley/agent-workflow', 'off-by-one', true, 'bin/pr-size', 8, 12, repeat('b', 40), 1, 5)"
+assert_eq "INSERT 0 1" "$(as_role anon "$other")"
+assert_eq "INSERT 0 1" "$(as_role anon "insert into public.probe_verdicts (probe_id, scorer_run, loop, verdict, evidence) values ('probe-45630016303', 45717183157, 'verify', 'caught', 'x')")"
+it "report: the hooks' key may call the loop totals, which count each probe's latest scoring only"
+assert_eq "verify|2|1|1|0|0|0|0" "$(as_role anon "select string_agg(concat_ws('|', loop, probes, caught, missed, not_run, failed, no_data, judge), ';') from public.probe_report_loops()")"
+it "report: and the recent probes, newest first, latest scoring each, with no evidence"
+assert_eq "probe-45630016303|68|off-by-one|t|bin/pr-size|1|5;probe-45656703509|69|dropped-alternative|f|bin/commit-gate|4|6" \
+  "$(as_role anon "select string_agg(concat_ws('|', probe_id, pr, kind, loud, file, caught, ran), ';' order by scored_at desc, probe_id) from public.probe_report_probes(12)")"
+assert_eq "1" "$(as_role anon "select count(*) from public.probe_report_probes(1)")"
+it "report: neither function returns evidence, and the key still cannot read the tables"
+for f in probe_report_loops probe_report_probes; do
+  assert_eq "f" "$(sql "select exists (select 1 from pg_proc p where p.proname = '$f' and array_to_string(p.proargnames, ',') like '%evidence%')")"
+done
+has "$(as_role anon "select count(*) from public.probe_verdicts")" "permission denied for table probe_verdicts"
+has "$(as_role anon "select evidence from public.probe_verdicts")" "permission denied for table probe_verdicts"
+it "report: a signed-in user, or any other role, may not call them"
+for r in authenticated someone; do
+  has "$(as_role $r "select count(*) from public.probe_report_loops()")" "permission denied for function probe_report_loops"
+  has "$(as_role $r "select count(*) from public.probe_report_probes(12)")" "permission denied for function probe_report_probes"
+done
+it "report: they run as their owner with a fixed search path, so a caller's schema cannot stand in for public"
+assert_eq "true true" "$(sql "select string_agg(p.prosecdef::text, ' ' order by p.proname) from pg_proc p where p.proname in ('probe_report_loops', 'probe_report_probes')")"
+assert_eq "search_path=public, pg_temp;search_path=public, pg_temp" "$(sql "select string_agg(array_to_string(p.proconfig, ','), ';' order by p.proname) from pg_proc p where p.proname in ('probe_report_loops', 'probe_report_probes')")"
+it "report: schema.sql runs again over the functions with nothing to say"
+out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
+
 echo
 echo "store schema: passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

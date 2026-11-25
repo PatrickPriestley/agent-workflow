@@ -152,7 +152,11 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
    b. The planter on a weekly schedule (Tuesday 06:41 UTC, a silent probe of any kind; done
       2026-11-25). Still to come: one clean probe (no bug) a month, which needs the scorer
       to read a loop's finding on a clean probe as a false alarm.
-   c. The weekly report issue, read from the store.
+   c. The weekly report, read from the store (done 2026-11-25): `probe-report.yml` writes it to
+      its run's summary, not an issue, because the review agents read this repository's issues
+      and pull requests and must not learn which are probes. It reads with the publishable key
+      through two report functions (`probe_report_loops`, `probe_report_probes`), so the secret
+      key stays off GitHub.
    d. A sweep that closes any probe left open and deletes probe branches.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The
