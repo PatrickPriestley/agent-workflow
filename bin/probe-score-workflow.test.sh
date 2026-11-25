@@ -8,6 +8,7 @@ pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n       %s\n' "$CURRENT" "$1"; }
+assert_eq() { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
 has() { printf '%s' "$1" | grep -qF -- "$2" && ok || bad "missing [$2]"; }
 lacks() { printf '%s' "$1" | grep -qE -- "$2" && bad "unexpected [$2]" || ok; }
 

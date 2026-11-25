@@ -301,11 +301,25 @@ has "$(as_role anon "$(printf '%s' "$v1" | sed 's/45661678361/1/')")" 'Key is no
 has "$(as_role anon "$(printf '%s' "$v1" | sed "s/'verify'/'linter'/")")" "violates check constraint"
 has "$(as_role anon "$(printf '%s' "$v1" | sed "s/'caught'/'maybe'/; s/'verify'/'ocr'/")")" "violates check constraint"
 assert_eq "INSERT 0 1" "$(as_role anon "$(printf '%s' "$v1" | sed "s/'caught'/'failed'/; s/'verify'/'property-scout'/")")"
-it "probes: a run whose lines, counts, commit or id are malformed is refused"
-has "$(as_role anon "$(printf '%s' "$run1" | sed 's/20, 22/22, 20/; s/45661678361/7/')")" "violates check constraint"
-has "$(as_role anon "$(printf '%s' "$run1" | sed 's/4, 6)/7, 6)/; s/45661678361/8/')")" "violates check constraint"
-has "$(as_role anon "$(printf '%s' "$run1" | sed "s/repeat('a', 40)/'abc'/; s/45661678361/9/")")" "violates check constraint"
-has "$(as_role anon "$(printf '%s' "$run1" | sed "s/'probe-45656703509'/'x'/; s/45661678361/10/")")" "violates check constraint"
+it "probes: each check refuses its own fault, one fault per row, named"
+# One field wrong at a time (checks come before the key, so the scorer run can stay); the
+# answer names the constraint that refused it.
+bad_run() {  # SED-EXPRESSION CONSTRAINT
+  has "$(as_role anon "$(printf '%s' "$run1" | sed "$1")")" "violates check constraint \"$2\""
+}
+bad_run "s/'probe-45656703509'/'x'/" probe_runs_probe_id_check
+bad_run "s/45661678361/0/" probe_runs_scorer_run_check
+bad_run "s/, 69, /, 0, /" probe_runs_pr_check
+bad_run "s|'PatrickPriestley/agent-workflow'|'no slash'|" probe_runs_repository_check
+bad_run "s/'dropped-alternative'/''/" probe_runs_kind_check
+bad_run "s|'bin/commit-gate'|''|" probe_runs_file_check
+bad_run "s/20, 22/0, 22/" probe_runs_first_line_check
+bad_run "s/20, 22/22, 20/" probe_runs_check
+bad_run "s/repeat('a', 40)/'abc'/" probe_runs_planted_sha_check
+bad_run "s/4, 6)/-1, 6)/" probe_runs_caught_check
+bad_run "s/4, 6)/7, 6)/" probe_runs_check1
+has "$(as_role anon "$(printf '%s' "$v1" | sed "s/'differs 1, mentions Cursor'/repeat('e', 2001)/")")" 'violates check constraint "probe_verdicts_evidence_check"'
+assert_eq "INSERT 0 1" "$(as_role anon "$(printf '%s' "$v1" | sed "s/'differs 1, mentions Cursor'/repeat('e', 2000)/; s/'verify'/'mutation'/")")"
 
 echo
 echo "store schema: passed=$pass failed=$fail"

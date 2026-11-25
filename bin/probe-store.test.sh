@@ -21,10 +21,20 @@ class H(http.server.BaseHTTPRequestHandler):
         with open(log, "a") as f:
             f.write(json.dumps({"path": self.path, "apikey": self.headers.get("apikey"),
                                 "prefer": self.headers.get("Prefer"), "body": json.loads(body)}) + "\n")
-        status = json.load(open(answers)).get(self.path.split("?")[0], 201)
-        self.send_response(status); self.end_headers()
+        answer = json.load(open(answers)).get(self.path.split("?")[0], 201)
+        status, code = (answer, "23505") if isinstance(answer, int) else (answer["status"], answer.get("code", ""))
+        self.send_response(status)
+        if status in (301, 302, 307, 308):
+            self.send_header("Location", "http://127.0.0.1:%d/redirected" % self.server.server_port)
+        self.end_headers()
         if status >= 400:
-            self.wfile.write(b'{"code":"23505","message":"duplicate key"}' if status == 409 else b'{"message":"boom"}')
+            # The error body echoes the key, as a careless proxy might: it must never be printed.
+            self.wfile.write(json.dumps({"code": code if status == 409 else "XX000",
+                                         "message": "refused for " + str(self.headers.get("apikey"))}).encode())
+    def do_GET(self):  # where a followed redirect would land
+        with open(log, "a") as f:
+            f.write(json.dumps({"path": self.path, "apikey": self.headers.get("apikey"), "prefer": None, "body": None}) + "\n")
+        self.send_response(200); self.end_headers()
     def log_message(self, *a): pass
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(log + ".port", "w").write(str(s.server_port))
@@ -33,7 +43,9 @@ PY
 printf '{}' > "$T/answers.json"
 python3 -I "$T/server.py" "$T/log" "$T/answers.json" & srv=$!
 trap 'kill "$srv" 2>/dev/null; [ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
-for _ in $(seq 50); do [ -s "$T/log.port" ] && break; sleep 0.1; done
+# macOS runners can take seconds to start it (#70's first run gave up at 5): wait 30, then stop.
+for _ in $(seq 300); do [ -s "$T/log.port" ] && break; sleep 0.1; done
+[ -s "$T/log.port" ] || { echo "the stand-in server did not start in 30 seconds"; exit 1; }
 URL="http://127.0.0.1:$(cat "$T/log.port")"
 
 # The rows probe-score writes for the #45 known answer, and its key.
@@ -77,6 +89,16 @@ printf '{"/rest/v1/probe_runs": 409}' > "$T/answers.json"; store "${std[@]}"; as
 assert_eq 2 "$(grep -c . "$T/log")"
 printf '{"/rest/v1/probe_runs": 409, "/rest/v1/probe_verdicts": 409}' > "$T/answers.json"; store "${std[@]}"; assert_eq 0 "$rc"
 grep -q 'already stored' "$T/out" && ok || bad "$(cat "$T/out")"
+it "a 409 that is not a duplicate key (a missing probe, a broken check) fails rather than counting as stored"
+printf '{"/rest/v1/probe_verdicts": {"status": 409, "code": "23503"}}' > "$T/answers.json"; store "${std[@]}"; assert_eq 1 "$rc"
+grep -q '23503' "$T/out" && ok || bad "$(cat "$T/out")"
+printf '{"/rest/v1/probe_runs": {"status": 409, "code": "23514"}}' > "$T/answers.json"; store "${std[@]}"; assert_eq 1 "$rc"
+assert_eq 1 "$(grep -c . "$T/log")"
+printf '{}' > "$T/answers.json"
+it "a redirect is refused, not followed: the key never goes where the https check did not look"
+printf '{"/rest/v1/probe_runs": 302}' > "$T/answers.json"; store "${std[@]}"; assert_eq 1 "$rc"
+grep -q redirected "$T/log" && bad "followed the redirect: $(cat "$T/log")" || ok
+printf '{}' > "$T/answers.json"
 it "any other refusal fails, says what the store answered, and sends no verdicts after a refused run"
 printf '{"/rest/v1/probe_runs": 500}' > "$T/answers.json"; store "${std[@]}"; assert_eq 1 "$rc"
 assert_eq 1 "$(grep -c . "$T/log")"; grep -q '500' "$T/out" && ok || bad "$(cat "$T/out")"
@@ -87,10 +109,36 @@ U="http://example.com" store "${std[@]}"; assert_eq 2 "$rc"; grep -q 'https' "$T
 U="" store "${std[@]}"; assert_eq 2 "$rc"
 K="" store "${std[@]}"; assert_eq 2 "$rc"
 assert_eq 0 "$(grep -c . "$T/log")"
-it "the key never appears in what it prints"
+it "the key never appears in what it prints, even when the store's answer echoes it"
 printf '{"/rest/v1/probe_runs": 500}' > "$T/answers.json"; store "${std[@]}"
-grep -q 'sb_publishable_test' "$T/out" && bad "printed the key" || ok
+grep -q 'refused for' "$T/out" && ok || bad "the store's answer is not shown: $(cat "$T/out")"
+grep -q 'sb_publishable_test' "$T/out" && bad "printed the key: $(cat "$T/out")" || ok
 printf '{}' > "$T/answers.json"
+it "evidence is cut to 2000 characters, and NUL and lone surrogates (which PostgreSQL refuses) are replaced"
+python3 -I -c '
+import json
+rows = [{"loop": "verify", "verdict": "caught", "evidence": "a" * 2500},
+        {"loop": "ocr", "verdict": "missed", "evidence": "x\u0000y\ud800z"}]
+print("\n".join(json.dumps(r) for r in rows))' > "$T/erows.jsonl"
+store "$D/45/key.json" "$T/erows.jsonl" --scorer-run 779 --repo a/b; assert_eq 0 "$rc"
+q '
+import json, sys
+v = [json.loads(l) for l in open(sys.argv[1])][1]["body"]
+assert len(v[0]["evidence"]) == 2000, len(v[0]["evidence"])
+e = v[1]["evidence"]
+assert "\x00" not in e and not any(0xd800 <= ord(c) <= 0xdfff for c in e) and e.startswith("x") and e.endswith("z"), repr(e)
+' && ok || bad "evidence: $(tail -1 "$T/log" | head -c 300)"
+it "rows with one loop twice, or no rows, are refused before anything is sent"
+printf '%s\n' '{"loop": "verify", "verdict": "caught", "evidence": "x"}' '{"loop": "verify", "verdict": "missed", "evidence": "y"}' > "$T/drows.jsonl"
+store "$D/45/key.json" "$T/drows.jsonl" --scorer-run 1 --repo a/b; assert_eq 2 "$rc"
+grep -q 'verify' "$T/out" && ok || bad "$(cat "$T/out")"
+: > "$T/none.jsonl"; store "$D/45/key.json" "$T/none.jsonl" --scorer-run 1 --repo a/b; assert_eq 2 "$rc"
+assert_eq 0 "$(grep -c . "$T/log")"
+it "a missing option, or one given twice, is a usage error"
+store "$D/45/key.json" "$T/rows.jsonl" --scorer-run 1; assert_eq 2 "$rc"
+store "$D/45/key.json" "$T/rows.jsonl" --scorer-run 1 --repo a/b --repo c/d; assert_eq 2 "$rc"
+store "$D/45/key.json" "$T/rows.jsonl" --scorer-run 1 --repo; assert_eq 2 "$rc"
+assert_eq 0 "$(grep -c . "$T/log")"
 it "a bad scorer run, repository or rows file is a usage error"
 store "$D/45/key.json" "$T/rows.jsonl" --scorer-run x --repo a/b; assert_eq 2 "$rc"
 store "$D/45/key.json" "$T/rows.jsonl" --scorer-run 1 --repo 'a b'; assert_eq 2 "$rc"

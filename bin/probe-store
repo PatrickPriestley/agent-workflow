@@ -9,13 +9,18 @@ commit, and how many loops caught it of those that ran), then one row per loop t
 probe_verdicts, in one request (store/schema.sql). The key's own words (its terms,
 counterexample and false claim) are not sent: they stay in the sealed run artifact.
 
-The store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1), and the key the
-publishable insert-only key in AGENT_TRANSCRIPTS_INSERT_KEY, sent as the apikey header, as
-`transcripts push` sends it. It only inserts: a 409 means already stored. A scored probe is
-keyed by the scorer run, so scoring it again adds rows and changes none.
+The store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1 or localhost), and the key
+the publishable insert-only key in AGENT_TRANSCRIPTS_INSERT_KEY, sent as the apikey header,
+as `transcripts push` sends it. A redirect is refused, not followed, so the key goes only
+where the https check looked. It only inserts: a 409 for a duplicate key (23505) means
+already stored; any other refusal fails. A scored probe is keyed by the scorer run, so
+scoring it again adds rows and changes none. Rows naming a loop twice are refused before
+anything is sent. Evidence is cut to 2000 characters, and characters PostgreSQL refuses in
+text (NUL, lone surrogates) are replaced. The key never appears in what this prints.
 
 Exit 0 stored (or already stored); 1 the store refused or did not answer; 2 usage.
 """
+import http.client
 import json
 import os
 import re
@@ -27,6 +32,19 @@ from urllib.parse import urlsplit
 NOT_RAN = ("not run", "failed", "no data")
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # the redirect comes back as an HTTPError, and is refused
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
+def clean(text):
+    """Text PostgreSQL takes: no NUL, no lone surrogate."""
+    return str(text).replace("\x00", "\ufffd").encode("utf-8", "replace").decode("utf-8")
+
+
 def say(m):
     print(f"probe-store: {m}", file=sys.stderr)
 
@@ -35,11 +53,11 @@ def post(url, key, table, body):
     req = urllib.request.Request(f"{url}/rest/v1/{table}", method="POST", data=json.dumps(body).encode(),
                                  headers={"apikey": key, "Content-Type": "application/json", "Prefer": "return=minimal"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with OPENER.open(req, timeout=30) as r:
             return r.status, ""
     except urllib.error.HTTPError as e:
         return e.code, e.read(300).decode("utf-8", "replace")
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         return None, str(getattr(e, "reason", e))
 
 
@@ -47,6 +65,9 @@ def main(argv):
     opts, args, it = {}, [], iter(argv[1:])
     for a in it:
         if a in ("--scorer-run", "--repo"):
+            if a in opts:
+                opts[a] = None  # given twice
+                continue
             opts[a] = next(it, None)
         else:
             args.append(a)
@@ -73,17 +94,26 @@ def main(argv):
                "caught": sum(r["verdict"] == "caught" for r in rows),
                "ran": sum(r["verdict"] not in NOT_RAN for r in rows)}
         verdicts = [{"probe_id": k["id"], "scorer_run": run_id, "loop": r["loop"], "verdict": r["verdict"],
-                     "evidence": str(r["evidence"])[:2000]} for r in rows]
+                     "evidence": clean(r["evidence"])[:2000]} for r in rows]
     except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
         say(f"cannot read the key or the rows: {e}")
         return 2
     if not verdicts:
         say("no verdict rows")
         return 2
+    twice = sorted({v["loop"] for v in verdicts if sum(w["loop"] == v["loop"] for w in verdicts) > 1})
+    if twice:
+        say(f"the rows name a loop more than once: {', '.join(twice)}")
+        return 2
 
     for table, body in (("probe_runs", run), ("probe_verdicts", verdicts)):
         status, detail = post(url, key, table, body)
-        if status == 409:
+        detail = detail.replace(key, "***")
+        try:
+            code = json.loads(detail).get("code") if status == 409 else None
+        except (ValueError, AttributeError):
+            code = None
+        if status == 409 and code == "23505":
             print(f"probe-store: {table}: already stored")
         elif status is not None and 200 <= status < 300:
             print(f"probe-store: {table}: stored {1 if isinstance(body, dict) else len(body)} row(s)")

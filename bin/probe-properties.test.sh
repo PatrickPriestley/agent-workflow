@@ -57,6 +57,9 @@ grep -qF 'properties/other.py' "$T/out" && grep -q 'not silent' "$T/out" && ok |
 it "a property that exits 0 without saying it held does not count as holding"
 printf '# checks bin/tool\nprint("ok")\n' > "$R/properties/tool.py"
 key false bin/tool; run; assert_eq 1 "$rc"
+it "a property that says it held but exits non-zero (a crash or time-out after) does not count"
+printf '# checks bin/tool\nprint("tool: properties held")\nraise SystemExit(3)\n' > "$R/properties/tool.py"
+key false bin/tool; run; assert_eq 1 "$rc"
 printf '# checks bin/tool\nprint("tool: properties held")\n' > "$R/properties/tool.py"
 it "a loud probe, or a file no property names, runs nothing"
 key true bin/other; run; assert_eq "0 0" "$rc $(grep -c . "$T/docker.log")"
@@ -68,6 +71,9 @@ it "the properties run with no network, a read-only source, a time limit and the
 key false bin/tool; run
 grep -q -- '--network none' "$T/docker.log" && grep -q -- '--read-only' "$T/docker.log" && grep -q ':/w:ro' "$T/docker.log" && ok || bad "$(cat "$T/docker.log")"
 grep -q 'timeout 300 python -I /w/properties/tool.py' "$T/docker.log" && ok || bad "no time limit"
+for flag in '--pids-limit 512' '--memory 2g' '--tmpfs /home/props' '--tmpfs /tmp:exec' "-u $(id -u):$(id -g)" '--rm'; do
+  grep -qF -- "$flag" "$T/docker.log" && ok || bad "no $flag in: $(cat "$T/docker.log")"
+done
 pin="$(grep -o 'python:3.12-slim@sha256:[0-9a-f]*' "$here/../.github/workflows/property-scout.md" | head -1)"
 [ -n "$pin" ] && grep -qF "$pin" "$here/probe-properties" && ok || bad "not Property Scout's pinned image [$pin]"
 it "a bad key or missing repository is a usage error"
