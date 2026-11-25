@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""probe-report: the week's probe report, as markdown for a workflow run's summary.
+
+  python3 -I bin/probe-report [--max N]
+
+Reads the store's two report functions (store/schema.sql: probe_report_loops and
+probe_report_probes), which count each probe's latest scoring only and return no evidence,
+with the publishable key in AGENT_TRANSCRIPTS_INSERT_KEY, the key that may read no table. The
+store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1 or localhost). A redirect is
+refused, and the key never appears in what this prints.
+
+Prints the report: how many probes are scored; per loop, how many it caught of the probes it
+ran on (worst rate first; a loop that never ran last), with its misses, the probes it did
+not run on or failed to run on, and those left to a judge; then the latest N probes (default
+12, at most 100), newest first.
+
+The report is meant for a run summary, not an issue or a comment: the review agents read this
+repository's issues and pull requests, and must not learn which are probes.
+
+Exit 0; 1 the store refused or did not answer; 2 usage.
+"""
+import http.client
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
+class Store(Exception):
+    pass
+
+
+def call(url, key, fn, body):
+    req = urllib.request.Request(f"{url}/rest/v1/rpc/{fn}", method="POST", data=json.dumps(body).encode(),
+                                 headers={"apikey": key, "Content-Type": "application/json"})
+    try:
+        with OPENER.open(req, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read(300).decode("utf-8", "replace").replace(key, "***")
+        raise Store(f"{fn}: the store answered {e.code}: {detail.strip()[:200]}")
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
+        raise Store(f"{fn}: no usable answer ({str(getattr(e, 'reason', e)).replace(key, '***')[:200]})")
+
+
+def cell(text):
+    return str(text).replace("\\", "\\\\").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def render(loops, probes):
+    out = ["## Review loops against planted bugs", ""]
+    if not loops and not probes:
+        return "\n".join(out + ["No probe has been scored yet.", ""])
+    total = max([r["probes"] for r in loops] + [len(probes)])
+    out += [f"{total} probes scored (each by its latest scoring). A loop is counted only on the probes it ran on.", "",
+            "| Loop | Caught | Ran on | Missed | Not run | Failed | Judge |", "|---|---|---|---|---|---|---|"]
+
+    def ran(r):
+        return r["probes"] - r["not_run"] - r["failed"] - r["no_data"]
+
+    def order(r):
+        n = ran(r)
+        return (n == 0, r["caught"] / n if n else 0, r["loop"])
+
+    for r in sorted(loops, key=order):
+        n = ran(r)
+        rate = f"{r['caught']} of {n} ({round(100 * r['caught'] / n)}%)" if n else "none ran"
+        out.append(f"| {cell(r['loop'])} | {rate} | {n} | {r['missed']} | {r['not_run'] + r['no_data']} | {r['failed']} | {r['judge']} |")
+    if probes:
+        out += ["", "### Latest probes", "", "| Probe | PR | Kind | Planted | File | Caught |", "|---|---|---|---|---|---|"]
+        for p in probes:
+            out.append(f"| {cell(p['probe_id'])} | #{int(p['pr'])} | {cell(p['kind'])} | {'loud' if p['loud'] else 'silent'} "
+                       f"| `{cell(p['file'])}` | {int(p['caught'])} of {int(p['ran'])} |")
+    return "\n".join(out + [""])
+
+
+def main(argv):
+    args = argv[1:]
+    try:
+        if args and args[0] == "--max" and len(args) == 2:
+            most = int(args[1])
+        elif not args:
+            most = 12
+        else:
+            raise ValueError
+        if not 1 <= most <= 100:
+            raise ValueError
+    except ValueError:
+        print("usage: probe-report [--max N]   (N from 1 to 100)", file=sys.stderr)
+        return 2
+    url = (os.environ.get("AGENT_TRANSCRIPTS_URL") or "").rstrip("/")
+    key = os.environ.get("AGENT_TRANSCRIPTS_INSERT_KEY") or ""
+    if not url or not key:
+        print("probe-report: AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY are both needed", file=sys.stderr)
+        return 2
+    u = urlsplit(url)
+    if u.scheme != "https" and not (u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")):
+        print(f"probe-report: the store must be https, not {u.scheme}://{u.hostname}", file=sys.stderr)
+        return 2
+    try:
+        loops = call(url, key, "probe_report_loops", {})
+        probes = call(url, key, "probe_report_probes", {"max_rows": most})
+        text = render(loops, probes)
+    except Store as e:
+        print(f"probe-report: {e}", file=sys.stderr)
+        return 1
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as e:
+        print(f"probe-report: the store's answer is not a report ({type(e).__name__}: {e})", file=sys.stderr)
+        return 1
+    sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

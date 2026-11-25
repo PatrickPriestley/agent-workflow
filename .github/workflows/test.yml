@@ -81,6 +81,10 @@ jobs:
         run: bash bin/probe-ready.test.sh
       - name: probe-score-auto workflow
         run: bash bin/probe-score-auto-workflow.test.sh
+      - name: probe-report
+        run: bash bin/probe-report.test.sh
+      - name: probe-report workflow
+        run: bash bin/probe-report-workflow.test.sh
       - name: agent-session-collect
         run: bash bin/agent-session-collect.test.sh
       - name: agent-sessions workflow
