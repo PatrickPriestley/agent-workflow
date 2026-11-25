@@ -11,10 +11,11 @@ name: agent-sessions
 # store's insert-only key. Nothing here runs code from the agent's run or its pull request: the
 # artifact is data, read by main's tools.
 #
-# The planter ("Plant a probe") is left out: its session holds the answer key.
+# The planter ("Plant a probe") is left out: its session holds the answer key. So are agents
+# on another engine (README drift check runs on Codex): their output has no Claude lines.
 on:
   workflow_run:
-    workflows: ["Verify PR claims", "CI diagnosis", "CI fix", "Property Scout", "README drift check"]
+    workflows: ["Verify PR claims", "CI diagnosis", "CI fix", "Property Scout"]
     types: [completed]
 
 permissions:

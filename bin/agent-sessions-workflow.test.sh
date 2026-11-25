@@ -15,11 +15,24 @@ lacks() { printf '%s' "$1" | grep -qE -- "$2" && bad "found: $2" || ok; }
 w="$(grep -v '^ *#' "$wf" 2>/dev/null)"
 
 it "it runs when one of the agents' runs completes, never the planter's"
-has "$w" 'workflows: ["Verify PR claims", "CI diagnosis", "CI fix", "Property Scout", "README drift check"]'
+has "$w" 'workflows: ["Verify PR claims", "CI diagnosis", "CI fix", "Property Scout"]'
 has "$w" "types: [completed]"; lacks "$w" "Plant a probe|pull_request|push:|schedule"
-it "every workflow named is a gh-aw agent here, so a rename cannot silently stop collection"
-for n in "Verify PR claims" "CI diagnosis" "CI fix" "Property Scout" "README drift check"; do
-  grep -lqx "name: $n" "$root"/.github/workflows/*.md 2>/dev/null && ok || bad "no agent workflow named $n"
+it "every workflow named is a gh-aw agent on Claude: the collector reads Claude's output only"
+# A rename would silently stop collection; another engine's output has no Claude lines.
+names="$(printf '%s\n' "$w" | sed -n 's/^ *workflows: \[\(.*\)\]$/\1/p' | tr ',' '\n' | sed 's/^ *"//; s/"$//')"
+[ -n "$names" ] && ok || bad "no workflows list"
+while IFS= read -r n; do
+  f="$(grep -lx "name: $n" "$root"/.github/workflows/*.md 2>/dev/null | head -1)"
+  if [ -z "$f" ]; then bad "no agent workflow named $n"; continue; fi
+  awk '/^engine:/ {e=1; next} e && /^  id:/ {print $2; exit} e && /^[a-z]/ {exit}' "$f" | grep -qx claude && ok || bad "$n does not run on Claude"
+done <<EOF
+$names
+EOF
+it "every Claude agent but the planter is collected"
+for f in "$root"/.github/workflows/*.md; do
+  awk '/^engine:/ {e=1; next} e && /^  id:/ {print $2; exit} e && /^[a-z]/ {exit}' "$f" | grep -qx claude || continue
+  n="$(sed -n 's/^name: //p' "$f" | head -1)"; [ "$n" = "Plant a probe" ] && continue
+  printf '%s\n' "$names" | grep -qxF "$n" && ok || bad "$n is a Claude agent the collector does not watch"
 done
 it "it reads actions and contents only, and checks out main without keeping credentials"
 assert_eq "permissions:
