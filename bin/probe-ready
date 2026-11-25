@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""probe-ready: list the open probes that are ready to score, each with the run holding its key.
+
+  python3 -I bin/probe-ready --repo OWNER/NAME [--now ISO-TIME] [--min-age MINUTES]
+
+A probe is an open pull request labelled hold. It is ready when it was opened at least
+--min-age minutes ago (default 30), no workflow run on its branch is still queued, waiting or
+in progress (the review loops have finished), and it carries no score comment yet.
+
+Its key is in the probe-key artifact of the planter run (probe-plant.lock.yml) that opened
+it: the one successful run that was running when the pull request was opened. With none, or
+more than one, the probe is skipped and said so. A wrong match cannot score the wrong probe:
+probe-score checks the key against the provenance hash on the planted commit first.
+
+Prints one JSON line {"pr", "key_run"} per ready probe, and a line on stderr for each probe it
+skips and why. Reads GitHub with `gh api` (GH_TOKEN). Exit 0; 1 GitHub failed; 2 usage.
+"""
+import datetime as dt
+import json
+import re
+import subprocess
+import sys
+
+GOING = {"queued", "waiting", "requested", "pending", "in_progress"}
+SCORED = ("Scored by probe-score", "### Probe probe-")
+
+
+class GitHub(Exception):
+    pass
+
+
+def api(path):
+    out = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise GitHub(f"gh api {path.split('?')[0]}: {out.stderr.strip()[:200]}")
+    try:
+        return json.loads(out.stdout or "null")
+    except ValueError as e:
+        raise GitHub(f"gh api {path.split('?')[0]}: not JSON ({e})")
+
+
+def when(s):
+    return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def main(argv):
+    opts, it = {}, iter(argv[1:])
+    for a in it:
+        if a in ("--repo", "--now", "--min-age") and a not in opts:
+            opts[a] = next(it, None)
+        else:
+            opts = None
+            break
+    try:
+        repo = opts["--repo"]
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}", repo or ""):
+            raise ValueError("repo")
+        now = when(opts["--now"]) if opts.get("--now") else dt.datetime.now(dt.timezone.utc)
+        min_age = int(opts.get("--min-age") or 30)
+    except (TypeError, KeyError, ValueError):
+        print("usage: probe-ready --repo OWNER/NAME [--now ISO-TIME] [--min-age MINUTES]", file=sys.stderr)
+        return 2
+
+    def skip(n, why):
+        print(f"#{n}: {why}", file=sys.stderr)
+
+    try:
+        pulls = [p for p in api(f"repos/{repo}/pulls?state=open&per_page=100")
+                 if any(lab.get("name") == "hold" for lab in p.get("labels", []))]
+        planters = None
+        for p in pulls:
+            n, opened = p["number"], when(p["created_at"])
+            age = int((now - opened).total_seconds() // 60)
+            if age < min_age:
+                skip(n, f"opened {age} minutes ago; waiting for {min_age}")
+                continue
+            runs = api(f"repos/{repo}/actions/runs?branch={p['head']['ref']}&per_page=100").get("workflow_runs", [])
+            going = [r for r in runs if r.get("status") in GOING]
+            if going:
+                skip(n, f"{len(going)} run still going" if len(going) == 1 else f"{len(going)} runs still going")
+                continue
+            comments = api(f"repos/{repo}/issues/{n}/comments?per_page=100")
+            if any(any(m in (c.get("body") or "") for m in SCORED) for c in comments):
+                skip(n, "already scored")
+                continue
+            if planters is None:
+                planters = api(f"repos/{repo}/actions/workflows/probe-plant.lock.yml/runs?per_page=50").get("workflow_runs", [])
+            held = [r for r in planters if r.get("conclusion") == "success"
+                    and when(r["created_at"]) <= opened <= when(r["updated_at"])]
+            if len(held) != 1:
+                skip(n, "no planter run was running when it opened" if not held
+                     else f"{len(held)} planter runs were running when it opened")
+                continue
+            print(json.dumps({"pr": n, "key_run": held[0]["id"]}))
+    except (GitHub, KeyError, TypeError, AttributeError, ValueError) as e:
+        print(f"probe-ready: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

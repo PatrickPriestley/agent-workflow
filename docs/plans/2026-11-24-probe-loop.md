@@ -145,6 +145,14 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
 2. Weekly schedule and a report issue with the measures above, read from the store. The
    `feedback` table and its job start recording everyday feedback: the outcomes on each
    merged pull request and the owner's reactions and `wrong:` replies. No model calls.
+   In order, each needing the one before:
+   a. Scoring without a person: `probe-score-auto.yml` every three hours runs
+      `bin/probe-ready` (open, held, 30 minutes old, nothing running on the branch, no score
+      yet; its key's planter run found by time) and dispatches `probe-score` (done 2026-11-25).
+   b. The planter on a weekly schedule, with one clean probe (no bug) a month.
+   c. The weekly report issue, read from the store.
+   d. A sweep that closes any probe left open and deletes probe branches.
+   e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The
    improver, built on `transcripts propose` and `compare` (above): first one target, the
    verify agent's prompt, with a replay case from a probe it missed; then the other agents,
