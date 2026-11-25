@@ -149,7 +149,9 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
    a. Scoring without a person: `probe-score-auto.yml` every three hours runs
       `bin/probe-ready` (open, held, 30 minutes old, nothing running on the branch, no score
       yet; its key's planter run found by time) and dispatches `probe-score` (done 2026-11-25).
-   b. The planter on a weekly schedule, with one clean probe (no bug) a month.
+   b. The planter on a weekly schedule (Tuesday 06:41 UTC, a silent probe of any kind; done
+      2026-11-25). Still to come: one clean probe (no bug) a month, which needs the scorer
+      to read a loop's finding on a clean probe as a false alarm.
    c. The weekly report issue, read from the store.
    d. A sweep that closes any probe left open and deletes probe branches.
    e. The `feedback` table and its job.
