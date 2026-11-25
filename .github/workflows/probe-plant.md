@@ -168,8 +168,8 @@ safe-outputs:
           description: "The commit message: a Conventional subject, a blank line, a body"
           required: true
           type: string
-        patch:
-          description: "The whole change, as `git diff` prints it from the repository root"
+        edits:
+          description: "Every edit made, in order, as a JSON list of {path, old, new}: the strings given to the edit tool"
           required: true
           type: string
         key:
@@ -266,7 +266,9 @@ The default branch is checked out in the current directory.
    it does.
 3. **Make it, and check it.** Edit the files with the edit tool. Run the target's test, as one
    plain command (`bash bin/<script>.test.sh`): for a silent probe it must pass; for a loud
-   one it must fail. If not, change the design. `git diff` shows the patch to hand over.
+   one it must fail. If not, change the design. Keep a note of each edit as you make it: the file's path from
+   the repository root, the exact old text and the new text, as you gave them to the edit
+   tool. If you undo or redo an edit, the note must still describe the final change.
 4. **Write the pull request** as its author would: a Conventional title in the house style,
    and a description saying what changed and why, with exactly one false claim about the
    change (for example that existing behaviour is unchanged, or that a case is covered).
@@ -276,13 +278,15 @@ The default branch is checked out in the current directory.
    last], "terms": [words a reviewer who found the bug would use], "counterexample": "<an
    input that shows it>", "false_claim": "<the sentence, exactly as in the description>",
    "claim_terms": [a word or two from it]}`. `lines` are the bug's lines in the changed file.
-6. **Hand it over**: call `open_probe` once, with `title`, `body`, `commit_message`, `patch`
-   (all of `git diff`) and `key`.
+6. **Hand it over**: call `open_probe` once, with `title`, `body`, `commit_message`, `edits`
+   and `key`. `edits` is a JSON list of `{"path", "old", "new"}`, one per edit, in the order
+   made; `open_probe` applies them to a fresh checkout, so each `old` must appear exactly
+   once in its file at that point. Do not copy a diff.
 
 ## Rules for blindness
 
 The reviewers must not be able to tell this is a test. Nowhere in the title, description,
-commit message or patch may you write probe, planted, answer key, test of the reviewers,
+commit message or edits may you write probe, planted, answer key, test of the reviewers,
 deliberate, or anything like it; `open_probe` refuses them. Do not add comments that point at
 the bug. Write as if the change were meant.
 
