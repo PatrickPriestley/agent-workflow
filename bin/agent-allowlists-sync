@@ -47,4 +47,5 @@ w=.github/workflows
 sync "$w/ci-fix.md" ""
 sync "$w/verify.md" "" /tmp/gh-aw/agent/verify/base/
 sync "$w/ci-diagnose.md" /tmp/gh-aw/agent/ci/head/
+sync "$w/probe-plant.md" ""
 exit "$stale"

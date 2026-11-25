@@ -24,11 +24,16 @@ but noisy. An edit is kept only when the replay measures it.
    unescaped value) in a file that has tests, inside a plausible feature PR with one false
    claim. Loud and silent probes alternate. It writes an answer key: file, lines, kind,
    terms, counterexample, false claim.
-2. **Answer key**: sealed with a `PROBE_KEY` secret that only the scorer job has
-   (`bin/probe-key seal`), kept as a run artifact; the PR carries its SHA-256, so the key
-   cannot change after the loops have run. No agent workflow may name `PROBE_KEY` (a test
-   checks every workflow).
-3. **Running the loops**: the planter opens the PR and adds `verify` and `properties`;
+2. **Answer key**: sealed with a `PROBE_KEY` secret (`bin/probe-key seal`) and kept as the
+   planter run's `probe-key` artifact; its SHA-256 goes on the planted commit as a
+   `provenance` status before the PR exists, so the key cannot change after the loops have
+   run. Only the planter's `open-probe` job (after threat detection) and the scorer have
+   `PROBE_KEY`; a test checks no agent can.
+3. **Running the loops**: the planter's `open-probe` job checks the agent's hand-over
+   (`bin/probe-open`), pushes an ordinarily named branch and opens the PR with the owner's
+   `PROBE_TOKEN`, so CI and the label-started agents run on it as on any PR, and adds
+   `hold`, `verify` and `properties`. gh-aw gives every agent read-only GitHub tools that
+   show labels and statuses, so no label, status or branch name says probe;
    Open Code Review and, for a loud probe, CI diagnosis start on their own; `ci-fix` is
    added after diagnosis.
 4. **Scorer**: `bin/probe-score` turns the key and the PR's evidence (check conclusions,
@@ -68,8 +73,8 @@ watched: time from opening to merge, cost per run (gh-aw reports it), and how ma
 improver edits were kept or dropped. All of them go in the weekly report.
 
 ## Safeguards
-- A `probe` label and a required check that fails while it is present; the scorer closes
-  probe PRs, and a weekly sweep closes any left.
+- A `hold` label and a required check (`probe-guard.yml`, "not on hold") that fails while it
+  is present; the scorer closes probe PRs, and a weekly sweep closes any left.
 - One probe a week; replays only on misses; gh-aw's daily token guardrail.
 - A quarter of probes held out from proposals; the regression set replayed monthly; one
   clean PR a month, with no bug, to measure false alarms.

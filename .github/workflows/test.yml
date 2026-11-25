@@ -71,6 +71,10 @@ jobs:
         run: bash bin/probe-evidence.test.sh
       - name: probe-score workflow
         run: bash bin/probe-score-workflow.test.sh
+      - name: probe-open
+        run: bash bin/probe-open.test.sh
+      - name: probe-plant workflow
+        run: bash bin/probe-plant-workflow.test.sh
       - name: Property Scout workflow
         run: bash bin/property-scout-workflow.test.sh
 
