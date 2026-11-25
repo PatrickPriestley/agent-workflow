@@ -108,13 +108,19 @@ def check_paths(repo, edits):
     root = os.path.realpath(repo)
     for path in files:
         full = os.path.join(root, path)
+        # The path must name the file itself: no .., no .git, no backslash, and no symlink
+        # anywhere along it, so the file written is the file the checks looked at.
         if (os.path.isabs(path) or "\\" in path or any(p in ("", ".", "..", ".git") for p in path.split("/"))
-                or os.path.commonpath([root, os.path.realpath(full)]) != root):
+                or os.path.relpath(os.path.realpath(full), root) != path):
             raise Refused(f"the edits name {path!r}, which is not a plain path in the repository")
         if PROTECTED.search(path):
             raise Refused(f"the change touches {path}, which a probe may not")
-        if os.path.islink(full) or not os.path.isfile(full):
+        if not os.path.isfile(full):
             raise Refused(f"the change touches {path}, which does not exist")
+        # Only tracked files: the cleanup's checkout restores those, and an ignored file
+        # (.env, build output) is neither restored nor shown by git diff.
+        if git(root, "ls-files", "--error-unmatch", "--", path, check=False).returncode != 0:
+            raise Refused(f"the change touches {path}, which git does not track")
     return files
 
 
@@ -124,8 +130,11 @@ def apply_edits(repo, edits):
     for n, e in enumerate(edits, 1):
         path = e["path"]
         if path not in text:
-            with open(os.path.join(repo, path), encoding="utf-8", newline="") as f:
-                text[path] = f.read()
+            try:
+                with open(os.path.join(repo, path), encoding="utf-8", newline="") as f:
+                    text[path] = f.read()
+            except (OSError, UnicodeError) as err:
+                raise Refused(f"cannot read {path} as UTF-8 text: {err}")
         count = text[path].count(e["old"])
         if count == 0:
             raise Refused(f"edit {n}: the old text was not found in {path}")
@@ -135,8 +144,11 @@ def apply_edits(repo, edits):
             raise Refused(f"edit {n} changes nothing")
         text[path] = text[path].replace(e["old"], e["new"])
     for path, t in text.items():
-        with open(os.path.join(repo, path), "w", encoding="utf-8", newline="") as f:
-            f.write(t)
+        try:
+            with open(os.path.join(repo, path), "w", encoding="utf-8", newline="") as f:
+                f.write(t)
+        except OSError as err:
+            raise Refused(f"cannot write {path}: {err}")
 
 
 def check_diff(repo, key):
