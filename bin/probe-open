@@ -12,7 +12,8 @@ loud, file, lines, terms, counterexample, false_claim, claim_terms.
 It refuses anything that is not a small, blind change to ordinary code: more than 3 files or 80
 changed lines; a workflow, an agent rules file, a test, a fixture, a property or the probe
 tools; a file that does not exist; the word probe (or planted, answer key) anywhere; AI
-attribution; a title that is not a Conventional Commit; a key that does not match the edits.
+attribution; a title that is not a Conventional Commit; a key that does not match the edits,
+or whose lines span more than 10.
 The limits are checked on the diff git computes after the edits, not on the agent's account.
 
 On success it commits the edits on a new branch <type>/<slug>-<6 hex> from the current
@@ -28,6 +29,7 @@ import subprocess
 import sys
 
 MAX_FILES, MAX_LINES = 3, 80
+MAX_KEY_LINES = 10
 PROTECTED = re.compile(r"(^|/)(\.github/|AGENTS\.md$|CLAUDE\.md$|AGENT-WORKFLOW\.md$|properties/|testdata/|fixtures/|docs/probes/)"
                        r"|\.test\.|(^|/)test-[^/]*\.sh$|(^|/)bin/probe-")
 GIVEAWAY = re.compile(r"probe|planted|answer key", re.I)
@@ -98,6 +100,10 @@ def check_key(i):
             raise Refused(f"key.{f} is missing or of the wrong type")
     if len(key["lines"]) != 2 or not all(isinstance(n, int) and n > 0 for n in key["lines"]) or key["lines"][0] > key["lines"][1]:
         raise Refused("key.lines must be [first, last]")
+    span = key["lines"][1] - key["lines"][0] + 1
+    if span > MAX_KEY_LINES:
+        # A wide range lets any comment near the change count as a catch (#68: lines 8-67).
+        raise Refused(f"key.lines span {span} lines; at most {MAX_KEY_LINES}: mark the bug's own lines")
     return key
 
 
