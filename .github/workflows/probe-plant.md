@@ -22,6 +22,11 @@ description: By hand, plant one subtle bug in a plausible pull request, to measu
 # issues read and write; commit statuses read and write). Score the probe with probe-score
 # once its loops have finished, giving this run's id.
 on:
+  # Once a week (docs/plans/2026-11-24-probe-loop.md, Phase 2): Tuesday 06:41 UTC, so the probe
+  # is ready for probe-score-auto's 09:23 sweep. A scheduled run has no inputs: it plants a
+  # silent probe of any kind, in a file the agent picks.
+  schedule:
+    - cron: "41 6 * * 2"
   workflow_dispatch:
     inputs:
       kind:
@@ -138,6 +143,7 @@ pre-agent-steps:
       TARGET: ${{ inputs.target }}
     run: |
       set -u
+      KIND="${KIND:-any}"  # a scheduled run has no inputs
       out=/tmp/gh-aw/agent/plant
       mkdir -p "$out" /tmp/gh-aw/agent/tmp
       python3 -I -c 'import json,os,sys; json.dump({"kind": os.environ["KIND"], "loud": os.environ["LOUD"] == "true", "target": os.environ["TARGET"]}, open(sys.argv[1], "w"))' "$out/asked.json"

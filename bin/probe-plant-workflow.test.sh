@@ -8,6 +8,7 @@ pass=0; fail=0; CURRENT=""
 it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n       %s\n' "$CURRENT" "$1"; }
+assert_eq() { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
 has() { printf '%s' "$1" | grep -qF -- "$2" && ok || bad "missing [$2]"; }
 lacks() { printf '%s' "$1" | grep -qE -- "$2" && bad "unexpected [$(printf '%s' "$1" | grep -oE -- "$2" | head -1)]" || ok; }
 before() {  # TEXT FIRST SECOND: FIRST appears, and before SECOND
@@ -21,9 +22,18 @@ front="$(printf '%s\n' "$w" | awk 'NR==1&&/^---$/{f=1;next} f&&/^---$/{exit} f')
 job="$(printf '%s\n' "$front" | awk '/^    open-probe:/ {s=1} s')"
 
 it "the planter and its lock exist"; [ -n "$w" ] && [ -n "$l" ] && ok || bad "missing"
-it "it is started by hand only, each dispatch in its own slot"
+it "it is started by hand, or once a week, each run in its own slot"
 on="$(printf '%s\n' "$front" | sed -n '/^on:/,/^[a-z]/p')"
-has "$on" "workflow_dispatch:"; lacks "$on" 'pull_request|push:|schedule|label_command|issue_comment'
+has "$on" "workflow_dispatch:"; lacks "$on" 'pull_request|push:|label_command|issue_comment'
+has "$on" 'cron: "41 6 * * 2"'
+[ "$(printf '%s\n' "$on" | grep -c 'cron:')" = 1 ] && ok || bad "not exactly one schedule"
+it "a scheduled run, which has no inputs, plants a silent probe of any kind in a file the agent picks"
+has "$front" 'KIND="${KIND:-any}"'
+pre="$(printf '%s\n' "$front" | awk '/- name: Write down what was asked/ {s=1} s && /^safe-outputs:/ {exit} s')"
+out="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/plant-pre.XXXXXX")" && git init -q && git commit -q --allow-empty -m x -c user.name=t -c user.email=t@t 2>/dev/null; mkdir -p tmp; \
+  script="$(printf '%s\n' "$pre" | awk '/^    run: \|/ {r=1; next} r && /^      / {print substr($0, 7); next} r && /^ *$/ {print ""; next} r {exit}' | sed "s|/tmp/gh-aw/agent|$PWD/tmp|g")"; \
+  env KIND= LOUD= TARGET= bash -c "$script" >/dev/null 2>&1; cat tmp/plant/asked.json 2>/dev/null)"
+assert_eq '{"kind": "any", "loud": false, "target": ""}' "$out"
 has "$front" 'job-discriminator: ${{ github.run_id }}'
 it "the agent has a read-only token, the network's defaults, and no output but open-probe"
 has "$front" "  contents: read"; lacks "$(printf '%s\n' "$front" | sed '/^  jobs:/,$d')" ': *write'
