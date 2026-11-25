@@ -79,13 +79,39 @@ improver edits were kept or dropped. All of them go in the weekly report.
 - A quarter of probes held out from proposals; the regression set replayed monthly; one
   clean PR a month, with no bug, to measure false alarms.
 
+## Store
+The ledger, the everyday feedback and the review agents' own sessions go in the transcript
+store the change-record plugin already uses (`plugins/change-record/store/schema.sql`,
+Supabase), under its rules: senders hold only the publishable key and may INSERT and
+nothing else; reading needs the secret key; no row is ever updated, so a correction is a new
+row; everything sent is redacted first.
+
+- `probe_runs`: one row per probe (id, pull request, kind, loud, planted commit, the
+  planter's run, cost, opened and scored times).
+- `probe_verdicts`: one row per loop per probe (verdict, evidence, scorer version), inserted
+  by `probe-score`.
+- `feedback`: one row per signal on a real pull request (loop, finding or comment, acted on,
+  dismissed, a reaction or a `wrong:` reply and its reason, who gave it), inserted by a
+  scheduled job that uses no model.
+- The review agents' sessions: gh-aw keeps each agent run's Claude Code log as an artifact;
+  a collector pushes it through the existing redaction into `chunks` and `sessions`, so
+  `transcripts grade` and `judge` can read what an agent did when it missed, and the
+  improver can see why. The scorer's judge reuses `judge_votes` and its three-vote rule.
+- Weekly report and catch-rate views read with the secret key; no agent ever has it.
+
+The publishable key and the store's URL are repository secrets given only to the jobs that
+insert (`probe-score`, the feedback job, the collector); `bin/agent-allowlists.test.sh`
+refuses them in any agent workflow, as it does `PROBE_KEY`.
+
 ## Phases
 1. `bin/probe-key`, `bin/probe-score` and their tests, with #37 and #45 as known answers;
    then an evidence collector and the planter and scorer workflows, run by hand.
-2. Weekly schedule and a report issue with the measures above. The ledger also starts
-   recording everyday feedback: the outcomes on each merged pull request and the owner's
-   reactions and `wrong:` replies. No model calls.
-3. The improver and the replay gate, with the regression set, fed by probe misses and
+   Then `probe_runs` and `probe_verdicts` in the store, inserted by `probe-score`.
+2. Weekly schedule and a report issue with the measures above, read from the store. The
+   `feedback` table and its job start recording everyday feedback: the outcomes on each
+   merged pull request and the owner's reactions and `wrong:` replies. No model calls.
+3. The review agents' sessions collected into the store; the improver and the replay gate,
+   with the regression set, fed by probe misses (with the missing agent's session) and
    everyday feedback.
 4. Misses and confirmed wrong outputs filed as labelled failures in the transcript loop, so
    skill edits can come from them too; the scheduled grading job the README lists as not
@@ -94,8 +120,9 @@ Separately, once: rewrite the agent prompts as principles with reasons, keeping 
 limit, each change checked by the replay like any other.
 
 ## Decisions
-- Ledger in the repository (`docs/probes/ledger.jsonl`), so results are reviewed like any
-  change; the sealed key as a run artifact.
+- Ledger in the transcript store, not the repository: the scorer's token cannot push to
+  the default branch, and a row per pull request would be noise. The sealed key stays a run
+  artifact.
 - Targets: agent-workflow first; meal-plan once its Actions budget allows, with its data
   rules in the planter.
 - A person merges every proposed edit.
