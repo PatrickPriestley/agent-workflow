@@ -38,6 +38,15 @@ it "open-probe checks out the default branch without keeping credentials, and ch
 has "$job" 'ref: ${{ github.event.repository.default_branch }}'; has "$job" 'persist-credentials: false'
 before "$job" 'bin/probe-open' 'bin/probe-key seal'
 before "$job" 'bin/probe-key seal' 'git -c http.extraheader'
+it "a silent probe must leave its file's properties holding, checked after the build and before the push, with no secret (#69)"
+before "$job" 'bin/probe-open' 'bash bin/probe-properties "$RUNNER_TEMP/probe/key.json" .'
+before "$job" 'bash bin/probe-properties' 'bin/probe-key seal'
+pstep="$(printf '%s\n' "$job" | awk '/- name: A silent probe leaves/ {s=1; print; next} s && /^        - name:/ {exit} s')"
+[ -n "$pstep" ] && ok || bad "no properties step"
+lacks "$pstep" 'secrets\.|GH_TOKEN'
+it "the agent is told which properties cover each candidate, and that a silent probe must keep them holding"
+has "$front" 'grep -lF -- "$f" properties/*.py'
+has "$(cat "$md")" "A silent probe must leave them holding as well as the test"
 it "the key is sealed with PROBE_KEY in one step, its plain copy deleted, and kept as probe-key"
 [ "$(printf '%s\n' "$job" | grep -c 'secrets.PROBE_KEY')" -eq 1 ] && ok || bad "PROBE_KEY not in exactly one step"
 has "$job" 'rm -f "$RUNNER_TEMP/probe/key.json"'; has "$job" 'name: probe-key'; has "$job" 'retention-days: 90'
