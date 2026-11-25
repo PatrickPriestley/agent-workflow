@@ -48,7 +48,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ inputs.pr }}
       KEY_RUN: ${{ inputs.key_run }}
-      W: ${{ runner.temp }}/probe
+      # W, the work folder, is set in the first step: GitHub refuses the runner context here.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -61,6 +61,8 @@ jobs:
           [[ "$KEY_RUN" =~ ^[0-9]+$ ]] || { echo "::error::key_run must be a run id"; exit 1; }
           labels="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
           printf '%s\n' "$labels" | grep -qx hold || { echo "::error::#$PR is not labelled hold; nothing is scored or closed"; exit 1; }
+          W="$RUNNER_TEMP/probe"
+          echo "W=$RUNNER_TEMP/probe" >> "$GITHUB_ENV"
           mkdir -p "$W"
 
       - name: Fetch the sealed key

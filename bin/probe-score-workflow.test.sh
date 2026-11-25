@@ -45,6 +45,15 @@ has "$(step 'Collect the evidence')" '--sha "$sha"'
 has "$w" 'bin/probe-score --markdown'; has "$w" 'retention-days: 90'; has "$w" 'gh pr comment "$PR"'
 it "closing is optional and never deletes the branch"
 has "$(step 'Close the probe')" 'if: inputs.close'; lacks "$w" 'delete-branch|git push'
+it "GitHub accepts the file: no runner context in workflow- or job-level env, where it is not available"
+# GitHub rejects the whole file, so it cannot be dispatched and each push records a failed run.
+bad_env="$(printf '%s\n' "$w" | awk '/^env:$/ || /^    env:$/ {e=length($0) - length(ltrim($0)); in_env=1; next}
+  in_env && match($0, /^ */) && RLENGTH <= e {in_env=0}
+  in_env && /\$\{\{ *runner\./ {print NR ": " $0}
+  function ltrim(x) { sub(/^ +/, "", x); return x }')"
+[ -z "$bad_env" ] && ok || bad "runner context in a top-level or job env: $bad_env"
+it "the work folder is set from RUNNER_TEMP inside a step, before anything uses it"
+has "$w" 'echo "W=$RUNNER_TEMP/probe" >> "$GITHUB_ENV"'
 it "this test runs in CI"
 grep -qF 'bash bin/probe-score-workflow.test.sh' "$root/.github/workflows/test.yml" && ok || bad "not in test.yml"
 
