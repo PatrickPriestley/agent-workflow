@@ -229,7 +229,7 @@ are never committed); it is not redacted, so `transcripts` creates it open to yo
 (umask 077), as Claude Code keeps its own transcripts. At each stop the hook adds the
 transcript's new complete lines, and those of the session's subagents, as numbered parts under
 `parts/<sessionId>/`, and writes `sessions/<sessionId>.json`: source (local, cloud, dispatch,
-eval), machine (a random id kept in `~/.config/agent-transcripts/machine-id`; in the cloud the
+eval, or agent: a GitHub agent's run that `bin/agent-session-collect` collected), machine (a random id kept in `~/.config/agent-transcripts/machine-id`; in the cloud the
 container and cloud session ids), repository (the origin URL, normalised, so a laptop and a
 cloud checkout agree), branch and commit at the first and last stop, the first and last
 timestamp in the transcript, the skills invoked with each skill file's git blob hash, the

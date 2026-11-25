@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""agent-session-collect: turn a gh-aw agent run's Claude output into a Claude Code transcript.
+
+  python3 -I bin/agent-session-collect AGENT_STDIO_LOG --prompt PROMPT_TXT --workflow NAME
+      --run-id ID --attempt N --cwd CHECKOUT --out DIR
+
+gh-aw runs Claude with --output-format stream-json and keeps that output, in its "agent"
+artifact, as agent-stdio.log, with the prompt as aw-prompts/prompt.txt. Claude Code's own
+transcript stays on the runner. The user and assistant lines of stream-json are the same
+records the transcript holds, less a few fields; a subagent's lines are marked with the
+tool call that started it (parent_tool_use_id); the prompt is not echoed.
+
+This writes, under DIR, the transcript plugins/change-record/bin/transcripts archives:
+gh-aw-<workflow>-<run>-<attempt>.jsonl, the prompt first as the user's message, then each user
+and assistant line in order with sessionId, cwd (CHECKOUT, whose origin names the repository),
+entrypoint "gh-aw", isSidechain and parentUuid (the line before it in the same stream); and
+each subagent's lines in <that name>/subagents/agent-<tool call id>.jsonl. The session id is
+built from the run, never from the log, so the same run collected again gives the same bytes.
+Every other line (system, stream events, the result, text the sandbox printed) is left out.
+
+Prints the transcript's path. Exit 0; 1 nothing to collect; 2 usage.
+"""
+import json
+import os
+import re
+import sys
+
+OPTS = ("--prompt", "--workflow", "--run-id", "--attempt", "--cwd", "--out")
+KEEP = ("type", "message", "uuid", "timestamp")
+
+
+def say(m):
+    print(f"agent-session-collect: {m}", file=sys.stderr)
+
+
+def slug(s, limit=40):
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:limit].strip("-")
+
+
+def main(argv):
+    opts, args, it = {}, [], iter(argv[1:])
+    for a in it:
+        if a in OPTS:
+            opts[a] = next(it, None)
+        else:
+            args.append(a)
+    if (len(args) != 1 or len(opts) != len(OPTS) or None in opts.values()
+            or not re.fullmatch(r"[1-9][0-9]{0,19}", opts["--run-id"]) or not re.fullmatch(r"[1-9][0-9]{0,3}", opts["--attempt"])
+            or not slug(opts["--workflow"])):
+        say("usage: agent-session-collect AGENT_STDIO_LOG --prompt FILE --workflow NAME --run-id ID --attempt N --cwd DIR --out DIR")
+        return 2
+    try:
+        prompt = open(opts["--prompt"], encoding="utf-8", errors="replace").read()
+        raw = open(args[0], encoding="utf-8", errors="replace").read().splitlines()
+    except OSError as e:
+        say(f"cannot read {e.filename}: {e.strerror}")
+        return 2
+    sid = f"gh-aw-{slug(opts['--workflow'])}-{opts['--run-id']}-{opts['--attempt']}"
+    cwd = os.path.abspath(opts["--cwd"])
+
+    streams, skipped = {}, 0  # stream name ("" for the main one) -> lines
+    for line in raw:
+        try:
+            d = json.loads(line)
+        except ValueError:
+            skipped += bool(line.strip())
+            continue
+        if not isinstance(d, dict) or d.get("type") not in ("user", "assistant") or not isinstance(d.get("message"), dict):
+            continue
+        parent = d.get("parent_tool_use_id")
+        name = re.sub(r"[^A-Za-z0-9_-]", "", parent)[:100] if isinstance(parent, str) else ""
+        if isinstance(parent, str) and not name:
+            continue  # a subagent line whose id has nothing usable: no stream to put it in
+        streams.setdefault(name, []).append({k: d[k] for k in KEEP if k in d})
+    if skipped:
+        say(f"skipped {skipped} line{'s' if skipped != 1 else ''} that {'are' if skipped != 1 else 'is'} not JSON")
+    if not streams.get(""):
+        say(f"{args[0]} has no user or assistant line of the main agent: nothing to collect")
+        return 1
+
+    first = streams[""][0].get("timestamp")
+    streams[""].insert(0, {"type": "user", "message": {"role": "user", "content": prompt},
+                           "uuid": f"{sid}-prompt", **({"timestamp": first} if first else {})})
+    out = opts["--out"]
+    main_path = os.path.join(out, sid + ".jsonl")
+    for name, lines in streams.items():
+        path = main_path if name == "" else os.path.join(out, sid, "subagents", f"agent-{name}.jsonl")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        prev = None
+        with open(path, "w", encoding="utf-8") as f:
+            for n, d in enumerate(lines):
+                d.setdefault("uuid", f"{sid}-{name or 'main'}-{n}")
+                d.update({"parentUuid": prev, "sessionId": sid, "cwd": cwd, "entrypoint": "gh-aw",
+                          "isSidechain": name != ""})
+                prev = d["uuid"]
+                f.write(json.dumps(d, separators=(",", ":"), ensure_ascii=False) + "\n")
+    print(main_path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

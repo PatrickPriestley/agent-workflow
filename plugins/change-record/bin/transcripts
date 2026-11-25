@@ -53,7 +53,7 @@ The archive:
 
 A session is keyed by its transcript's sessionId. A transcript that is no longer an extension of
 what was archived (Claude Code only appends, so this should not happen) starts generation G+1
-with a full copy. Index entry fields: source (local, cloud, dispatch, eval), machine (a random
+with a full copy. Index entry fields: source (local, cloud, dispatch, eval, agent), machine (a random
 id kept in ${XDG_CONFIG_HOME:-~/.config}/agent-transcripts/machine-id; in the cloud the
 container id and the cloud session id instead), repository (the normalised origin URL),
 first_stop and last_stop (branch and commit; import knows only the branch), first_timestamp and
@@ -544,7 +544,8 @@ def archive_session(ar, path, hook_cwd=None, imported=False):
             cloud = os.environ.get("CLAUDE_CODE_REMOTE") == "true" or entrypoint == "remote"
             entry = {
                 "schema": SCHEMA, "session_id": sid,
-                "source": "eval" if is_eval(cwd) else "dispatch" if parent else "cloud" if cloud else "local",
+                "source": "eval" if is_eval(cwd) else "dispatch" if parent else "agent" if entrypoint == "gh-aw"
+                else "cloud" if cloud else "local",
                 "machine": m, "repository": None, "first_stop": None, "last_stop": None,
                 "first_timestamp": None, "last_timestamp": None, "skills": [],
                 "records": {"written": [], "change_line": []}, "record": None,

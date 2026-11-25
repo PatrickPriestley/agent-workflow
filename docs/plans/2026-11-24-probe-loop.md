@@ -93,10 +93,13 @@ row; everything sent is redacted first.
 - `feedback`: one row per signal on a real pull request (loop, finding or comment, acted on,
   dismissed, a reaction or a `wrong:` reply and its reason, who gave it), inserted by a
   scheduled job that uses no model.
-- The review agents' sessions: gh-aw keeps each agent run's Claude Code log as an artifact;
-  a collector pushes it through the existing redaction into `chunks` and `sessions`, so
-  `transcripts grade` and `judge` can read what an agent did when it missed, and the
-  improver can see why. The scorer's judge reuses `judge_votes` and its three-vote rule.
+- The review agents' sessions: gh-aw keeps each agent run's Claude output (stream-json,
+  `agent-stdio.log`) and prompt in its `agent` artifact. `.github/workflows/agent-sessions.yml`
+  (built ahead of Phase 3) turns them into a transcript with `bin/agent-session-collect` and
+  pushes it through the existing redaction into `chunks` and `sessions`, as source `agent`,
+  session `gh-aw-<workflow>-<run>-<attempt>`, so `transcripts grade` and `judge` can read what
+  an agent did when it missed, and the improver can see why. The planter is left out: its
+  session holds the answer key. The scorer's judge reuses `judge_votes` and its three-vote rule.
 - Weekly report and catch-rate views read with the secret key; no agent ever has it.
 
 The publishable key and the store's URL are repository secrets given only to the jobs that
