@@ -92,6 +92,8 @@ tools:
     - "bash bin/probe-open.test.sh"
     - "bash bin/probe-plant-workflow.test.sh"
     - "bash bin/probe-properties.test.sh"
+    - "bash bin/probe-ready.test.sh"
+    - "bash bin/probe-score-auto-workflow.test.sh"
     - "bash bin/probe-score-workflow.test.sh"
     - "bash bin/probe-score.test.sh"
     - "bash bin/probe-store.test.sh"

@@ -55,6 +55,8 @@ assert_eq 1 "$(printf '%s\n' "$w" | grep -c 'secrets.AGENT_TRANSCRIPTS_INSERT_KE
 printf '%s\n' "$w" | awk '/gh pr comment/ {c=NR} /bin\/probe-store/ {s=NR} /gh pr close/ {x=NR} END {exit !(c && s && x && c < s && s < x)}' && ok || bad "not between the comment and the close"
 it "without the store's secrets the step warns and stores nothing"
 has "$kstep" "::warning::the AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY secrets are not both set"
+it "each run is named for its probe, so probe-ready can see a probe's scoring runs"
+has "$w" 'run-name: probe-score #${{ inputs.pr }}'
 it "GitHub accepts the file: no runner context in workflow- or job-level env, where it is not available"
 # GitHub rejects the whole file, so it cannot be dispatched and each push records a failed run.
 bad_env="$(printf '%s\n' "$w" | awk '/^env:$/ || /^    env:$/ {e=length($0) - length(ltrim($0)); in_env=1; next}

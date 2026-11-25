@@ -1,4 +1,6 @@
 name: probe-score
+# Each run is named for its probe, so bin/probe-ready can see a probe's scoring runs.
+run-name: probe-score #${{ inputs.pr }}
 
 # Scores a probe (docs/plans/2026-11-24-probe-loop.md) once every review loop on it has
 # finished: opens the planter's sealed answer key, checks it against the hash the planter

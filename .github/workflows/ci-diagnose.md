@@ -97,6 +97,8 @@ tools:
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-open.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-plant-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-properties.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/probe-ready.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/probe-score-auto-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-score-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-score.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-store.test.sh"

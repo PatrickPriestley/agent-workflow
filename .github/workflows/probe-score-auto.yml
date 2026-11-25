@@ -1,0 +1,68 @@
+name: probe-score-auto
+
+# Scores probes without a person dispatching them (docs/plans/2026-11-24-probe-loop.md, Phase 2).
+# Every three hours, bin/probe-ready lists the open probes (labelled hold) whose review loops have
+# all finished and that carry no score yet, each with the planter run that holds its key, and
+# this dispatches probe-score for each, which scores, stores and closes it.
+#
+# The planter run is found by time: the one that was running when the probe opened. probe-score
+# checks the key against the provenance hash on the planted commit before it scores anything, so
+# a wrong match fails there instead of scoring the wrong probe.
+#
+# It runs no code from any pull request and holds no secret. The built-in token may dispatch a
+# workflow, which is all it writes.
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  actions: write
+
+concurrency:
+  group: probe-score-auto
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Score each probe that is ready
+        shell: bash
+        run: |
+          set -u
+          ready="$(python3 -I bin/probe-ready --repo "$GITHUB_REPOSITORY")"
+          if [ -z "$ready" ]; then echo "no probe is ready to score"; exit 0; fi
+          echo "## Dispatched to probe-score" >> "$GITHUB_STEP_SUMMARY"
+          echo "Each is scored, stored and closed by its own probe-score run." >> "$GITHUB_STEP_SUMMARY"
+          # A bad line or a failed dispatch does not stop the others; the run fails at the end.
+          failed=0
+          while IFS= read -r line; do
+            if ! fields="$(printf '%s' "$line" | python3 -I -c '
+          import json, sys
+          d = json.load(sys.stdin)
+          assert type(d["pr"]) is int and type(d["key_run"]) is int and d["pr"] > 0 and d["key_run"] > 0
+          print(d["pr"], d["key_run"])' 2>/dev/null)"; then
+              echo "::error::probe-ready gave a line that is not a probe number and run id: $line"
+              failed=1; continue
+            fi
+            set -- $fields
+            if gh workflow run probe-score.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" \
+                -f pr="$1" -f key_run="$2" -f close=true; then
+              echo "- #$1, key from run $2" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::could not dispatch #$1"
+              failed=1
+            fi
+          done <<< "$ready"
+          exit "$failed"
