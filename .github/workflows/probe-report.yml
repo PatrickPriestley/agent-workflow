@@ -1,12 +1,14 @@
 name: probe-report
 
-# The week's probe report (docs/plans/2026-11-24-probe-loop.md, Phase 2): how often each review
-# loop catches the planted bugs, and the latest probes, read from the transcript store by
-# bin/probe-report. Tuesday 12:17 UTC, after the morning's planting (06:41) and scoring sweeps.
+# The week's report (docs/plans/2026-11-24-probe-loop.md, Phase 2), read from the transcript store
+# by bin/probe-report: how often each review loop catches the planted bugs, and the latest probes;
+# the agents' health over the week (runs, tool calls, calls their allowlists refused, and the
+# commands refused most); and how skills and plugins are used and graded. Tuesday 12:17 UTC,
+# after the morning's planting (06:41) and scoring sweeps.
 #
 # It goes to this run's summary page and nowhere else: the review agents read this repository's
 # issues and pull requests, and must not learn which pull requests are probes. So the workflow
-# may only read the repository, and reads the store with the publishable key, through the two
+# may only read the repository, and reads the store with the publishable key, through the
 # report functions that key may call (store/schema.sql); it cannot read a verdict's evidence.
 on:
   schedule:

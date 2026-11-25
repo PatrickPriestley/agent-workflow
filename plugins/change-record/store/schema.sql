@@ -289,3 +289,114 @@ $$;
 
 revoke all on function public.probe_report_loops(), public.probe_report_probes(integer) from public, anon, authenticated;
 grant execute on function public.probe_report_loops(), public.probe_report_probes(integer) to anon, service_role;
+
+-- ---- The weekly report's agent health and skills sections ----
+--
+-- Four more functions for the publishable key, built as the two above: they run as their owner
+-- with a fixed search path and return aggregates, for probe-report.yml's run summary.
+--
+-- agent_health and agent_refused_commands read the GitHub agents' sessions (source agent, named
+-- gh-aw-<workflow>-<run>-<attempt> by bin/agent-session-collect) started since a time: per agent,
+-- its runs, tool calls, calls its allowlist refused, and other tool errors; and the commands it
+-- was refused, by their first line, cut to 100 characters, from the redacted text. A call is
+-- counted once, however many chunks or shapes hold its rows.
+--
+-- skill_usage reads each session's latest index row: per skill (and its plugin, the part before
+-- the colon), the sessions started since a time that used it, all that ever did, and all by
+-- where they ran. skill_grades reads `scores`, each session's latest grading of each step: pass,
+-- fail and not applicable, and when the skill was last graded.
+
+create or replace function public.agent_health(since timestamptz)
+returns table (agent text, runs bigint, calls bigint, refused bigint, errors bigint)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with runs as (
+    select s.session_id, regexp_replace(s.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1') as agent
+    from public.sessions s where s.session_id ~ '^gh-aw-.+-[0-9]+-[0-9]+$'
+    group by s.session_id having min(s.created_at) >= since
+  ), calls as (
+    select distinct m.session_id, m.call_id from public.messages m
+    where m.kind = 'call' and m.call_id is not null and m.session_id in (select session_id from runs)
+  ), bad as (
+    select distinct on (m.session_id, m.call_id) m.session_id, m.call_id,
+           m.text ~* '^Permission to use .* has been denied|not allowed' as refused
+    from public.messages m
+    where m.kind = 'result' and m.failed and m.call_id is not null and m.session_id in (select session_id from runs)
+    order by m.session_id, m.call_id
+  )
+  select r.agent, count(distinct r.session_id),
+         (select count(*) from calls c join runs r2 using (session_id) where r2.agent = r.agent),
+         (select count(*) from bad b join runs r2 using (session_id) where r2.agent = r.agent and b.refused),
+         (select count(*) from bad b join runs r2 using (session_id) where r2.agent = r.agent and not b.refused)
+  from runs r group by r.agent order by r.agent
+$$;
+
+create or replace function public.agent_refused_commands(since timestamptz, max_rows integer default 10)
+returns table (agent text, tool text, command text, times bigint)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with runs as (
+    select s.session_id, regexp_replace(s.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1') as agent
+    from public.sessions s where s.session_id ~ '^gh-aw-.+-[0-9]+-[0-9]+$'
+    group by s.session_id having min(s.created_at) >= since
+  ), refused as (
+    select distinct m.session_id, m.call_id from public.messages m
+    where m.kind = 'result' and m.failed and m.text ~* '^Permission to use .* has been denied|not allowed'
+      and m.session_id in (select session_id from runs)
+  ), tried as (
+    select distinct on (c.session_id, c.call_id) c.session_id, c.tool,
+           left(replace(split_part(coalesce(substring(c.text from '"command": "((?:[^"\\]|\\.)*)"'), c.tool, '?'),
+                                   '\n', 1), '\"', '"'), 100) as command
+    from public.messages c join refused f on f.session_id = c.session_id and f.call_id = c.call_id
+    where c.kind = 'call'
+    order by c.session_id, c.call_id
+  )
+  select r.agent, coalesce(t.tool, '?'), t.command, count(*)
+  from tried t join runs r using (session_id)
+  group by r.agent, t.tool, t.command
+  order by count(*) desc, r.agent, t.command
+  limit greatest(least(max_rows, 50), 0)
+$$;
+
+create or replace function public.skill_usage(since timestamptz)
+returns table (skill text, plugin text, sessions bigint, sessions_all bigint, local bigint, cloud bigint,
+               agent bigint, dispatch bigint)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with latest as (
+    select distinct on (s.session_id) s.session_id, s.entry,
+           min(s.created_at) over (partition by s.session_id) as began
+    from public.sessions s order by s.session_id, s.version desc, s.created_at desc
+  ), used as (
+    select distinct l.session_id, l.began, l.entry ->> 'source' as source, k ->> 'name' as skill
+    from latest l, jsonb_array_elements(case when jsonb_typeof(l.entry -> 'skills') = 'array'
+                                             then l.entry -> 'skills' else '[]'::jsonb end) k
+    where coalesce(k ->> 'name', '') <> ''
+  )
+  select u.skill, case when position(':' in u.skill) > 0 then split_part(u.skill, ':', 1) end,
+         count(*) filter (where u.began >= since), count(*),
+         count(*) filter (where u.source = 'local'), count(*) filter (where u.source = 'cloud'),
+         count(*) filter (where u.source = 'agent'), count(*) filter (where u.source = 'dispatch')
+  from used u group by u.skill order by count(*) desc, u.skill
+$$;
+
+create or replace function public.skill_grades()
+returns table (skill text, step text, sessions bigint, pass bigint, fail bigint, not_applicable bigint,
+               last_graded timestamptz)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with latest as (
+    select distinct on (g.session_id, g.step, g.grader) g.session_id, g.step, g.skill, g.verdict, g.graded_at
+    from public.scores g order by g.session_id, g.step, g.grader, g.graded_at desc
+  )
+  select l.skill, l.step, count(distinct l.session_id),
+         count(*) filter (where l.verdict = 'pass'), count(*) filter (where l.verdict = 'fail'),
+         count(*) filter (where l.verdict = 'not_applicable'),
+         (select max(g.graded_at) from public.scores g where g.skill = l.skill)
+  from latest l group by l.skill, l.step order by l.skill, l.step
+$$;
+
+revoke all on function public.agent_health(timestamptz), public.agent_refused_commands(timestamptz, integer),
+  public.skill_usage(timestamptz), public.skill_grades() from public, anon, authenticated;
+grant execute on function public.agent_health(timestamptz), public.agent_refused_commands(timestamptz, integer),
+  public.skill_usage(timestamptz), public.skill_grades() to anon, service_role;
