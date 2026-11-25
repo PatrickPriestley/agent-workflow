@@ -59,6 +59,37 @@ but noisy. An edit is kept only when the replay measures it.
    false alarm. The pull request says which signals prompted it and what the replay
    showed. A person merges. One improver with a small layer per loop, not one per loop.
 
+## Building the improver
+Not a new reviewer that reads the store and suggests what it likes: a model reading
+transcripts always finds plausible improvements, and nothing would tell the helpful ones from
+churn. The change-record plugin already has the shape, for the `change` skill's steps, and the
+improver widens it:
+
+1. **A labelled failure first.** `transcripts grade` and `judge` mark a step failed with
+   evidence; here the failures are probe misses (a known bug, the missing agent's session in
+   the store), grade and judge fail rows, and the owner's `wrong:` replies and dismissed
+   findings. The improver never starts from a session no signal points at.
+2. **A drafted edit.** `transcripts propose` drafts the smallest edit for one failed step and
+   names the eval case that shows it. Widened to new targets: the review agents' prompts
+   (verify first, from a probe it missed), Open Code Review's rules, other skills and plugins.
+   A target is added only with a replay case that shows its failure, as each step needed an
+   eval case.
+3. **A measured gate.** `transcripts compare` runs the case with and without the edit, says
+   what it will spend first, and keeps the edit only if it wins without new false alarms on
+   the regression set. Only then is it a pull request, with the session ids, the failing
+   lines and the scores before and after.
+
+Transcripts hold untrusted text (pull request descriptions, tool output, the probe's own
+code), and an improver that reads them and edits agents' prompts is a path for prompt
+injection into those agents. So the improver has no write tools: it hands its draft over as
+data, a separate job applies it to the target's files only and opens the pull request, and
+a person merges. It reads the store with the secret key, so it runs only where that key is:
+the owner's machine or a job that takes no untrusted input.
+
+The `change`-skill side can run now. The agent side needs data first: the store held one
+agent session when the collector went live (2026-11-25), and probes and the collector are
+what fill it.
+
 ## Writing the loops' prompts
 Principles with their reasons, not lists of rules: an agent that knows why it re-runs a
 property before pushing generalises; one told only to do it does not (#50). The hard
@@ -113,9 +144,11 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
 2. Weekly schedule and a report issue with the measures above, read from the store. The
    `feedback` table and its job start recording everyday feedback: the outcomes on each
    merged pull request and the owner's reactions and `wrong:` replies. No model calls.
-3. The review agents' sessions collected into the store; the improver and the replay gate,
-   with the regression set, fed by probe misses (with the missing agent's session) and
-   everyday feedback.
+3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The
+   improver, built on `transcripts propose` and `compare` (above): first one target, the
+   verify agent's prompt, with a replay case from a probe it missed; then the other agents,
+   Open Code Review's rules and other skills, each with its own replay case. Fed by probe
+   misses and everyday feedback.
 4. Misses and confirmed wrong outputs filed as labelled failures in the transcript loop, so
    skill edits can come from them too; the scheduled grading job the README lists as not
    built.
@@ -129,6 +162,8 @@ limit, each change checked by the replay like any other.
 - Targets: agent-workflow first; meal-plan once its Actions budget allows, with its data
   rules in the planter.
 - A person merges every proposed edit.
+- No open-ended reviewer: every proposal starts from a labelled failure and is kept only if
+  the replay measures it (Building the improver).
 - Only the owner's feedback is used.
 
 ## Borrowed

@@ -144,7 +144,13 @@ safe-outputs:
           git -C "$GITHUB_WORKSPACE" fetch -q --no-tags origin "$HEAD_SHA" &&
             git -C "$GITHUB_WORKSPACE" worktree add -q --detach "$w/src" "$HEAD_SHA" ||
             { echo "::error::cannot check out the pull request's head; nothing is pushed"; exit 1; }
+          # gh-aw copies the patch into /tmp/gh-aw/threat-detection/ for the detector, so the
+          # same patch is found twice (#68): apply each distinct patch once.
+          seen=" "
           for p in "${patches[@]}"; do
+            h="$(git hash-object "$p")"
+            case "$seen" in *" $h "*) continue ;; esac
+            seen="$seen$h "
             git -C "$w/src" -c user.name=scout -c user.email=scout@localhost am -q "$p" ||
               { echo "::error::the agent's patch does not apply to the head; nothing is pushed"; exit 1; }
           done

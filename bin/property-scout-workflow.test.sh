@@ -165,6 +165,10 @@ it "every new property runs, and one failing among several blocks the push and i
 step_on mixed && bad "mixed passed" || ok
 grep -qF '== properties/b.py' "$R/mixed.out" && ok || bad "stopped before the second file: $(cat "$R/mixed.out")"
 grep -qF '::error file=properties/b.py::' "$R/mixed.out" && ok || bad "the failing file is not named"
+it "the same patch in /tmp/gh-aw and gh-aw's threat-detection copy is applied once (#68)"
+mkdir -p "$R/dup/threat-detection" "$R/rt-dup" && cp "$R/good/aw-1.patch" "$R/dup/" && cp "$R/good/aw-1.patch" "$R/dup/threat-detection/"
+step_on dup && ok || bad "the copied patch was refused: $(tail -5 "$R/dup.out")"
+runs="$(grep -c '^run ' "$R/docker.log")"; [ "$runs" = 1 ] && ok || bad "the property ran $runs times"
 it "a patch that does not apply, or an image that does not build, blocks the push"
 step_on broken && bad "a broken patch passed" || ok
 cp -r "$R/good" "$R/good2"; mkdir -p "$R/rt-good2"; step_on good2 fail && bad "a failed image build passed" || ok

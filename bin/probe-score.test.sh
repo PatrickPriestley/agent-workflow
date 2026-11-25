@@ -77,6 +77,25 @@ assert_eq judge "$(one "$T/sother.json" property-scout)"
 it "a loop's agent comment counts only with its own workflow marker"
 variant nomark 'e["comments"][1]["body"]=e["comments"][1]["body"].replace("property-scout -->","other -->")'
 assert_eq "not run" "$(one "$T/nomark.json" property-scout)"
+it "an agent loop whose run failed with no comment is failed, not 'not run'; a skipped one is not run"
+# #68: Property Scout's threat detection produced no result, so its run failed and posted nothing.
+python3 -c '
+import json, sys
+e = json.load(open(sys.argv[1]))
+e["comments"] = [c for c in e["comments"] if "agent-workflow/property-scout" not in c["body"]]
+e["checks"]["Property Scout"] = sys.argv[3]
+json.dump(e, open(sys.argv[2], "w"))' "$D/45/evidence.json" "$T/sfail.json" failure
+assert_eq failed "$("${PS[@]}" "$D/45/key.json" "$T/sfail.json" | python3 -c 'import json,sys; print([r["verdict"] for r in map(json.loads,sys.stdin) if r["loop"]=="property-scout"][0])')"
+python3 -c '
+import json, sys
+e = json.load(open(sys.argv[1])); e["checks"]["Property Scout"] = "skipped"; json.dump(e, open(sys.argv[2], "w"))' "$T/sfail.json" "$T/sskip.json"
+assert_eq "not run" "$("${PS[@]}" "$D/45/key.json" "$T/sskip.json" | python3 -c 'import json,sys; print([r["verdict"] for r in map(json.loads,sys.stdin) if r["loop"]=="property-scout"][0])')"
+it "a failed loop is left out of the loops that ran, and named in the score line"
+md="$("${PS[@]}" --markdown "$D/45/key.json" "$T/sfail.json")"
+ran_before="$("${PS[@]}" --markdown "$D/45/key.json" "$D/45/evidence.json" | sed -n 's/.*of the \([0-9]*\) loops that ran.*/\1/p')"
+ran_after="$(printf '%s\n' "$md" | sed -n 's/.*of the \([0-9]*\) loops that ran.*/\1/p')"
+assert_eq "$((ran_before - 1))" "$ran_after"
+printf '%s\n' "$md" | grep -qF 'Failed to run: property-scout.' && ok || bad "score line: $(printf '%s\n' "$md" | sed -n 3p)"
 it "a missing check is no data, not missed"
 variant nochk 'del e["checks"]["properties"]'
 assert_eq "no data" "$(one "$T/nochk.json" properties)"

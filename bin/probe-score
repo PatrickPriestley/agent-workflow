@@ -14,8 +14,10 @@ recognised by its gh-aw marker "gh-aw-workflow-call-id: <owner>/<repo>/<workflow
 Review's by "<!-- ocr-summary -->" or its inline comments.
 
 One JSON row per loop: probe, pr, kind, loud, loop, verdict, evidence. Verdicts: caught,
-missed, not run (no output from the loop), no data (no check result), judge (the fixed rules
-cannot tell; a model decides, and a person rules on it). Exit 0, or 2 for a usage problem.
+missed, not run (no output from the loop), failed (an agent loop whose run failed and posted
+nothing, such as a threat-detection failure: broken, not idle, and not counted as having run),
+no data (no check result), judge (the fixed rules cannot tell; a model decides, and a person
+rules on it). Exit 0, or 2 for a usage problem.
 """
 import json
 import re
@@ -23,6 +25,8 @@ import sys
 
 LOOPS = ["tests", "properties", "mutation", "ocr", "ci-diagnose", "ci-fix", "verify", "property-scout"]
 KEY_FIELDS = ["id", "pr", "kind", "loud", "planted_sha", "file", "lines", "terms", "counterexample", "false_claim", "claim_terms"]
+# The run name each agent loop's workflow has, as EVIDENCE's checks key it.
+RUN_NAMES = {"ci-diagnose": "CI diagnosis", "ci-fix": "CI fix", "verify": "Verify PR claims", "property-scout": "Property Scout"}
 NEAR = 3  # an inline comment this many lines from the planted lines counts as on them
 
 
@@ -71,10 +75,18 @@ def ocr(evidence, key):
     return "missed", f"{len(inline)} inline comment(s), none on {key['file']}:{lo}-{hi}"
 
 
+def silent(evidence, loop, what):
+    """An agent loop that posted nothing: failed if its run failed, else not run."""
+    name = RUN_NAMES[loop]
+    if evidence.get("checks", {}).get(name) == "failure":
+        return "failed", f"{name} run failed and posted no {what}"
+    return "not run", f"no {what}"
+
+
 def ci_agent(evidence, key, workflow):
     body = agent_comment(evidence, workflow)
     if body is None:
-        return "not run", f"no {workflow} comment"
+        return silent(evidence, workflow, f"{workflow} comment")
     term = mentions(body, key)
     if key["file"] in body and term:
         return "caught", f"names {key['file']} and '{term}'"
@@ -84,7 +96,7 @@ def ci_agent(evidence, key, workflow):
 def verify(evidence, key):
     body = agent_comment(evidence, "verify")
     if body is None:
-        return "not run", "no Verify PR claims comment"
+        return silent(evidence, "verify", "Verify PR claims comment")
     if not key["false_claim"]:
         return "missed", "no false claim planted; nothing to flag"
     low = body.lower()
@@ -101,7 +113,7 @@ def verify(evidence, key):
 def scout(evidence, key):
     body = agent_comment(evidence, "property-scout")
     if body is None:
-        return "not run", "no Property Scout comment"
+        return silent(evidence, "property-scout", "Property Scout comment")
     low = body.lower()
     failed = "failed on head" in low or "fails on head" in low or "failed on this pr" in low
     if not failed:
@@ -118,10 +130,12 @@ def cell(text):
 
 def markdown(key, rows):
     caught = sum(r["verdict"] == "caught" for r in rows)
-    ran = sum(r["verdict"] not in ("not run", "no data") for r in rows)
+    ran = sum(r["verdict"] not in ("not run", "no data", "failed") for r in rows)
+    broken = [r["loop"] for r in rows if r["verdict"] == "failed"]
     out = [f"### Probe {cell(key['id'])}: {cell(key['kind'])}, {'loud' if key['loud'] else 'silent'}",
            "", f"Planted in `{cell(key['file'])}` lines {key['lines'][0]}-{key['lines'][1]}"
-           f" at `{cell(key['planted_sha'][:7])}`. Caught by {caught} of the {ran} loops that ran.", "",
+           f" at `{cell(key['planted_sha'][:7])}`. Caught by {caught} of the {ran} loops that ran."
+           + (f" Failed to run: {', '.join(broken)}." if broken else ""), "",
            "| Loop | Verdict | Evidence |", "|---|---|---|"]
     out += [f"| {cell(r['loop'])} | {cell(r['verdict'])} | {cell(r['evidence'])} |" for r in rows]
     return "\n".join(out)

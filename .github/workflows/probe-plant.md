@@ -279,7 +279,7 @@ The default branch is checked out in the current directory.
    `{"kind": ..., "loud": true|false, "file": "<the file with the bug>", "lines": [first,
    last], "terms": [words a reviewer who found the bug would use], "counterexample": "<an
    input that shows it>", "false_claim": "<the sentence, exactly as in the description>",
-   "claim_terms": [a word or two from it]}`. `lines` are the bug's lines in the changed file.
+   "claim_terms": [a word or two from it]}`. `lines` are the bug's own lines in the changed file, at most 10: not the whole change.
 6. **Hand it over**: call `open_probe` once, with `title`, `body`, `commit_message`, `edits`
    and `key`. `edits` is a JSON list of `{"path", "old", "new"}`, one per edit, in the order
    made; `open_probe` applies them to a fresh checkout, so each `old` must appear exactly
