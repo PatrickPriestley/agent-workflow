@@ -68,6 +68,8 @@ tools:
     # BEGIN test files
     - "bash bin/agent-allowlists.test.sh"
     - "bash bin/agent-review.test.sh"
+    - "bash bin/agent-session-collect.test.sh"
+    - "bash bin/agent-sessions-workflow.test.sh"
     - "bash bin/ci-workflow.test.sh"
     - "bash bin/commit-gate.test.sh"
     - "bash bin/mutate.test.sh"
@@ -105,6 +107,8 @@ tools:
     - "node --test plugins/change-record/evals/cases.test.cjs"
     - "bash /tmp/gh-aw/agent/verify/base/bin/agent-allowlists.test.sh"
     - "bash /tmp/gh-aw/agent/verify/base/bin/agent-review.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/agent-session-collect.test.sh"
+    - "bash /tmp/gh-aw/agent/verify/base/bin/agent-sessions-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/verify/base/bin/ci-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/verify/base/bin/commit-gate.test.sh"
     - "bash /tmp/gh-aw/agent/verify/base/bin/mutate.test.sh"

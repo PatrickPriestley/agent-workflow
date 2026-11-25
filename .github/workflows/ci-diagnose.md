@@ -85,6 +85,8 @@ tools:
     # BEGIN test files
     - "bash /tmp/gh-aw/agent/ci/head/bin/agent-allowlists.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/agent-review.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/agent-session-collect.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/agent-sessions-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/ci-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/commit-gate.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/mutate.test.sh"

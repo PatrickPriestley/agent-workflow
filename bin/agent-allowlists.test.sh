@@ -116,6 +116,10 @@ done; for f in "$root"/.github/workflows/*.md; do
     /PROBE_(KEY|TOKEN)/ && !(F == "probe-plant.md" && inj) {print F ": " NR}' "$f"
 done)"
 [ -z "$leaks" ] && ok || bad "outside open-probe: $(printf '%s' "$leaks" | tr '\n' ' ')"
+it "the transcript store's secrets appear in no agent workflow, source or compiled"
+# Only agent-sessions.yml, outside any agent's sandbox, sends to the store.
+leaks="$(grep -lE 'AGENT_TRANSCRIPTS_(URL|INSERT_KEY)' "$root"/.github/workflows/*.md "$root"/.github/workflows/*.lock.yml 2>/dev/null)"
+[ -z "$leaks" ] && ok || bad "in: $(printf '%s' "$leaks" | tr '\n' ' ')"
 it "this test runs in CI"
 grep -qF 'bash bin/agent-allowlists.test.sh' "$root/.github/workflows/test.yml" && ok || bad "not in test.yml"
 
