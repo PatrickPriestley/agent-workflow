@@ -5,8 +5,9 @@
 #
 # Counts added lines from the merge base with main (or an explicit BASE..HEAD) to HEAD,
 # leaving out generated files: lockfiles, fixtures/, captures/, testdata/, __snapshots__/,
-# *.snap, files marked linguist-generated in .gitattributes, and any glob in
-# `git config prsize.exclude` (multi-valued). A pure rename or a binary file counts nothing.
+# *.snap, vendor/, node_modules/, dist/ and build/ directories, files marked
+# linguist-generated in .gitattributes, and any glob in `git config prsize.exclude`
+# (multi-valued). A pure rename or a binary file counts nothing.
 #
 # Aim at 400 lines, split above 1,000 (git config prsize.aim and prsize.stop, or --aim and
 # --stop). Above the stop limit it lists added lines per commit, to show where to split.
@@ -63,6 +64,7 @@ excludes=(
   ':(exclude,attr:linguist-generated)' ':(exclude,attr:linguist-generated=true)'
   ':(exclude,glob)**/fixtures/**' ':(exclude,glob)**/captures/**' ':(exclude,glob)**/testdata/**'
   ':(exclude,glob)**/__snapshots__/**' ':(exclude,glob)**/*.snap'
+  ':(exclude,glob)**/vendor/**' ':(exclude,glob)**/node_modules/**' ':(exclude,glob)**/dist/**'
 )
 for f in Cargo.lock package-lock.json yarn.lock pnpm-lock.yaml poetry.lock uv.lock Gemfile.lock go.sum composer.lock; do
   excludes+=(":(exclude,glob)**/$f")
