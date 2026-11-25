@@ -14,6 +14,8 @@ ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n       %s\n' "$CURRENT" "$1"; }
 assert_eq() { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/agent-session-collect.XXXXXX")"; [ -n "${KEEP:-}" ] || trap 'rm -rf "$T"' EXIT
+# macOS's TMPDIR ends in a slash, so the path has "//"; the collector writes cwd normalized.
+T="$(python3 -I -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$T")"
 mkdir -p "$T/repo" && git -C "$T/repo" init -q && git -C "$T/repo" remote add origin https://github.com/Owner/Repo.git
 printf 'Check the claims.\n' > "$T/prompt.txt"
 collect() {  # args... -> stdout in $T/out.txt, exit code in $rc
