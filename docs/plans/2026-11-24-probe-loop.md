@@ -95,7 +95,7 @@ row; everything sent is redacted first.
   scheduled job that uses no model.
 - The review agents' sessions: gh-aw keeps each agent run's Claude output (stream-json,
   `agent-stdio.log`) and prompt in its `agent` artifact. `.github/workflows/agent-sessions.yml`
-  (built ahead of Phase 3) turns them into a transcript with `bin/agent-session-collect` and
+  (built ahead of Phase 3), for each Claude agent, turns them into a transcript with `bin/agent-session-collect` and
   pushes it through the existing redaction into `chunks` and `sessions`, as source `agent`,
   session `gh-aw-<workflow>-<run>-<attempt>`, so `transcripts grade` and `judge` can read what
   an agent did when it missed, and the improver can see why. The planter is left out: its
