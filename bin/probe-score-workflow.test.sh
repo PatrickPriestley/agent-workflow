@@ -24,10 +24,11 @@ it "the token can read code and runs and write only pull request comments"
 has "$w" "permissions: {}"; has "$w" "      contents: read"; has "$w" "      actions: read"
 has "$w" "      pull-requests: write"; lacks "$w" 'contents: write|actions: write'
 has "$w" "persist-credentials: false"
-it "it checks out the default branch, never the probe's code"
-lacks "$w" 'ref:|head\.sha|head_ref|pull/'
+it "it checks out the tools (main by default), never the probe's code"
+assert_eq "          ref: \${{ inputs.tools-ref || 'main' }}" "$(printf '%s\n' "$w" | grep -E '^ +ref:')"
+lacks "$w" 'head\.sha|head_ref|pull/'
 it "the inputs reach the scripts only through the environment, and are checked as numbers"
-printf '%s\n' "$w" | sed -n '/^    steps:/,$p' | grep -F '${{ inputs.' | grep -vE 'name: probe-score-\$\{\{ inputs.pr \}\}|if: inputs.close' | grep -q . && bad "an input is interpolated into a step" || ok
+printf '%s\n' "$w" | sed -n '/^    steps:/,$p' | grep -F '${{ inputs.' | grep -vE "name: probe-score-\\\$\{\{ inputs.pr \}\}|if: inputs.close|^          (repository|ref): \\\$\{\{ inputs\.tools-(repository|ref) \|\| '[A-Za-z/-]+' \}\}\$" | grep -q . && bad "an input is interpolated into a step" || ok
 has "$w" '[[ "$PR" =~ ^[0-9]+$ ]]'; has "$w" '[[ "$KEY_RUN" =~ ^[0-9]+$ ]]'
 it "only a pull request labelled hold is scored or closed"
 has "$(step 'Check the inputs, and that the pull request is on hold')" 'grep -qx hold'

@@ -3,17 +3,45 @@ name: probe-report
 # The week's report (docs/plans/2026-11-24-probe-loop.md, Phase 2), read from the transcript store
 # by bin/probe-report: how often each review loop catches the planted bugs, and the latest probes;
 # the agents' health over the week (runs, tool calls, calls their allowlists refused, and the
-# commands refused most); and how skills and plugins are used and graded. Tuesday 12:17 UTC,
-# after the morning's planting (06:41) and scoring sweeps.
+# commands refused most); how skills and plugins are used and graded; and the changes all this
+# suggests, by fixed rules with no model. Tuesday 12:17 UTC, after the morning's planting (06:41)
+# and scoring sweeps.
 #
 # It goes to this run's summary page and nowhere else: the review agents read this repository's
 # issues and pull requests, and must not learn which pull requests are probes. So the workflow
 # may only read the repository, and reads the store with the publishable key, through the
 # report functions that key may call (store/schema.sql); it cannot read a verdict's evidence.
+#
+# The store holds every repository that sends to it. The report covers this one; run it by hand
+# with "all repositories" ticked for every repository, a Repository column first in each table.
 on:
   schedule:
     - cron: "17 12 * * 2"
   workflow_dispatch:
+    inputs:
+      all_repositories:
+        description: "Every repository in the store, not only this one"
+        type: boolean
+        default: false
+  workflow_call:  # other repositories: docs/reusable-workflows.md
+    inputs:
+      all_repositories:
+        description: "Every repository in the store, not only the caller"
+        type: boolean
+        default: false
+      tools-repository:
+        description: "Where the probe and transcript tools come from"
+        type: string
+        default: PatrickPriestley/agent-workflow
+      tools-ref:
+        description: "The tools' branch, tag or commit; pin it to the ref you call this workflow at"
+        type: string
+        default: main
+    secrets:
+      AGENT_TRANSCRIPTS_URL:
+        required: false
+      AGENT_TRANSCRIPTS_INSERT_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -23,20 +51,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the tools
+        uses: actions/checkout@v7
         with:
+          repository: ${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}
+          ref: ${{ inputs.tools-ref || 'main' }}
           persist-credentials: false
       - name: Write the report to this run's summary
         shell: bash
         env:
           AGENT_TRANSCRIPTS_URL: ${{ secrets.AGENT_TRANSCRIPTS_URL }}
           AGENT_TRANSCRIPTS_INSERT_KEY: ${{ secrets.AGENT_TRANSCRIPTS_INSERT_KEY }}
+          ALL_REPOSITORIES: ${{ inputs.all_repositories }}
+          REPO: ${{ github.repository }}
         run: |
           set -u
           if [ -z "$AGENT_TRANSCRIPTS_URL" ] || [ -z "$AGENT_TRANSCRIPTS_INSERT_KEY" ]; then
             echo "::error::the AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY secrets are both needed"; exit 1
           fi
-          if python3 -I bin/probe-report > "$RUNNER_TEMP/report.md"; then
+          only=(--repo "$REPO")
+          if [ "${ALL_REPOSITORIES:-}" = true ]; then only=(); fi
+          if python3 -I bin/probe-report ${only[@]+"${only[@]}"} > "$RUNNER_TEMP/report.md"; then
             cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "The probe report could not be read from the store; see this step's log." >> "$GITHUB_STEP_SUMMARY"

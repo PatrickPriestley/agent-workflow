@@ -87,6 +87,8 @@ jobs:
         run: bash bin/probe-report-workflow.test.sh
       - name: probe-ci-fix workflow
         run: bash bin/probe-ci-fix-workflow.test.sh
+      - name: reusable workflows
+        run: bash bin/reusable-workflows.test.sh
       - name: agent-session-collect
         run: bash bin/agent-session-collect.test.sh
       - name: agent-sessions workflow

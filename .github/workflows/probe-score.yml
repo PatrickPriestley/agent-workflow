@@ -30,6 +30,35 @@ on:
         description: "Close the probe's pull request after scoring"
         type: boolean
         default: true
+  workflow_call:  # other repositories: docs/reusable-workflows.md; the caller sets the run-name above
+    inputs:
+      pr:
+        description: "The probe's pull request number"
+        required: true
+        type: string
+      key_run:
+        description: "The planter run id whose probe-key artifact holds the sealed key"
+        required: true
+        type: string
+      close:
+        description: "Close the probe's pull request after scoring"
+        type: boolean
+        default: true
+      tools-repository:
+        description: "Where the probe and transcript tools come from"
+        type: string
+        default: PatrickPriestley/agent-workflow
+      tools-ref:
+        description: "The tools' branch, tag or commit; pin it to the ref you call this workflow at"
+        type: string
+        default: main
+    secrets:
+      PROBE_KEY:
+        required: false
+      AGENT_TRANSCRIPTS_URL:
+        required: false
+      AGENT_TRANSCRIPTS_INSERT_KEY:
+        required: false
 
 permissions: {}
 
@@ -52,8 +81,11 @@ jobs:
       KEY_RUN: ${{ inputs.key_run }}
       # W, the work folder, is set in the first step: GitHub refuses the runner context here.
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the tools
+        uses: actions/checkout@v7
         with:
+          repository: ${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}
+          ref: ${{ inputs.tools-ref || 'main' }}
           persist-credentials: false
 
       - name: Check the inputs, and that the pull request is on hold

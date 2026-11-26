@@ -2,7 +2,7 @@
 """probe-report: the week's report on the review loops, agents and skills, as markdown for a
 workflow run's summary.
 
-  python3 -I bin/probe-report [--max N] [--days D]
+  python3 -I bin/probe-report [--repo OWNER/NAME] [--max N] [--days D]
 
 Reads the store's report functions (store/schema.sql): probe_report_loops and
 probe_report_probes, which count each probe's latest scoring only and return no evidence;
@@ -11,6 +11,9 @@ agent_health and agent_refused_commands, over the GitHub agents' sessions of the
 with the publishable key in AGENT_TRANSCRIPTS_INSERT_KEY, the key that may read no table. The
 store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1 or localhost). A redirect is
 refused, and the key never appears in what this prints.
+
+The store holds every repository that sends to it. With --repo the report covers that one only
+and its heading names it; without, it covers them all, a Repository column first in each table.
 
 Prints the report:
 - Probes: how many are scored; per loop, how many it caught of the probes it ran on (worst rate
@@ -21,6 +24,13 @@ Prints the report:
 - Skills and plugins: per skill, the sessions that used it in the last D days and in all, by
   where they ran; then its grades per step, from `transcripts grade`, and when it was last
   graded (grading runs by hand, so the date says how current the grades are).
+- Suggested changes, worked out from the above with fixed rules and no model: a review loop
+  that missed or failed probes, or has a verdict waiting for a judge; a skill step passing
+  under 80% of at least 3 graded sessions; grading older than 14 days; and the agents' refused
+  calls, grouped by what was tried (a compound command, cd, an environment variable set in
+  the command, the safeoutputs command, a test file not yet on main's allowlist, a bin/ tool not
+  on the agent's allowlist, a script the agent wrote, or a program not on its allowlist), each
+  with one candidate change. Candidates, not decisions.
 
 The report is meant for a run summary, not an issue or a comment: the review agents read this
 repository's issues and pull requests, and must not learn which are probes.
@@ -30,6 +40,7 @@ Exit 0; 1 the store refused or did not answer; 2 usage.
 import datetime as dt
 import http.client
 import json
+import re
 import os
 import sys
 import urllib.error
@@ -74,20 +85,38 @@ def pct(part, whole):
     return f"{part} ({round(100 * part / whole)}%)" if whole else str(part)
 
 
+MULTI = False  # set by main: the report covers every repository, so each table names its rows'
+
+
+def repo(r):
+    """The Repository cell that begins a row when the report covers every repository."""
+    return f"| {cell(r.get('repository') or '(none)')} " if MULTI else ""
+
+
+def head(columns):
+    """A table's heading and rule, with the Repository column first when it covers every repository."""
+    columns = (["Repository"] if MULTI else []) + columns
+    return ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+
+
+def row(r, rest):
+    return repo(r) + "| " + rest
+
+
 def health(rows, refused, days):
     out = ["", f"## Agent health, last {days} days", ""]
     if not rows:
         return out + [f"No agent ran in the last {days} days."]
     out += ["Calls an agent's allowlist refused are what it tried and was not allowed to do: each is a"
-            " candidate for its allowlist, or for a line in its prompt.", "",
-            "| Agent | Runs | Tool calls | Refused | Other errors |", "|---|---|---|---|---|"]
-    for r in sorted(rows, key=lambda r: (-(r["refused"] / r["calls"]) if r["calls"] else 0, r["agent"])):
-        out.append(f"| {cell(r['agent'])} | {r['runs']} | {r['calls']} | {pct(r['refused'], r['calls'])} | {r['errors']} |")
+            " candidate for its allowlist, or for a line in its prompt.", ""]
+    out += head(["Agent", "Runs", "Tool calls", "Refused", "Other errors"])
+    for r in sorted(rows, key=lambda r: (-(r["refused"] / r["calls"]) if r["calls"] else 0, r.get("repository") or "", r["agent"])):
+        out.append(row(r, f"{cell(r['agent'])} | {r['runs']} | {r['calls']} | {pct(r['refused'], r['calls'])} | {r['errors']} |"))
     out += ["", "### Commands refused most often", ""]
     if not refused:
         return out + ["No command was refused."]
-    out += ["| Agent | Tool | Command (first line) | Times |", "|---|---|---|---|"]
-    out += [f"| {cell(r['agent'])} | {cell(r['tool'])} | {code(r['command'])} | {r['times']} |" for r in refused]
+    out += head(["Agent", "Tool", "Command (first line)", "Times"])
+    out += [row(r, f"{cell(r['agent'])} | {cell(r['tool'])} | {code(r['command'])} | {r['times']} |") for r in refused]
     return out
 
 
@@ -96,62 +125,154 @@ def skills(usage, grades, days):
     if not usage:
         out.append("No session has used a skill yet.")
     else:
-        out += [f"| Skill | Plugin | Sessions, last {days} days | All sessions | Local | Cloud | Agent | Dispatch |",
-                "|---|---|---|---|---|---|---|---|"]
-        out += [f"| {cell(r['skill'])} | {cell(r['plugin']) if r['plugin'] else '(none)'} | {r['sessions']} | {r['sessions_all']} "
-                f"| {r['local']} | {r['cloud']} | {r['agent']} | {r['dispatch']} |" for r in usage]
+        out += head(["Skill", "Plugin", f"Sessions, last {days} days", "All sessions", "Local", "Cloud", "Agent", "Dispatch"])
+        out += [row(r, f"{cell(r['skill'])} | {cell(r['plugin']) if r['plugin'] else '(none)'} | {r['sessions']} | {r['sessions_all']} "
+                f"| {r['local']} | {r['cloud']} | {r['agent']} | {r['dispatch']} |") for r in usage]
     out += ["", "### Grades", ""]
     if not grades:
         return out + ["No skill has been graded yet."]
     last = max(r["last_graded"] for r in grades)[:10]
     out += [f"From `transcripts grade`, each session's latest grading; last graded {last}. Grading runs by hand,"
-            " so these are as current as that date.", "",
-            "| Skill | Step | Sessions | Pass | Fail | Not applicable |", "|---|---|---|---|---|---|"]
-    out += [f"| {cell(r['skill'])} | {cell(r['step'])} | {r['sessions']} | {pct(r['pass'], r['pass'] + r['fail'])} "
-            f"| {r['fail']} | {r['not_applicable']} |" for r in grades]
+            " so these are as current as that date.", ""] + head(["Skill", "Step", "Sessions", "Pass", "Fail", "Not applicable"])
+    out += [row(r, f"{cell(r['skill'])} | {cell(r['step'])} | {r['sessions']} | {pct(r['pass'], r['pass'] + r['fail'])} "
+            f"| {r['fail']} | {r['not_applicable']} |") for r in grades]
     return out
 
 
-def render(loops, probes, more=None):
-    out = ["## Review loops against planted bugs", ""]
+REVIEW_LOOPS = ("ocr", "verify", "property-scout", "ci-diagnose", "ci-fix")
+REFUSALS = {  # what was tried -> (how the row says it, the candidate change)
+    "compound": ("{n} were compound commands (`&&`, `;`, pipes, `$(...)`)",
+                 "Its prompt: one plain command per call, with no `&&`, `;`, pipes or `$(...)`; or allow the command it was building."),
+    "env": ("{n} set an environment variable in the command",
+            "Its prompt: the workflow sets the environment (TMPDIR among it); no `VAR=` or `export` before a command."),
+    "cd": ("{n} began with `cd`", "Its prompt: no `cd`; give paths, or `git -C`."),
+    "safeoutputs": ("{n} ran the `safeoutputs` command",
+                    "Its prompt: call the safe-output tools directly, not the `safeoutputs` command."),
+    "test": ("{n} ran a test file not on main's allowlist",
+             "Expected while the test file is new in a pull request; if it recurs on main, run bin/agent-allowlists-sync."),
+    "tool": ("{n} ran `{prog}`, a tool not on its allowlist",
+             "Allow `bash {prog}:*` in its allowlist if it needs it; otherwise say in its prompt that it is not available."),
+    "own": ("{n} ran a script of its own",
+            "Its prompt: run the listed commands only, not scripts it writes."),
+    "program": ("{n} ran `{prog}`, not on its allowlist",
+                "Allow `{prog}` in its allowlist if it needs it; otherwise say in its prompt that it is not available."),
+}
+
+
+def tried(command):
+    """What a refused command was: one of REFUSALS, and the program for "program"."""
+    c = command.strip()
+    if re.match(r"(export\s+)?[A-Za-z_][A-Za-z0-9_]*=", c):
+        return "env", None
+    if re.search(r"&&|\|\||;|\||\$\(|<\(|`", c):
+        return "compound", None
+    if c == "cd" or c.startswith("cd "):
+        return "cd", None
+    if c.startswith("safeoutputs "):
+        return "safeoutputs", None
+    if re.match(r"bash\s+\S+\.test\.sh\b", c):
+        return "test", None
+    m = re.match(r"bash\s+(?:\S*/)?(bin/[^\s/]+)(\s|$)", c)
+    if m:
+        return "tool", m.group(1)
+    if re.match(r"(bash|sh)\s+\S+", c):
+        return "own", None
+    return "program", (c.split() or ["?"])[0]
+
+
+def suggestions(loops, refused, grades, now):
+    out = ["", "## Suggested changes", "",
+           "Worked out from the tables above with fixed rules, no model involved. Each is a candidate to look at, not a decision.", ""]
+    rows = []  # (the row it comes from, where, what, change)
+    for r in sorted(loops, key=lambda r: (r.get("repository") or "", r["loop"])):
+        if r["loop"] not in REVIEW_LOOPS:
+            continue  # tests, properties and mutation miss silent probes by design
+        ran = r["probes"] - r["not_run"] - r["failed"] - r["no_data"]
+        if r["missed"]:
+            rows.append((r, r["loop"], f"missed {r['missed']} of the {ran} probes it ran on",
+                         "Read its sessions for those probes (the store has them) and the bug each probe planted."))
+        if r["failed"]:
+            rows.append((r, r["loop"], f"failed to run on {r['failed']} probe" + ("s" if r["failed"] != 1 else ""),
+                         "Read the failed runs: a broken loop scores as nothing."))
+        if r["judge"]:
+            rows.append((r, r["loop"], f"{r['judge']} verdict" + (" waits" if r["judge"] == 1 else "s wait") + " for a judge",
+                         "Read its comment on the probe and rule caught or missed."))
+    for g in grades:
+        graded = g["pass"] + g["fail"]
+        if graded >= 3 and g["pass"] / graded < 0.8:
+            rows.append((g, g["skill"], f"step {g['step']} passes {g['pass']} of {graded} graded sessions ({round(100 * g['pass'] / graded)}%)",
+                         "Read the failing sessions' evidence (transcripts grade), then propose the smallest change to the step."))
+    if grades:
+        last = max(g["last_graded"] for g in grades)
+        age = (now - dt.datetime.fromisoformat(last.replace("Z", "+00:00"))).days
+        if age > 14:
+            rows.append(({"repository": "(all)"}, "grading", f"last ran {last[:10]}, {age} days ago", "Run `transcripts grade --store` so the grades are current."))
+    groups = {}
+    for r in refused:
+        kind, prog = tried(r["command"])
+        g = groups.setdefault((r.get("repository") or "", r["agent"], kind, prog), {"n": 0, "example": r["command"]})
+        g["n"] += r["times"]
+    for (where, agent, kind, prog), g in sorted(groups.items(), key=lambda kv: (-kv[1]["n"],) + kv[0][:3] + (kv[0][3] or "",)):
+        what, change = REFUSALS[kind]
+        calls = f"{g['n']} refused call" + ("s" if g["n"] != 1 else "")
+        rows.append(({"repository": where}, agent, what.format(n=calls, prog=cell(prog or "")) + f", such as {code(g['example'])}",
+                     change.format(prog=cell(prog or ""))))
+    if not rows:
+        return out + ["Nothing to suggest this week."]
+    out += head(["Where", "What the data shows", "Candidate change"])
+    return out + [row(r, f"{cell(w)} | {what} | {change} |") for r, w, what, change in rows]
+
+
+def render(loops, probes, more=None, name=None):
+    out = ["## Review loops against planted bugs" + (f": {cell(name)}" if name else ""), ""]
     if not loops and not probes:
         return "\n".join(out + ["No probe has been scored yet."] + (more or []) + [""])
-    total = max([r["probes"] for r in loops] + [len(probes)])
-    out += [f"{total} probes scored (each by its latest scoring). A loop is counted only on the probes it ran on.", "",
-            "| Loop | Caught | Ran on | Missed | Not run | Failed | Judge |", "|---|---|---|---|---|---|---|"]
+    per = {}
+    for r in loops:  # a repository's probes are the most any of its loops was scored on
+        per[r.get("repository")] = max(per.get(r.get("repository"), 0), r["probes"])
+    total = max(sum(per.values()), len(probes))
+    out += [f"{total} probes scored (each by its latest scoring). A loop is counted only on the probes it ran on.", ""]
+    out += head(["Loop", "Caught", "Ran on", "Missed", "Not run", "Failed", "Judge"])
 
     def ran(r):
         return r["probes"] - r["not_run"] - r["failed"] - r["no_data"]
 
     def order(r):
         n = ran(r)
-        return (n == 0, r["caught"] / n if n else 0, r["loop"])
+        return (r.get("repository") or "", n == 0, r["caught"] / n if n else 0, r["loop"])
 
     for r in sorted(loops, key=order):
         n = ran(r)
         rate = f"{r['caught']} of {n} ({round(100 * r['caught'] / n)}%)" if n else "none ran"
-        out.append(f"| {cell(r['loop'])} | {rate} | {n} | {r['missed']} | {r['not_run'] + r['no_data']} | {r['failed']} | {r['judge']} |")
+        out.append(row(r, f"{cell(r['loop'])} | {rate} | {n} | {r['missed']} | {r['not_run'] + r['no_data']} | {r['failed']} | {r['judge']} |"))
     if probes:
-        out += ["", "### Latest probes", "", "| Probe | PR | Kind | Planted | File | Caught |", "|---|---|---|---|---|---|"]
+        out += ["", "### Latest probes", ""] + head(["Probe", "PR", "Kind", "Planted", "File", "Caught"])
         for p in probes:
-            out.append(f"| {cell(p['probe_id'])} | #{int(p['pr'])} | {cell(p['kind'])} | {'loud' if p['loud'] else 'silent'} "
-                       f"| `{cell(p['file'])}` | {int(p['caught'])} of {int(p['ran'])} |")
+            out.append(row(p, f"{cell(p['probe_id'])} | #{int(p['pr'])} | {cell(p['kind'])} | {'loud' if p['loud'] else 'silent'} "
+                       f"| `{cell(p['file'])}` | {int(p['caught'])} of {int(p['ran'])} |"))
     return "\n".join(out + (more or []) + [""])
 
 
 def main(argv):
+    global MULTI
     opts, it = {}, iter(argv[1:])
     try:
         for a in it:
-            if a not in ("--max", "--days") or a in opts:
+            if a not in ("--max", "--days", "--repo") or a in opts:
                 raise ValueError
-            opts[a] = int(next(it))
-        most, days = opts.get("--max", 12), opts.get("--days", 7)
+            v = next(it)
+            opts[a] = v if a == "--repo" else int(v)
+        most, days, name = opts.get("--max", 12), opts.get("--days", 7), opts.get("--repo")
         if not 1 <= most <= 100 or not 1 <= days <= 366:
             raise ValueError
+        if name is not None and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", name):
+            raise ValueError
     except (ValueError, StopIteration):
-        print("usage: probe-report [--max N] [--days D]   (N from 1 to 100, D from 1 to 366)", file=sys.stderr)
+        print("usage: probe-report [--repo OWNER/NAME] [--max N] [--days D]   (N from 1 to 100, D from 1 to 366)",
+              file=sys.stderr)
         return 2
+    MULTI = name is None
+    only = {} if MULTI else {"repo": name}
     url = (os.environ.get("AGENT_TRANSCRIPTS_URL") or "").rstrip("/")
     key = os.environ.get("AGENT_TRANSCRIPTS_INSERT_KEY") or ""
     if not url or not key:
@@ -163,13 +284,14 @@ def main(argv):
         return 2
     try:
         since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat(timespec="seconds")
-        loops = call(url, key, "probe_report_loops", {})
-        probes = call(url, key, "probe_report_probes", {"max_rows": most})
-        agents = call(url, key, "agent_health", {"since": since})
-        refused = call(url, key, "agent_refused_commands", {"since": since, "max_rows": 10})
-        usage = call(url, key, "skill_usage", {"since": since})
-        grades = call(url, key, "skill_grades", {})
-        text = render(loops, probes, health(agents, refused, days) + skills(usage, grades, days))
+        loops = call(url, key, "probe_report_loops", dict(only))
+        probes = call(url, key, "probe_report_probes", {"max_rows": most, **only})
+        agents = call(url, key, "agent_health", {"since": since, **only})
+        refused = call(url, key, "agent_refused_commands", {"since": since, "max_rows": 50, **only})
+        usage = call(url, key, "skill_usage", {"since": since, **only})
+        grades = call(url, key, "skill_grades", dict(only))
+        text = render(loops, probes, health(agents, refused[:10], days) + skills(usage, grades, days)
+                      + suggestions(loops, refused, grades, dt.datetime.now(dt.timezone.utc)), name)
     except Store as e:
         print(f"probe-report: {e}", file=sys.stderr)
         return 1

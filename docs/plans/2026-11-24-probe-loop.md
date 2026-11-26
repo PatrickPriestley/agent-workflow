@@ -164,6 +164,18 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       tool calls, calls its allowlist refused and the commands refused most (`agent_health`,
       `agent_refused_commands`), and how each skill and plugin is used and graded
       (`skill_usage`, `skill_grades`). Catch rates need probes; these need no answer key.
+      Its last section, Suggested changes, is the improver's first step with no model: fixed
+      rules turn the tables into candidates (a review loop that missed or failed probes, a skill
+      step under 80%, stale grading, and each kind of refused call with one candidate change to
+      the agent's prompt or allowlist). The improver's model step drafts a change for the top one.
+      Repository-aware (2026-11-26): every report function takes an optional repository and
+      returns a repository column, so one store serves several repositories. The scheduled
+      report covers its own repository; by hand it can cover them all, a Repository column
+      first in each table.
+      The five plain workflows (report, collector, CI-fix labeller, scorer and auto-scorer)
+      are reusable (2026-11-26, docs/reusable-workflows.md): another repository calls them
+      at `@main`, passes the store's secrets, and its tools come from here. The planter is
+      not shared yet: it is written for this repository's files.
    d. A sweep that closes any probe left open and deletes probe branches.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The

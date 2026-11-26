@@ -62,17 +62,17 @@ trap 'kill "$srv" 2>/dev/null; [ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
 for _ in $(seq 300); do [ -s "$T/log.port" ] && break; sleep 0.1; done
 [ -s "$T/log.port" ] || { echo "the stand-in server did not start in 30 seconds"; exit 1; }
 URL="http://127.0.0.1:$(cat "$T/log.port")"
-report() {  # args... -> $rc, stdout in $T/out, stderr in $T/err
-  : > "$T/log"
+report() {  # args... (with --repo o/r unless ALL=1) -> $rc, stdout in $T/out, stderr in $T/err
+  : > "$T/log"; local only=(--repo o/r); [ -z "${ALL:-}" ] || only=()  # ALL=1: every repository
   env AGENT_TRANSCRIPTS_URL="${U-$URL}" AGENT_TRANSCRIPTS_INSERT_KEY="${K-sb_publishable_test}" \
-    "${PR[@]}" "$@" > "$T/out" 2> "$T/err"; rc=$?
+    "${PR[@]}" ${only[@]+"${only[@]}"} "$@" > "$T/out" 2> "$T/err"; rc=$?
 }
 
 it "it calls the six report functions with the insert key, and nothing else"
 report; assert_eq 0 "$rc"
 assert_eq "/rest/v1/rpc/probe_report_loops /rest/v1/rpc/probe_report_probes /rest/v1/rpc/agent_health /rest/v1/rpc/agent_refused_commands /rest/v1/rpc/skill_usage /rest/v1/rpc/skill_grades" "$(python3 -I -c 'import json,sys; print(" ".join(json.loads(l)["path"] for l in open(sys.argv[1])))' "$T/log")"
 assert_eq "sb_publishable_test" "$(python3 -I -c 'import json,sys; print(" ".join(sorted({json.loads(l)["apikey"] for l in open(sys.argv[1])})))' "$T/log")"
-assert_eq '{"max_rows": 12}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
+assert_eq '{"max_rows": 12, "repo": "o/r"}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
 it "the loop table gives each loop's catches of the probes it ran on, worst first, and says which did not run"
 out="$(cat "$T/out")"
 has "$out" "| Loop | Caught | Ran on | Missed | Not run | Failed | Judge |"
@@ -91,7 +91,7 @@ it "agent health: runs, calls, the share of calls refused, worst first, and the 
 has "$out" "## Agent health, last 7 days"
 has "$out" "| ci-diagnosis | 5 | 80 | 15 (19%) | 0 |"
 has "$out" "| verify-pr-claims | 2 | 40 | 12 (30%) | 1 |"
-lci="$(printf '%s\n' "$out" | grep -n '| ci-diagnosis | 5' | cut -d: -f1)"; lvp="$(printf '%s\n' "$out" | grep -n '| verify-pr-claims | 2' | cut -d: -f1)"
+lci="$(printf '%s\n' "$out" | grep -n '| ci-diagnosis | 5 |' | head -1 | cut -d: -f1)"; lvp="$(printf '%s\n' "$out" | grep -n '| verify-pr-claims | 2 |' | head -1 | cut -d: -f1)"
 [ -n "$lci" ] && [ -n "$lvp" ] && [ "$lvp" -lt "$lci" ] && ok || bad "not the highest refused share first"
 has "$out" "| ci-diagnosis | Bash | \`bash bin/probe-store.test.sh\` | 4 |"
 has "$out" "| verify-pr-claims | Bash | \`source <(grep 'x' bin/a\\|b)\` | 2 |"
@@ -102,8 +102,9 @@ calls = [json.loads(l) for l in open(sys.argv[1])]
 since = dt.datetime.fromisoformat(calls[2]["body"]["since"])
 age = dt.datetime.now(dt.timezone.utc) - since
 assert dt.timedelta(days=6, hours=23) < age < dt.timedelta(days=7, hours=1), age
-assert calls[3]["body"]["since"] == calls[2]["body"]["since"] == calls[4]["body"]["since"] and calls[3]["body"]["max_rows"] == 10
-assert calls[5]["body"] == {}, calls[5]
+assert calls[3]["body"]["since"] == calls[2]["body"]["since"] == calls[4]["body"]["since"] and calls[3]["body"]["max_rows"] == 50
+assert calls[5]["body"] == calls[0]["body"] == {"repo": "o/r"}, calls[5]
+assert all(c["body"]["repo"] == "o/r" for c in calls), calls
 ' "$T/log" && ok || bad "$(cat "$T/log")"
 report --days 30; has "$(cat "$T/out")" "## Agent health, last 30 days"
 python3 -I -c '
@@ -129,10 +130,64 @@ HEALTH='[{"agent": "verify-pr-claims", "runs": 2, "calls": 40, "refused": 6, "er
 USAGE='[{"skill": "claude-api", "plugin": null, "sessions": 0, "sessions_all": 1, "local": 0, "cloud": 1, "agent": 0, "dispatch": 0}]'
 GRADES='[]'; answers 200 200; report; has "$(cat "$T/out")" "No command was refused."; has "$(cat "$T/out")" "No skill has been graded yet."
 answers 200 200
+it "suggested changes: refused calls grouped by what the agent tried, each with one candidate change, most first"
+REFUSED='[{"agent": "ci-diagnosis", "tool": "Bash", "command": "cd /x && ls", "times": 2},
+          {"agent": "ci-diagnosis", "tool": "Bash", "command": "cat a.json | head", "times": 1},
+          {"agent": "ci-diagnosis", "tool": "Bash", "command": "export TMPDIR=/t; bash x.sh", "times": 1},
+          {"agent": "ci-diagnosis", "tool": "Bash", "command": "bash /tmp/gh-aw/agent/ci/head/bin/new.test.sh", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "safeoutputs add_comment {}", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "cd /home/runner/work", "times": 1},
+          {"agent": "property-scout", "tool": "Bash", "command": "python3 -m venv /tmp/v", "times": 1},
+          {"agent": "property-scout", "tool": "Bash", "command": "python3 -m venv /tmp/w", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "bash bin/commit-gate run commit-msg /tmp/m", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "bash /tmp/gh-aw/agent/verify/check.sh", "times": 1}]'
+LOOPS='[{"loop": "verify", "probes": 3, "caught": 1, "missed": 2, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0},
+        {"loop": "property-scout", "probes": 3, "caught": 1, "missed": 0, "not_run": 0, "failed": 1, "no_data": 0, "judge": 1},
+        {"loop": "tests", "probes": 3, "caught": 0, "missed": 3, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
+GRADES='[{"skill": "change-record:change", "step": "red-first", "sessions": 7, "pass": 4, "fail": 2, "not_applicable": 1, "last_graded": "2020-01-02T00:00:00+00:00"},
+         {"skill": "change-record:change", "step": "code-quality", "sessions": 2, "pass": 1, "fail": 1, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"},
+         {"skill": "change-record:change", "step": "tier-declared", "sessions": 7, "pass": 7, "fail": 0, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"}]'
+answers 200 200; report; o="$(cat "$T/out")"
+has "$o" "## Suggested changes"
+grep -qi 'no model' "$T/out" && ok || bad "does not say how they were found"
+sug="$(printf '%s\n' "$o" | sed -n '/^## Suggested changes/,$p')"
+has "$sug" "| ci-diagnosis | 3 refused calls were compound commands (\`&&\`, \`;\`, pipes, \`\$(...)\`), such as \`cd /x && ls\` |"
+has "$sug" "one plain command per call"
+has "$sug" "| ci-diagnosis | 1 refused call set an environment variable in the command, such as \`export TMPDIR=/t; bash x.sh\` |"
+has "$sug" "| ci-diagnosis | 1 refused call ran a test file not on main's allowlist, such as \`bash /tmp/gh-aw/agent/ci/head/bin/new.test.sh\` |"
+has "$sug" "| verify-pr-claims | 1 refused call ran \`bin/commit-gate\`, a tool not on its allowlist, such as \`bash bin/commit-gate run commit-msg /tmp/m\` |"
+has "$sug" 'Allow `bash bin/commit-gate:*`'
+has "$sug" "| verify-pr-claims | 1 refused call ran a script of its own, such as \`bash /tmp/gh-aw/agent/verify/check.sh\` |"
+has "$sug" "not scripts it writes"
+printf '%s' "$sug" | grep -q 'Allow `bash`' && bad "suggested allowing bash itself" || ok
+has "$sug" "bin/agent-allowlists-sync"
+has "$sug" "| verify-pr-claims | 1 refused call ran the \`safeoutputs\` command, such as \`safeoutputs add_comment {}\` |"
+has "$sug" "| verify-pr-claims | 1 refused call began with \`cd\`, such as \`cd /home/runner/work\` |"
+has "$sug" "| property-scout | 2 refused calls ran \`python3\`, not on its allowlist, such as \`python3 -m venv /tmp/v\` |"
+l4="$(printf '%s\n' "$sug" | grep -n '3 refused calls' | cut -d: -f1)"; l2="$(printf '%s\n' "$sug" | grep -n '2 refused calls' | cut -d: -f1)"
+[ -n "$l4" ] && [ -n "$l2" ] && [ "$l4" -lt "$l2" ] && ok || bad "refusals not most first"
+lpy="$(printf '%s\n' "$sug" | grep -n 'ran `python3`' | cut -d: -f1)"; lenv="$(printf '%s\n' "$sug" | grep -n 'set an environment variable' | cut -d: -f1)"
+[ -n "$lpy" ] && [ -n "$lenv" ] && [ "$lpy" -lt "$lenv" ] && ok || bad "a larger group of a later agent is not listed first"
+it "suggested changes: a review loop that missed or failed probes, and a judge waiting; not tests missing silent probes"
+has "$sug" "| verify | missed 2 of the 3 probes it ran on |"
+has "$sug" "| property-scout | failed to run on 1 probe |"
+has "$sug" "| property-scout | 1 verdict waits for a judge |"
+printf '%s' "$sug" | grep -q '^| tests |' && bad "suggested something for tests missing silent probes" || ok
+it "suggested changes: a skill step under 80% over at least 3 graded sessions, and old grading"
+has "$sug" "| change-record:change | step red-first passes 4 of 6 graded sessions (67%) |"
+printf '%s' "$sug" | grep -q 'code-quality' && bad "flagged a step with only 2 graded sessions" || ok
+printf '%s' "$sug" | grep -q 'tier-declared' && bad "flagged a step at 100%" || ok
+has "$sug" "| grading | last ran 2020-01-02"
+it "suggested changes: none when nothing calls for one"
+LOOPS='[{"loop": "verify", "probes": 2, "caught": 2, "missed": 0, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
+REFUSED='[]'; GRADES='[]'; answers 200 200; report
+has "$(cat "$T/out")" "Nothing to suggest this week."
+LOOPS='[{"loop": "verify", "probes": 2, "caught": 2, "missed": 0, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
+answers 200 200
 it "the health functions failing fails the report too"
 answers 200 200 500; report; assert_eq 1 "$rc"; answers 200 200
 it "--max sets how many probes are listed, within 1 to 100"
-report --max 3; assert_eq '{"max_rows": 3}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
+report --max 3; assert_eq '{"max_rows": 3, "repo": "o/r"}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
 report --max 0; assert_eq 2 "$rc"; report --max 101; assert_eq 2 "$rc"; report --max x; assert_eq 2 "$rc"
 it "no probe scored yet is said plainly"
 LOOPS='[]' PROBES='[]' answers 200 200; LOOPS='[]'; PROBES='[]'; answers 200 200; report; assert_eq 0 "$rc"
@@ -146,6 +201,48 @@ answers 200 200
 it "the store must be https (or this machine), and both settings are needed"
 U="http://example.com" report; assert_eq 2 "$rc"; U="" report; assert_eq 2 "$rc"; K="" report; assert_eq 2 "$rc"
 assert_eq 0 "$(grep -c . "$T/log")"
+
+it "--repo names the repository in the heading; a repo that is not owner/name is refused before any call"
+report; has "$(cat "$T/out")" "## Review loops against planted bugs: o/r"
+grep -q '^| Repository' "$T/out" && bad "a Repository column in one repository's report" || ok
+for r in "o" "o/r/x" "o/r;x" "" "../o/r x"; do ALL=1 report --repo "$r"; assert_eq "2 0" "$rc $(grep -c . "$T/log")"; done
+report --repo o/r; assert_eq 2 "$rc"  # given twice
+ALL=1 report --repo Some.Owner/some_repo-2; assert_eq 0 "$rc"; has "$(cat "$T/out")" "planted bugs: Some.Owner/some_repo-2"
+
+it "without --repo: every repository, none named in the call, a Repository column first in each table"
+LOOPS='[{"repository": "a/one", "loop": "verify", "probes": 2, "caught": 1, "missed": 1, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0},
+        {"repository": "b/two", "loop": "verify", "probes": 3, "caught": 3, "missed": 0, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
+PROBES='[{"repository": "b/two", "probe_id": "probe-9", "pr": 4, "kind": "k", "loud": false, "file": "f", "caught": 1, "ran": 2, "scored_at": "2026-11-25T17:09:30+00:00"}]'
+HEALTH='[{"repository": "a/one", "agent": "verify-pr-claims", "runs": 1, "calls": 10, "refused": 1, "errors": 0},
+         {"repository": "b/two", "agent": "verify-pr-claims", "runs": 2, "calls": 10, "refused": 5, "errors": 0}]'
+REFUSED='[{"repository": "b/two", "agent": "verify-pr-claims", "tool": "Bash", "command": "cd x", "times": 2},
+          {"repository": "a/one", "agent": "verify-pr-claims", "tool": "Bash", "command": "cd y", "times": 1}]'
+USAGE='[{"repository": "a/one", "skill": "s", "plugin": null, "sessions": 1, "sessions_all": 1, "local": 1, "cloud": 0, "agent": 0, "dispatch": 0}]'
+GRADES='[{"repository": "b/two", "skill": "s", "step": "red-first", "sessions": 4, "pass": 1, "fail": 3, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"},
+         {"repository": null, "skill": "s", "step": "tier-declared", "sessions": 1, "pass": 1, "fail": 0, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"}]'
+answers 200 200; ALL=1 report; assert_eq 0 "$rc"; o="$(cat "$T/out")"
+python3 -I -c '
+import json, sys
+calls = [json.loads(l) for l in open(sys.argv[1])]
+assert not any("repo" in c["body"] for c in calls), calls
+' "$T/log" && ok || bad "named a repo: $(cat "$T/log")"
+has "$o" "## Review loops against planted bugs
+"; has "$o" "5 probes scored"
+has "$o" "| Repository | Loop | Caught | Ran on | Missed | Not run | Failed | Judge |"
+has "$o" "|---|---|---|---|---|---|---|---|"
+has "$o" "| a/one | verify | 1 of 2 (50%) | 2 | 1 | 0 | 0 | 0 |"; has "$o" "| b/two | verify | 3 of 3 (100%) | 3 | 0 | 0 | 0 | 0 |"
+has "$o" "| Repository | Probe | PR | Kind | Planted | File | Caught |"; has "$o" "| b/two | probe-9 | #4 |"
+has "$o" "| b/two | verify-pr-claims | 2 | 10 | 5 (50%) | 0 |"; has "$o" "| a/one | verify-pr-claims | 1 | 10 | 1 (10%) | 0 |"
+has "$o" "| b/two | verify-pr-claims | Bash | \`cd x\` | 2 |"
+has "$o" "| a/one | s | (none) | 1 | 1 | 1 | 0 | 0 | 0 |"
+has "$o" "| b/two | s | red-first | 4 | 1 (25%) | 3 | 0 |"; has "$o" "| (none) | s | tier-declared | 1 |"
+it "without --repo, each suggestion names its repository, and one agent in two is two suggestions"
+sug="$(printf '%s\n' "$o" | sed -n '/^## Suggested changes/,$p')"
+has "$sug" "| Repository | Where | What the data shows | Candidate change |"
+has "$sug" "| a/one | verify | missed 1 of the 2 probes it ran on |"
+has "$sug" "| b/two | s | step red-first passes 1 of 4 graded sessions (25%) |"
+has "$sug" "| (all) | grading | last ran 2020-01-02"
+has "$sug" "| b/two | verify-pr-claims | 2 refused calls began with \`cd\`"; has "$sug" "| a/one | verify-pr-claims | 1 refused call began with \`cd\`"
 
 it "this test runs in CI"
 grep -qF 'bash bin/probe-report.test.sh' "$here/../.github/workflows/test.yml" && ok || bad "not in test.yml"

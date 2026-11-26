@@ -15,6 +15,16 @@ on:
   schedule:
     - cron: "23 */3 * * *"
   workflow_dispatch:
+  workflow_call:  # other repositories: docs/reusable-workflows.md; their scorer must be probe-score.yml
+    inputs:
+      tools-repository:
+        description: "Where the probe and transcript tools come from"
+        type: string
+        default: PatrickPriestley/agent-workflow
+      tools-ref:
+        description: "The tools' branch, tag or commit; pin it to the ref you call this workflow at"
+        type: string
+        default: main
 
 permissions:
   contents: read
@@ -34,8 +44,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the tools
+        uses: actions/checkout@v7
         with:
+          repository: ${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}
+          ref: ${{ inputs.tools-ref || 'main' }}
           persist-credentials: false
       - name: Score each probe that is ready
         shell: bash

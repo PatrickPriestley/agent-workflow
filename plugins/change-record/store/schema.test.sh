@@ -412,6 +412,39 @@ for t in messages scores sessions; do has "$(as_role anon "select count(*) from 
 it "health and skills: schema.sql runs again over them with nothing to say"
 out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
 
+# ---- Repository-aware: a second repository's rows, and the repo filter ----
+two="insert into public.probe_runs (probe_id, scorer_run, pr, repository, kind, loud, file, first_line, last_line, planted_sha, caught, ran) values ('probe-90', 91, 12, 'PatrickPriestley/meal-plan', 'off-by-one', false, 'apps/api/src/weeks.ts', 3, 4, repeat('c', 40), 0, 1)"
+assert_eq "INSERT 0 1" "$(as_role anon "$two")"
+assert_eq "INSERT 0 1" "$(as_role anon "insert into public.probe_verdicts (probe_id, scorer_run, loop, verdict, evidence) values ('probe-90', 91, 'verify', 'missed', 'x')")"
+mp="insert into public.sessions (session_id, row_id, sender, version, entry, created_at) values
+ ('gh-aw-verify-pr-claims-21-1', $(h64 7), 's', 1, '{\"source\": \"agent\", \"repository\": \"github.com/patrickpriestley/meal-plan\", \"skills\": []}', now() - interval '1 day'),
+ ('rep-m', $(h64 8), 's', 1, '{\"source\": \"local\", \"repository\": \"github.com/PatrickPriestley/meal-plan\", \"skills\": [{\"name\": \"testplug:testskill\"}]}', now() - interval '1 day')"
+mp="$(printf '%s' "$mp" | tr '\n' ' ')"; assert_eq "INSERT 0 2" "$(sql "$mp")"
+assert_eq "INSERT 0 2" "$(sql "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, tool, call_id, failed, text) values ('gh-aw-verify-pr-claims-21-1', 'main', $(h64 e), 1, 1, 0, 'assistant', 'call', 'Bash', 'm1', false, '{\"command\": \"pnpm test\"}'), ('gh-aw-verify-pr-claims-21-1', 'main', $(h64 e), 1, 2, 0, 'tool', 'result', null, 'm1', true, 'Permission to use Bash has been denied.')")"
+assert_eq "INSERT 0 1" "$(sql "insert into public.scores (session_id, step, skill, grader, verdict, graded_at) values ('rep-m', 'red-first', 'testplug:testskill', 'fields/3', 'fail', now() - interval '1 day')")"
+it "repo: owner/name in any form and case is one key"
+assert_eq "a/b|a/b|a/b|a/b|" "$(sql "select concat_ws('|', public.repo_key('github.com/A/B'), public.repo_key('A/B'), public.repo_key('https://github.com/a/B'), public.repo_key('GitHub.com/a/b'), coalesce(public.repo_key(''), ''))")"
+it "repo: with no repo, every repository, each row tagged with its own"
+assert_eq "patrickpriestley/agent-workflow|verify;patrickpriestley/meal-plan|verify" "$(as_role anon "select string_agg(concat_ws('|', repository, loop), ';' order by repository, loop) from public.probe_report_loops() where loop = 'verify'")"
+it "repo: with a repo, only it, whatever its case"
+assert_eq "patrickpriestley/meal-plan|verify|1|0|1" "$(as_role anon "select string_agg(concat_ws('|', repository, loop, probes, caught, missed), ';') from public.probe_report_loops('PatrickPriestley/Meal-Plan')")"
+assert_eq "0" "$(as_role anon "select count(*) from public.probe_report_loops('patrickpriestley/agent-workflow') where repository <> 'patrickpriestley/agent-workflow'")"
+assert_eq "patrickpriestley/meal-plan|probe-90|12" "$(as_role anon "select string_agg(concat_ws('|', repository, probe_id, pr), ';') from public.probe_report_probes(12, 'patrickpriestley/meal-plan')")"
+assert_eq "patrickpriestley/meal-plan|verify-pr-claims|1|1|1|0" "$(as_role anon "select string_agg(concat_ws('|', repository, agent, runs, calls, refused, errors), ';') from public.agent_health(now() - interval '7 days', 'github.com/patrickpriestley/meal-plan')")"
+assert_eq "patrickpriestley/meal-plan|verify-pr-claims|pnpm test|1" "$(as_role anon "select string_agg(concat_ws('|', repository, agent, command, times), ';') from public.agent_refused_commands(now() - interval '7 days', 10, 'patrickpriestley/meal-plan')")"
+assert_eq "patrickpriestley/meal-plan|testplug:testskill|1|1|1|0" "$(as_role anon "select string_agg(concat_ws('|', repository, skill, sessions, sessions_all, local, cloud), ';') from public.skill_usage(now() - interval '7 days', 'patrickpriestley/meal-plan')")"
+assert_eq "patrickpriestley/meal-plan|testplug:testskill|red-first|1|0|1" "$(as_role anon "select string_agg(concat_ws('|', repository, skill, step, sessions, pass, fail), ';') from public.skill_grades('patrickpriestley/meal-plan')")"
+it "repo: the same agent in two repositories is two rows, not one"
+assert_eq "2" "$(as_role anon "select count(*) from public.agent_health(now() - interval '7 days') where agent = 'verify-pr-claims'")"
+assert_eq "patrickpriestley/meal-plan|1|1|1|0" "$(as_role anon "select concat_ws('|', repository, runs, calls, refused, errors) from public.agent_health(now() - interval '7 days') where agent = 'verify-pr-claims' and repository = 'patrickpriestley/meal-plan'")"
+it "repo: a repository with nothing gives nothing, and repo_key is not the key's to call"
+assert_eq "0" "$(as_role anon "select count(*) from public.probe_report_loops('nobody/nothing')")"
+has "$(as_role anon "select public.repo_key('a/b')")" "permission denied for function repo_key"
+it "repo: schema.sql runs again, dropping and making the functions, with nothing to say, and their grants hold"
+out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
+assert_eq "patrickpriestley/meal-plan|verify|1|0|1" "$(as_role anon "select string_agg(concat_ws('|', repository, loop, probes, caught, missed), ';') from public.probe_report_loops('patrickpriestley/meal-plan')")"
+has "$(as_role authenticated "select count(*) from public.skill_grades()")" "permission denied for function skill_grades"
+
 echo
 echo "store schema: passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
