@@ -91,7 +91,7 @@ it "agent health: runs, calls, the share of calls refused, worst first, and the 
 has "$out" "## Agent health, last 7 days"
 has "$out" "| ci-diagnosis | 5 | 80 | 15 (19%) | 0 |"
 has "$out" "| verify-pr-claims | 2 | 40 | 12 (30%) | 1 |"
-lci="$(printf '%s\n' "$out" | grep -n '| ci-diagnosis | 5' | cut -d: -f1)"; lvp="$(printf '%s\n' "$out" | grep -n '| verify-pr-claims | 2' | cut -d: -f1)"
+lci="$(printf '%s\n' "$out" | grep -n '| ci-diagnosis | 5 |' | head -1 | cut -d: -f1)"; lvp="$(printf '%s\n' "$out" | grep -n '| verify-pr-claims | 2 |' | head -1 | cut -d: -f1)"
 [ -n "$lci" ] && [ -n "$lvp" ] && [ "$lvp" -lt "$lci" ] && ok || bad "not the highest refused share first"
 has "$out" "| ci-diagnosis | Bash | \`bash bin/probe-store.test.sh\` | 4 |"
 has "$out" "| verify-pr-claims | Bash | \`source <(grep 'x' bin/a\\|b)\` | 2 |"
@@ -102,7 +102,7 @@ calls = [json.loads(l) for l in open(sys.argv[1])]
 since = dt.datetime.fromisoformat(calls[2]["body"]["since"])
 age = dt.datetime.now(dt.timezone.utc) - since
 assert dt.timedelta(days=6, hours=23) < age < dt.timedelta(days=7, hours=1), age
-assert calls[3]["body"]["since"] == calls[2]["body"]["since"] == calls[4]["body"]["since"] and calls[3]["body"]["max_rows"] == 10
+assert calls[3]["body"]["since"] == calls[2]["body"]["since"] == calls[4]["body"]["since"] and calls[3]["body"]["max_rows"] == 50
 assert calls[5]["body"] == {}, calls[5]
 ' "$T/log" && ok || bad "$(cat "$T/log")"
 report --days 30; has "$(cat "$T/out")" "## Agent health, last 30 days"
@@ -128,6 +128,60 @@ has "$o" "No agent ran in the last 7 days."; has "$o" "No session has used a ski
 HEALTH='[{"agent": "verify-pr-claims", "runs": 2, "calls": 40, "refused": 6, "errors": 1}]'; REFUSED='[]'
 USAGE='[{"skill": "claude-api", "plugin": null, "sessions": 0, "sessions_all": 1, "local": 0, "cloud": 1, "agent": 0, "dispatch": 0}]'
 GRADES='[]'; answers 200 200; report; has "$(cat "$T/out")" "No command was refused."; has "$(cat "$T/out")" "No skill has been graded yet."
+answers 200 200
+it "suggested changes: refused calls grouped by what the agent tried, each with one candidate change, most first"
+REFUSED='[{"agent": "ci-diagnosis", "tool": "Bash", "command": "cd /x && ls", "times": 2},
+          {"agent": "ci-diagnosis", "tool": "Bash", "command": "cat a.json | head", "times": 1},
+          {"agent": "ci-diagnosis", "tool": "Bash", "command": "export TMPDIR=/t; bash x.sh", "times": 1},
+          {"agent": "ci-diagnosis", "tool": "Bash", "command": "bash /tmp/gh-aw/agent/ci/head/bin/new.test.sh", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "safeoutputs add_comment {}", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "cd /home/runner/work", "times": 1},
+          {"agent": "property-scout", "tool": "Bash", "command": "python3 -m venv /tmp/v", "times": 1},
+          {"agent": "property-scout", "tool": "Bash", "command": "python3 -m venv /tmp/w", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "bash bin/commit-gate run commit-msg /tmp/m", "times": 1},
+          {"agent": "verify-pr-claims", "tool": "Bash", "command": "bash /tmp/gh-aw/agent/verify/check.sh", "times": 1}]'
+LOOPS='[{"loop": "verify", "probes": 3, "caught": 1, "missed": 2, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0},
+        {"loop": "property-scout", "probes": 3, "caught": 1, "missed": 0, "not_run": 0, "failed": 1, "no_data": 0, "judge": 1},
+        {"loop": "tests", "probes": 3, "caught": 0, "missed": 3, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
+GRADES='[{"skill": "change-record:change", "step": "red-first", "sessions": 7, "pass": 4, "fail": 2, "not_applicable": 1, "last_graded": "2020-01-02T00:00:00+00:00"},
+         {"skill": "change-record:change", "step": "code-quality", "sessions": 2, "pass": 1, "fail": 1, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"},
+         {"skill": "change-record:change", "step": "tier-declared", "sessions": 7, "pass": 7, "fail": 0, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"}]'
+answers 200 200; report; o="$(cat "$T/out")"
+has "$o" "## Suggested changes"
+grep -qi 'no model' "$T/out" && ok || bad "does not say how they were found"
+sug="$(printf '%s\n' "$o" | sed -n '/^## Suggested changes/,$p')"
+has "$sug" "| ci-diagnosis | 3 refused calls were compound commands (\`&&\`, \`;\`, pipes, \`\$(...)\`), such as \`cd /x && ls\` |"
+has "$sug" "one plain command per call"
+has "$sug" "| ci-diagnosis | 1 refused call set an environment variable in the command, such as \`export TMPDIR=/t; bash x.sh\` |"
+has "$sug" "| ci-diagnosis | 1 refused call ran a test file not on main's allowlist, such as \`bash /tmp/gh-aw/agent/ci/head/bin/new.test.sh\` |"
+has "$sug" "| verify-pr-claims | 1 refused call ran \`bin/commit-gate\`, a tool not on its allowlist, such as \`bash bin/commit-gate run commit-msg /tmp/m\` |"
+has "$sug" 'Allow `bash bin/commit-gate:*`'
+has "$sug" "| verify-pr-claims | 1 refused call ran a script of its own, such as \`bash /tmp/gh-aw/agent/verify/check.sh\` |"
+has "$sug" "not scripts it writes"
+printf '%s' "$sug" | grep -q 'Allow `bash`' && bad "suggested allowing bash itself" || ok
+has "$sug" "bin/agent-allowlists-sync"
+has "$sug" "| verify-pr-claims | 1 refused call ran the \`safeoutputs\` command, such as \`safeoutputs add_comment {}\` |"
+has "$sug" "| verify-pr-claims | 1 refused call began with \`cd\`, such as \`cd /home/runner/work\` |"
+has "$sug" "| property-scout | 2 refused calls ran \`python3\`, not on its allowlist, such as \`python3 -m venv /tmp/v\` |"
+l4="$(printf '%s\n' "$sug" | grep -n '3 refused calls' | cut -d: -f1)"; l2="$(printf '%s\n' "$sug" | grep -n '2 refused calls' | cut -d: -f1)"
+[ -n "$l4" ] && [ -n "$l2" ] && [ "$l4" -lt "$l2" ] && ok || bad "refusals not most first"
+lpy="$(printf '%s\n' "$sug" | grep -n 'ran `python3`' | cut -d: -f1)"; lenv="$(printf '%s\n' "$sug" | grep -n 'set an environment variable' | cut -d: -f1)"
+[ -n "$lpy" ] && [ -n "$lenv" ] && [ "$lpy" -lt "$lenv" ] && ok || bad "a larger group of a later agent is not listed first"
+it "suggested changes: a review loop that missed or failed probes, and a judge waiting; not tests missing silent probes"
+has "$sug" "| verify | missed 2 of the 3 probes it ran on |"
+has "$sug" "| property-scout | failed to run on 1 probe |"
+has "$sug" "| property-scout | 1 verdict waits for a judge |"
+printf '%s' "$sug" | grep -q '^| tests |' && bad "suggested something for tests missing silent probes" || ok
+it "suggested changes: a skill step under 80% over at least 3 graded sessions, and old grading"
+has "$sug" "| change-record:change | step red-first passes 4 of 6 graded sessions (67%) |"
+printf '%s' "$sug" | grep -q 'code-quality' && bad "flagged a step with only 2 graded sessions" || ok
+printf '%s' "$sug" | grep -q 'tier-declared' && bad "flagged a step at 100%" || ok
+has "$sug" "| grading | last ran 2020-01-02"
+it "suggested changes: none when nothing calls for one"
+LOOPS='[{"loop": "verify", "probes": 2, "caught": 2, "missed": 0, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
+REFUSED='[]'; GRADES='[]'; answers 200 200; report
+has "$(cat "$T/out")" "Nothing to suggest this week."
+LOOPS='[{"loop": "verify", "probes": 2, "caught": 2, "missed": 0, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
 answers 200 200
 it "the health functions failing fails the report too"
 answers 200 200 500; report; assert_eq 1 "$rc"; answers 200 200

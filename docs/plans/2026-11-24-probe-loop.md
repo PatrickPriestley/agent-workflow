@@ -164,6 +164,10 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       tool calls, calls its allowlist refused and the commands refused most (`agent_health`,
       `agent_refused_commands`), and how each skill and plugin is used and graded
       (`skill_usage`, `skill_grades`). Catch rates need probes; these need no answer key.
+      Its last section, Suggested changes, is the improver's first step with no model: fixed
+      rules turn the tables into candidates (a review loop that missed or failed probes, a skill
+      step under 80%, stale grading, and each kind of refused call with one candidate change to
+      the agent's prompt or allowlist). The improver's model step drafts a change for the top one.
    d. A sweep that closes any probe left open and deletes probe branches.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The

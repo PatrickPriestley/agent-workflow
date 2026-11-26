@@ -21,6 +21,13 @@ Prints the report:
 - Skills and plugins: per skill, the sessions that used it in the last D days and in all, by
   where they ran; then its grades per step, from `transcripts grade`, and when it was last
   graded (grading runs by hand, so the date says how current the grades are).
+- Suggested changes, worked out from the above with fixed rules and no model: a review loop
+  that missed or failed probes, or has a verdict waiting for a judge; a skill step passing
+  under 80% of at least 3 graded sessions; grading older than 14 days; and the agents' refused
+  calls, grouped by what was tried (a compound command, cd, an environment variable set in
+  the command, the safeoutputs command, a test file not yet on main's allowlist, a bin/ tool not
+  on the agent's allowlist, a script the agent wrote, or a program not on its allowlist), each
+  with one candidate change. Candidates, not decisions.
 
 The report is meant for a run summary, not an issue or a comment: the review agents read this
 repository's issues and pull requests, and must not learn which are probes.
@@ -30,6 +37,7 @@ Exit 0; 1 the store refused or did not answer; 2 usage.
 import datetime as dt
 import http.client
 import json
+import re
 import os
 import sys
 import urllib.error
@@ -112,6 +120,90 @@ def skills(usage, grades, days):
     return out
 
 
+REVIEW_LOOPS = ("ocr", "verify", "property-scout", "ci-diagnose", "ci-fix")
+REFUSALS = {  # what was tried -> (how the row says it, the candidate change)
+    "compound": ("{n} were compound commands (`&&`, `;`, pipes, `$(...)`)",
+                 "Its prompt: one plain command per call, with no `&&`, `;`, pipes or `$(...)`; or allow the command it was building."),
+    "env": ("{n} set an environment variable in the command",
+            "Its prompt: the workflow sets the environment (TMPDIR among it); no `VAR=` or `export` before a command."),
+    "cd": ("{n} began with `cd`", "Its prompt: no `cd`; give paths, or `git -C`."),
+    "safeoutputs": ("{n} ran the `safeoutputs` command",
+                    "Its prompt: call the safe-output tools directly, not the `safeoutputs` command."),
+    "test": ("{n} ran a test file not on main's allowlist",
+             "Expected while the test file is new in a pull request; if it recurs on main, run bin/agent-allowlists-sync."),
+    "tool": ("{n} ran `{prog}`, a tool not on its allowlist",
+             "Allow `bash {prog}:*` in its allowlist if it needs it; otherwise say in its prompt that it is not available."),
+    "own": ("{n} ran a script of its own",
+            "Its prompt: run the listed commands only, not scripts it writes."),
+    "program": ("{n} ran `{prog}`, not on its allowlist",
+                "Allow `{prog}` in its allowlist if it needs it; otherwise say in its prompt that it is not available."),
+}
+
+
+def tried(command):
+    """What a refused command was: one of REFUSALS, and the program for "program"."""
+    c = command.strip()
+    if re.match(r"(export\s+)?[A-Za-z_][A-Za-z0-9_]*=", c):
+        return "env", None
+    if re.search(r"&&|\|\||;|\||\$\(|<\(|`", c):
+        return "compound", None
+    if c == "cd" or c.startswith("cd "):
+        return "cd", None
+    if c.startswith("safeoutputs "):
+        return "safeoutputs", None
+    if re.match(r"bash\s+\S+\.test\.sh\b", c):
+        return "test", None
+    m = re.match(r"bash\s+(?:\S*/)?(bin/[^\s/]+)(\s|$)", c)
+    if m:
+        return "tool", m.group(1)
+    if re.match(r"(bash|sh)\s+\S+", c):
+        return "own", None
+    return "program", (c.split() or ["?"])[0]
+
+
+def suggestions(loops, refused, grades, now):
+    out = ["", "## Suggested changes", "",
+           "Worked out from the tables above with fixed rules, no model involved. Each is a candidate to look at, not a decision.", ""]
+    rows = []
+    for r in sorted(loops, key=lambda r: r["loop"]):
+        if r["loop"] not in REVIEW_LOOPS:
+            continue  # tests, properties and mutation miss silent probes by design
+        ran = r["probes"] - r["not_run"] - r["failed"] - r["no_data"]
+        if r["missed"]:
+            rows.append((r["loop"], f"missed {r['missed']} of the {ran} probes it ran on",
+                         "Read its sessions for those probes (the store has them) and the bug each probe planted."))
+        if r["failed"]:
+            rows.append((r["loop"], f"failed to run on {r['failed']} probe" + ("s" if r["failed"] != 1 else ""),
+                         "Read the failed runs: a broken loop scores as nothing."))
+        if r["judge"]:
+            rows.append((r["loop"], f"{r['judge']} verdict" + (" waits" if r["judge"] == 1 else "s wait") + " for a judge",
+                         "Read its comment on the probe and rule caught or missed."))
+    for g in grades:
+        graded = g["pass"] + g["fail"]
+        if graded >= 3 and g["pass"] / graded < 0.8:
+            rows.append((g["skill"], f"step {g['step']} passes {g['pass']} of {graded} graded sessions ({round(100 * g['pass'] / graded)}%)",
+                         "Read the failing sessions' evidence (transcripts grade), then propose the smallest change to the step."))
+    if grades:
+        last = max(g["last_graded"] for g in grades)
+        age = (now - dt.datetime.fromisoformat(last.replace("Z", "+00:00"))).days
+        if age > 14:
+            rows.append(("grading", f"last ran {last[:10]}, {age} days ago", "Run `transcripts grade --store` so the grades are current."))
+    groups = {}
+    for r in refused:
+        kind, prog = tried(r["command"])
+        g = groups.setdefault((r["agent"], kind, prog), {"n": 0, "example": r["command"]})
+        g["n"] += r["times"]
+    for (agent, kind, prog), g in sorted(groups.items(), key=lambda kv: (-kv[1]["n"], kv[0][0], kv[0][1], kv[0][2] or "")):
+        what, change = REFUSALS[kind]
+        calls = f"{g['n']} refused call" + ("s" if g["n"] != 1 else "")
+        rows.append((agent, what.format(n=calls, prog=cell(prog or "")) + f", such as {code(g['example'])}",
+                     change.format(prog=cell(prog or ""))))
+    if not rows:
+        return out + ["Nothing to suggest this week."]
+    out += ["| Where | What the data shows | Candidate change |", "|---|---|---|"]
+    return out + [f"| {cell(w)} | {what} | {change} |" for w, what, change in rows]
+
+
 def render(loops, probes, more=None):
     out = ["## Review loops against planted bugs", ""]
     if not loops and not probes:
@@ -166,10 +258,11 @@ def main(argv):
         loops = call(url, key, "probe_report_loops", {})
         probes = call(url, key, "probe_report_probes", {"max_rows": most})
         agents = call(url, key, "agent_health", {"since": since})
-        refused = call(url, key, "agent_refused_commands", {"since": since, "max_rows": 10})
+        refused = call(url, key, "agent_refused_commands", {"since": since, "max_rows": 50})
         usage = call(url, key, "skill_usage", {"since": since})
         grades = call(url, key, "skill_grades", {})
-        text = render(loops, probes, health(agents, refused, days) + skills(usage, grades, days))
+        text = render(loops, probes, health(agents, refused[:10], days) + skills(usage, grades, days)
+                      + suggestions(loops, refused, grades, dt.datetime.now(dt.timezone.utc)))
     except Store as e:
         print(f"probe-report: {e}", file=sys.stderr)
         return 1

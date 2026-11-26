@@ -3,8 +3,9 @@ name: probe-report
 # The week's report (docs/plans/2026-11-24-probe-loop.md, Phase 2), read from the transcript store
 # by bin/probe-report: how often each review loop catches the planted bugs, and the latest probes;
 # the agents' health over the week (runs, tool calls, calls their allowlists refused, and the
-# commands refused most); and how skills and plugins are used and graded. Tuesday 12:17 UTC,
-# after the morning's planting (06:41) and scoring sweeps.
+# commands refused most); how skills and plugins are used and graded; and the changes all this
+# suggests, by fixed rules with no model. Tuesday 12:17 UTC, after the morning's planting (06:41)
+# and scoring sweeps.
 #
 # It goes to this run's summary page and nowhere else: the review agents read this repository's
 # issues and pull requests, and must not learn which pull requests are probes. So the workflow
