@@ -351,6 +351,63 @@ assert_eq "search_path=public, pg_temp;search_path=public, pg_temp" "$(sql "sele
 it "report: schema.sql runs again over the functions with nothing to say"
 out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
 
+# ---- The weekly report's agent health and skills sections ----
+# Made-up rows, written as the owner: two Verify runs and one CI diagnosis run, a refused call, a tool
+# error, a session that used a plugin's skill and one an old skill, and gradings of that skill.
+h64() { printf "repeat('%s', 64)" "$1"; }
+sess="insert into public.sessions (session_id, row_id, sender, version, entry, created_at) values
+ ('gh-aw-verify-pr-claims-11-1', $(h64 1), 's', 1, '{\"source\": \"agent\", \"skills\": []}', now() - interval '2 days'),
+ ('gh-aw-verify-pr-claims-12-1', $(h64 2), 's', 1, '{\"source\": \"agent\", \"skills\": []}', now() - interval '1 day'),
+ ('gh-aw-ci-diagnosis-13-1',     $(h64 3), 's', 1, '{\"source\": \"agent\", \"skills\": []}', now() - interval '20 days'),
+ ('rep-a', $(h64 4), 's', 1, '{\"source\": \"cloud\", \"skills\": [{\"name\": \"testplug:testskill\", \"how\": \"Skill\"}]}', now() - interval '1 day'),
+ ('rep-a', $(h64 5), 's', 2, '{\"source\": \"cloud\", \"skills\": [{\"name\": \"testplug:testskill\", \"how\": \"Skill\"}, {\"name\": \"testplug:other\", \"how\": \"Skill\"}]}', now() - interval '1 day'),
+ ('rep-b', $(h64 6), 's', 1, '{\"source\": \"local\", \"skills\": [{\"name\": \"testplug:testskill\", \"how\": \"read\"}]}', now() - interval '30 days')"
+sess="$(printf '%s' "$sess" | tr '\n' ' ')"; assert_eq "INSERT 0 6" "$(sql "$sess")"
+msg() {  # SESSION LINE WHO KIND TOOL CALL FAILED TEXT
+  printf "('%s', 'main', %s, 1, %s, 0, '%s', '%s', %s, '%s', %s, '%s')" "$1" "$(h64 c)" "$2" "$3" "$4" "$5" "$6" "$7" "$8"
+}
+msgs="insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, tool, call_id, failed, text) values
+ $(msg gh-aw-verify-pr-claims-11-1 1 assistant call "'Bash'" c1 false '{"command": "source <(grep x bin/commit-gate)\ntest_line y"}'),
+ $(msg gh-aw-verify-pr-claims-11-1 2 tool result null c1 true 'Permission to use Bash has been denied because Claude Code is running in dont ask mode.'),
+ $(msg gh-aw-verify-pr-claims-11-1 3 assistant call "'Bash'" c2 false '{"command": "bash bin/x.test.sh"}'),
+ $(msg gh-aw-verify-pr-claims-11-1 4 tool result null c2 true 'Exit code 1: passed=3 failed=1'),
+ $(msg gh-aw-verify-pr-claims-12-1 1 assistant call "'Bash'" c1 false '{"command": "source <(grep x bin/commit-gate)\nmore"}'),
+ $(msg gh-aw-verify-pr-claims-12-1 2 tool result null c1 true 'Permission to use Bash has been denied because Claude Code is running in dont ask mode.'),
+ $(msg gh-aw-verify-pr-claims-12-1 3 assistant call "'Read'" c3 false '{"file_path": "/x"}'),
+ $(msg gh-aw-verify-pr-claims-12-1 4 tool result null c3 false 'contents'),
+ $(msg gh-aw-ci-diagnosis-13-1 1 assistant call "'Bash'" c1 false '{"command": "bash bin/old.test.sh"}'),
+ $(msg gh-aw-ci-diagnosis-13-1 2 tool result null c1 true 'Permission to use Bash has been denied.')"
+msgs="$(printf '%s' "$msgs" | tr '\n' ' ')"; assert_eq "INSERT 0 10" "$(sql "$msgs")"
+# The same call stored again (a later generation's chunk): it is still one call.
+assert_eq "INSERT 0 1" "$(sql "insert into public.messages (session_id, stream, chunk_id, shape, line, block, who, kind, tool, call_id, failed, text) values ('gh-aw-verify-pr-claims-12-1', 'main', $(h64 d), 1, 1, 0, 'assistant', 'call', 'Read', 'c3', false, 'again')")"
+grades="insert into public.scores (session_id, step, skill, grader, verdict, graded_at) values
+ ('rep-a', 'red-first', 'testplug:testskill', 'fields/1', 'fail', now() - interval '3 days'),
+ ('rep-a', 'red-first', 'testplug:testskill', 'fields/1', 'pass', now() - interval '2 days'),
+ ('rep-b', 'red-first', 'testplug:testskill', 'fields/1', 'not_applicable', now() - interval '2 days'),
+ ('rep-b', 'tier-declared', 'testplug:testskill', 'fields/1', 'fail', now() - interval '2 days')"
+grades="$(printf '%s' "$grades" | tr '\n' ' ')"; assert_eq "INSERT 0 4" "$(sql "$grades")"
+since="now() - interval '7 days'"
+it "health: per agent, runs, calls, refused calls and other errors, since a time"
+assert_eq "verify-pr-claims|2|4|2|1" "$(as_role anon "select string_agg(concat_ws('|', agent, runs, calls, refused, errors), ';' order by agent) from public.agent_health($since)")"
+assert_eq "ci-diagnosis|1|1|1|0;verify-pr-claims|2|4|2|1" "$(as_role anon "select string_agg(concat_ws('|', agent, runs, calls, refused, errors), ';' order by agent) from public.agent_health(now() - interval '60 days')")"
+it "health: the refused commands, by their first line, most tried first"
+assert_eq 'verify-pr-claims|Bash|source <(grep x bin/commit-gate)|2' "$(as_role anon "select string_agg(concat_ws('|', agent, tool, command, times), ';') from public.agent_refused_commands($since, 10)")"
+it "skills: per skill and plugin, sessions in the period and in all, from each session's latest row, by where it ran"
+assert_eq "testplug:other|testplug|1|1|0|1|0|0;testplug:testskill|testplug|1|2|1|1|0|0" "$(as_role anon "select string_agg(concat_ws('|', skill, plugin, sessions, sessions_all, local, cloud, agent, dispatch), ';' order by skill) from public.skill_usage($since) where skill like 'testplug:%'")"
+it "skills: grades per step from each session's latest grading, and when it was last graded"
+assert_eq "testplug:testskill|red-first|2|1|0|1;testplug:testskill|tier-declared|1|0|1|0" "$(as_role anon "select string_agg(concat_ws('|', skill, step, sessions, pass, fail, not_applicable), ';' order by step) from public.skill_grades() where skill like 'testplug:%'")"
+assert_eq "t" "$(as_role anon "select bool_and(last_graded > now() - interval '3 days') from public.skill_grades() where skill like 'testplug:%'")"
+it "health and skills: a signed-in user, or any other role, may not call them; they run as their owner with a fixed path"
+for f in "agent_health(now())" "agent_refused_commands(now(), 5)" "skill_usage(now())" "skill_grades()"; do
+  for r in authenticated someone; do has "$(as_role $r "select count(*) from public.$f")" "permission denied for function ${f%%(*}"; done
+done
+assert_eq "search_path=public, pg_temp;search_path=public, pg_temp;search_path=public, pg_temp;search_path=public, pg_temp" "$(sql "select string_agg(array_to_string(p.proconfig, ','), ';' order by p.proname) from pg_proc p where p.proname in ('agent_health', 'agent_refused_commands', 'skill_usage', 'skill_grades')")"
+assert_eq "true true true true" "$(sql "select string_agg(p.prosecdef::text, ' ' order by p.proname) from pg_proc p where p.proname in ('agent_health', 'agent_refused_commands', 'skill_usage', 'skill_grades')")"
+it "health and skills: the key still cannot read the tables themselves"
+for t in messages scores sessions; do has "$(as_role anon "select count(*) from public.$t")" "permission denied for table $t"; done
+it "health and skills: schema.sql runs again over them with nothing to say"
+out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
+
 echo
 echo "store schema: passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

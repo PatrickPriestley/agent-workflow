@@ -1,24 +1,33 @@
 #!/usr/bin/env python3
-"""probe-report: the week's probe report, as markdown for a workflow run's summary.
+"""probe-report: the week's report on the review loops, agents and skills, as markdown for a
+workflow run's summary.
 
-  python3 -I bin/probe-report [--max N]
+  python3 -I bin/probe-report [--max N] [--days D]
 
-Reads the store's two report functions (store/schema.sql: probe_report_loops and
-probe_report_probes), which count each probe's latest scoring only and return no evidence,
+Reads the store's report functions (store/schema.sql): probe_report_loops and
+probe_report_probes, which count each probe's latest scoring only and return no evidence;
+agent_health and agent_refused_commands, over the GitHub agents' sessions of the last D days
+(default 7); skill_usage and skill_grades. All return aggregates only. It reads them
 with the publishable key in AGENT_TRANSCRIPTS_INSERT_KEY, the key that may read no table. The
 store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1 or localhost). A redirect is
 refused, and the key never appears in what this prints.
 
-Prints the report: how many probes are scored; per loop, how many it caught of the probes it
-ran on (worst rate first; a loop that never ran last), with its misses, the probes it did
-not run on or failed to run on, and those left to a judge; then the latest N probes (default
-12, at most 100), newest first.
+Prints the report:
+- Probes: how many are scored; per loop, how many it caught of the probes it ran on (worst rate
+  first; a loop that never ran last), with its misses, the probes it did not run on or failed
+  to run on, and those left to a judge; then the latest N probes (default 12, at most 100).
+- Agent health: per agent, its runs, tool calls, the calls its allowlist refused (the highest
+  share first) and other tool errors; then the commands refused most often, by first line.
+- Skills and plugins: per skill, the sessions that used it in the last D days and in all, by
+  where they ran; then its grades per step, from `transcripts grade`, and when it was last
+  graded (grading runs by hand, so the date says how current the grades are).
 
 The report is meant for a run summary, not an issue or a comment: the review agents read this
 repository's issues and pull requests, and must not learn which are probes.
 
 Exit 0; 1 the store refused or did not answer; 2 usage.
 """
+import datetime as dt
 import http.client
 import json
 import os
@@ -57,10 +66,56 @@ def cell(text):
     return str(text).replace("\\", "\\\\").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
-def render(loops, probes):
+def code(text):
+    return "`" + cell(text).replace("`", "'") + "`"
+
+
+def pct(part, whole):
+    return f"{part} ({round(100 * part / whole)}%)" if whole else str(part)
+
+
+def health(rows, refused, days):
+    out = ["", f"## Agent health, last {days} days", ""]
+    if not rows:
+        return out + [f"No agent ran in the last {days} days."]
+    out += ["Calls an agent's allowlist refused are what it tried and was not allowed to do: each is a"
+            " candidate for its allowlist, or for a line in its prompt.", "",
+            "| Agent | Runs | Tool calls | Refused | Other errors |", "|---|---|---|---|---|"]
+    for r in sorted(rows, key=lambda r: (-(r["refused"] / r["calls"]) if r["calls"] else 0, r["agent"])):
+        out.append(f"| {cell(r['agent'])} | {r['runs']} | {r['calls']} | {pct(r['refused'], r['calls'])} | {r['errors']} |")
+    out += ["", "### Commands refused most often", ""]
+    if not refused:
+        return out + ["No command was refused."]
+    out += ["| Agent | Tool | Command (first line) | Times |", "|---|---|---|---|"]
+    out += [f"| {cell(r['agent'])} | {cell(r['tool'])} | {code(r['command'])} | {r['times']} |" for r in refused]
+    return out
+
+
+def skills(usage, grades, days):
+    out = ["", "## Skills and plugins", "", "### Use", ""]
+    if not usage:
+        out.append("No session has used a skill yet.")
+    else:
+        out += [f"| Skill | Plugin | Sessions, last {days} days | All sessions | Local | Cloud | Agent | Dispatch |",
+                "|---|---|---|---|---|---|---|---|"]
+        out += [f"| {cell(r['skill'])} | {cell(r['plugin']) if r['plugin'] else '(none)'} | {r['sessions']} | {r['sessions_all']} "
+                f"| {r['local']} | {r['cloud']} | {r['agent']} | {r['dispatch']} |" for r in usage]
+    out += ["", "### Grades", ""]
+    if not grades:
+        return out + ["No skill has been graded yet."]
+    last = max(r["last_graded"] for r in grades)[:10]
+    out += [f"From `transcripts grade`, each session's latest grading; last graded {last}. Grading runs by hand,"
+            " so these are as current as that date.", "",
+            "| Skill | Step | Sessions | Pass | Fail | Not applicable |", "|---|---|---|---|---|---|"]
+    out += [f"| {cell(r['skill'])} | {cell(r['step'])} | {r['sessions']} | {pct(r['pass'], r['pass'] + r['fail'])} "
+            f"| {r['fail']} | {r['not_applicable']} |" for r in grades]
+    return out
+
+
+def render(loops, probes, more=None):
     out = ["## Review loops against planted bugs", ""]
     if not loops and not probes:
-        return "\n".join(out + ["No probe has been scored yet.", ""])
+        return "\n".join(out + ["No probe has been scored yet."] + (more or []) + [""])
     total = max([r["probes"] for r in loops] + [len(probes)])
     out += [f"{total} probes scored (each by its latest scoring). A loop is counted only on the probes it ran on.", "",
             "| Loop | Caught | Ran on | Missed | Not run | Failed | Judge |", "|---|---|---|---|---|---|---|"]
@@ -81,22 +136,21 @@ def render(loops, probes):
         for p in probes:
             out.append(f"| {cell(p['probe_id'])} | #{int(p['pr'])} | {cell(p['kind'])} | {'loud' if p['loud'] else 'silent'} "
                        f"| `{cell(p['file'])}` | {int(p['caught'])} of {int(p['ran'])} |")
-    return "\n".join(out + [""])
+    return "\n".join(out + (more or []) + [""])
 
 
 def main(argv):
-    args = argv[1:]
+    opts, it = {}, iter(argv[1:])
     try:
-        if args and args[0] == "--max" and len(args) == 2:
-            most = int(args[1])
-        elif not args:
-            most = 12
-        else:
+        for a in it:
+            if a not in ("--max", "--days") or a in opts:
+                raise ValueError
+            opts[a] = int(next(it))
+        most, days = opts.get("--max", 12), opts.get("--days", 7)
+        if not 1 <= most <= 100 or not 1 <= days <= 366:
             raise ValueError
-        if not 1 <= most <= 100:
-            raise ValueError
-    except ValueError:
-        print("usage: probe-report [--max N]   (N from 1 to 100)", file=sys.stderr)
+    except (ValueError, StopIteration):
+        print("usage: probe-report [--max N] [--days D]   (N from 1 to 100, D from 1 to 366)", file=sys.stderr)
         return 2
     url = (os.environ.get("AGENT_TRANSCRIPTS_URL") or "").rstrip("/")
     key = os.environ.get("AGENT_TRANSCRIPTS_INSERT_KEY") or ""
@@ -108,9 +162,14 @@ def main(argv):
         print(f"probe-report: the store must be https, not {u.scheme}://{u.hostname}", file=sys.stderr)
         return 2
     try:
+        since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat(timespec="seconds")
         loops = call(url, key, "probe_report_loops", {})
         probes = call(url, key, "probe_report_probes", {"max_rows": most})
-        text = render(loops, probes)
+        agents = call(url, key, "agent_health", {"since": since})
+        refused = call(url, key, "agent_refused_commands", {"since": since, "max_rows": 10})
+        usage = call(url, key, "skill_usage", {"since": since})
+        grades = call(url, key, "skill_grades", {})
+        text = render(loops, probes, health(agents, refused, days) + skills(usage, grades, days))
     except Store as e:
         print(f"probe-report: {e}", file=sys.stderr)
         return 1

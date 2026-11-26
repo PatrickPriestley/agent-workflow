@@ -157,6 +157,10 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       and pull requests and must not learn which are probes. It reads with the publishable key
       through two report functions (`probe_report_loops`, `probe_report_probes`), so the secret
       key stays off GitHub.
+      It also reports, from every session rather than only probes: each GitHub agent's runs,
+      tool calls, calls its allowlist refused and the commands refused most (`agent_health`,
+      `agent_refused_commands`), and how each skill and plugin is used and graded
+      (`skill_usage`, `skill_grades`). Catch rates need probes; these need no answer key.
    d. A sweep that closes any probe left open and deletes probe branches.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The
