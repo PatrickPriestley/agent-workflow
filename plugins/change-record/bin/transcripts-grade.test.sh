@@ -720,6 +720,38 @@ print("yes" if sent == [{k: r[k] for k in cols} for r in keep] else f"no {sent[:
 PY
 )"
 has "$out" "stored 7 score rows"
+sent_for() { python3 -c 'import json,sys; print(sum(json.loads(l)["path"] == "/rest/v1/scores" and json.loads(json.loads(l).get("body") or "{}").get("session_id") == sys.argv[2] for l in open(sys.argv[1]) if "body" in l))' "$LOG" "$1"; }
+OLD="$(ls "$AR/sessions" | grep -v "^$D2.json$" | head -1 | sed 's/\.json$//')"
+python3 - "$URL" "$READKEY" "$OLD" <<'PY2'
+import json, sys, urllib.request
+url, key, sid = sys.argv[1:]
+row = {"session_id": sid, "step": "red-first", "verdict": "pass", "skill": "change-record:change", "skill_blob": None,
+       "grader": "fields/2", "evidence": {}, "graded_at": "2026-11-01T00:00:00+00:00"}
+urllib.request.urlopen(urllib.request.Request(url + "/rest/v1/scores", data=json.dumps(row).encode(), method="POST",
+                       headers={"apikey": key, "Content-Type": "application/json"}))
+PY2
+it "--new grades only the sessions the store has no rows for from this grader"
+: > "$LOG"; out="$(AGENT_TRANSCRIPTS_URL="$URL" grade --store --new 2>&1)"; rc=$?
+assert_eq 0 "$(sent_for "$D2")"
+[ "$(sent_for "$OLD")" -gt 0 ] && ok || bad "$OLD, graded only by an older grader, was not graded again"
+has "$out" "1 already graded in the store"
+others="$(ls "$AR/sessions" | grep -vc "^$D2.json$")"
+[ "$others" -gt 0 ] && [ "$(grep -c '"path": "/rest/v1/scores"' "$LOG")" -gt 0 ] && ok || bad "graded none of the $others others: $out"
+it "--new runs again with nothing left to grade, and sends nothing"
+: > "$LOG"; out="$(AGENT_TRANSCRIPTS_URL="$URL" grade --store --new 2>&1)"
+assert_eq 0 "$(grep -c '"POST"' "$LOG")"; has "$out" "graded 0 sessions"
+it "--new needs --store, and a store it cannot read stops it before anything is graded"
+out="$(grade --new 2>&1)"; assert_eq 2 "$?"; has "$out" "needs --store"
+rm -f "$AR/scores/$D2.json"
+out="$(AGENT_TRANSCRIPTS_URL="http://127.0.0.1:1" grade --session "$D2" --store --new 2>&1)"; rc=$?
+assert_eq "1 no" "$rc $([ -f "$AR/scores/$D2.json" ] && echo yes || echo no)"; has "$out" "could not be read"
+it "a GitHub agent's session is not graded against the change skill"
+AG=gh-aw-property-scout-45631299483-1
+python3 -c 'import json,sys; e=json.load(open(sys.argv[1])); e["source"]="agent"; json.dump(e, open(sys.argv[2], "w"))' "$AR/sessions/$D2.json" "$AR/sessions/$AG.json"
+[ -d "$AR/parts/$D2" ] && cp -R "$AR/parts/$D2" "$AR/parts/$AG"
+out="$(grade --session "$AG" 2>&1)"; rc=$?
+assert_eq "0 no" "$rc $([ -f "$AR/scores/$AG.json" ] && echo yes || echo no)"; has "$out" "a GitHub agent's session"
+rm -rf "$AR/sessions/$AG.json" "$AR/parts/$AG"
 
 echo "R9: one transcript on its own, as the eval suite's traces are graded"
 mk "$W/eval.jsonl" eval-session <<EOF
