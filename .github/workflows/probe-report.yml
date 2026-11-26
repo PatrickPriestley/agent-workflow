@@ -23,6 +23,25 @@ on:
         description: "Every repository in the store, not only this one"
         type: boolean
         default: false
+  workflow_call:  # other repositories: docs/reusable-workflows.md
+    inputs:
+      all_repositories:
+        description: "Every repository in the store, not only the caller"
+        type: boolean
+        default: false
+      tools-repository:
+        description: "Where the probe and transcript tools come from"
+        type: string
+        default: PatrickPriestley/agent-workflow
+      tools-ref:
+        description: "The tools' branch, tag or commit; pin it to the ref you call this workflow at"
+        type: string
+        default: main
+    secrets:
+      AGENT_TRANSCRIPTS_URL:
+        required: false
+      AGENT_TRANSCRIPTS_INSERT_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -32,8 +51,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the tools
+        uses: actions/checkout@v7
         with:
+          repository: ${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}
+          ref: ${{ inputs.tools-ref || 'main' }}
           persist-credentials: false
       - name: Write the report to this run's summary
         shell: bash

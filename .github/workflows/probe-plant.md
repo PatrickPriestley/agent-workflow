@@ -107,6 +107,7 @@ tools:
     - "bash bin/probe-store.test.sh"
     - "bash bin/property-scout-workflow.test.sh"
     - "bash bin/red-check-workflow.test.sh"
+    - "bash bin/reusable-workflows.test.sh"
     - "bash bin/verify-workflow.test.sh"
     - "bash install.test.sh"
     - "bash plugins/change-record/bin/dispatch.test.sh"

@@ -172,6 +172,10 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       returns a repository column, so one store serves several repositories. The scheduled
       report covers its own repository; by hand it can cover them all, a Repository column
       first in each table.
+      The five plain workflows (report, collector, CI-fix labeller, scorer and auto-scorer)
+      are reusable (2026-11-26, docs/reusable-workflows.md): another repository calls them
+      at `@main`, passes the store's secrets, and its tools come from here. The planter is
+      not shared yet: it is written for this repository's files.
    d. A sweep that closes any probe left open and deletes probe branches.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The

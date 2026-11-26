@@ -13,6 +13,10 @@ on:
   workflow_run:
     workflows: ["test"]
     types: [completed]
+  workflow_call:  # other repositories: docs/reusable-workflows.md; the caller names its test workflow
+    secrets:
+      PROBE_TOKEN:
+        required: false
 
 permissions:
   contents: read

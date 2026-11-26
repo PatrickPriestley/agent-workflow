@@ -38,7 +38,7 @@ it "it reads actions and contents only, and checks out main without keeping cred
 assert_eq "permissions:
   actions: read
   contents: read" "$(printf '%s\n' "$w" | awk '/^permissions:/ {p=1; print; next} p && /^  / {print; next} p {exit}')"
-has "$w" 'ref: ${{ github.event.repository.default_branch }}'; has "$w" "persist-credentials: false"
+has "$w" "ref: \${{ inputs.tools-ref || 'main' }}"; has "$w" "persist-credentials: false"
 lacks "$w" "head_sha|head_branch|pull_requests"
 it "the artifact action is pinned to a commit"
 has "$w" "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
