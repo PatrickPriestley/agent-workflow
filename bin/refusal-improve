@@ -6,8 +6,9 @@ measure the rules already there (docs/plans/2026-11-24-probe-loop.md, the improv
                                  [--write] [--body FILE]
 
 Reads, with the publishable key in AGENT_TRANSCRIPTS_INSERT_KEY, the store's report functions
-(store/schema.sql) for the repository: the commands each agent's allowlist refused in the last D
-days (default 28) and its runs. Each refused command is sorted by what was tried, as the weekly
+(store/schema.sql) for the repository: each call an agent's allowlist refused in the last D days
+(default 28), with the session it was in (agent_refused_calls; where the store has not that
+function yet, agent_refused_commands, the commands without their sessions), and its runs. Each refused command is sorted by what was tried, as the weekly
 report sorts it (bin/probe-report). No model is involved.
 
 For an agent whose prompt can be told what to do instead (a compound command, cd, an
@@ -19,7 +20,8 @@ already there is not added again; nothing is ever taken out. Without --write it 
 nothing and says what it would change.
 
 It never edits an allowlist. A test file not on main's list, a bin/ tool or another program is
-listed for a person to decide: the allowlists are kept narrow on purpose (each one's comments
+listed for a person to decide, one row per program (a git subcommand or flag, as `git -C`, is a
+program of its own), leaving out what the agent's allowlist allows by now: the allowlists are kept narrow on purpose (each one's comments
 say why), and a wider one could let an agent run what it must not.
 
 For each rule already on main, it compares the agent's refusals of that kind per run in the 14
@@ -27,8 +29,8 @@ days before the rule reached main (the first-parent commit that added it, so the
 its history) with the time since.
 
 Prints the files it changed (or would change), one per line. --body FILE writes the markdown
-for the pull request: the evidence, the rules added, the allowlist candidates and the
-measurements. The store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1 or localhost),
+for the pull request: a summary, each rule added written out once with its evidence, the
+allowlist candidates and the measurements, each example linked to the GitHub run it came from. The store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1 or localhost),
 and a redirect is refused. Exit 0; 1 the store or git failed; 2 usage.
 """
 import datetime as dt
@@ -69,6 +71,62 @@ BEFORE = dt.timedelta(days=14)
 
 class Failed(Exception):
     pass
+
+
+TITLES = {"compound": "Compound commands", "env": "Environment variables set in a command", "cd": "Running cd",
+          "safeoutputs": "The safeoutputs shell command", "own": "Running a script of its own"}
+WITH_ARG = ("git", "gh", "npm", "pnpm", "cargo", "go", "docker")
+
+
+def program(command, kind, prog):
+    """What an allowlist would have to allow for a refused command: the test file, the bin/ tool,
+    or the program with its subcommand or first flag (git -C, git log, python3 -m venv)."""
+    words = command.split()
+    if kind == "test":
+        return " ".join(words[:2])
+    if kind == "tool":
+        return f"bash {prog}"
+    if not words:
+        return "?"
+    out = words[:1]
+    if len(words) > 1 and (words[1].startswith("-") or words[0] in WITH_ARG):
+        out.append(words[1])
+        if words[1] == "-m" and len(words) > 2:
+            out.append(words[2])
+    return " ".join(out)
+
+
+def allowlist(text):
+    """The Bash patterns in a workflow source's frontmatter (tools.bash)."""
+    m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+    found, inside = [], False
+    for line in (m.group(1) if m else "").split("\n"):
+        if re.match(r"^  bash:\s*$", line):
+            inside = True
+            continue
+        if inside:
+            item = re.match(r'^\s+-\s+"(.*)"\s*$', line)
+            if item:
+                found.append(item.group(1))
+            elif line.strip() and not line.lstrip().startswith("#"):
+                if len(line) - len(line.lstrip()) <= 2:
+                    break
+    return found
+
+
+def allowed(command, patterns):
+    for p in patterns:
+        if p.endswith(":*"):
+            if command == p[:-2] or command.startswith(p[:-2] + " "):
+                return True
+        elif command == p:
+            return True
+    return False
+
+
+def run_link(repo, session):
+    m = re.fullmatch(r"gh-aw-.+-([0-9]+)-([0-9]+)", session or "")
+    return f"https://github.com/{repo}/actions/runs/{m.group(1)}/attempts/{m.group(2)}" if m else None
 
 
 def git(root, *args):
@@ -121,6 +179,67 @@ def landed(root, path, kind):
     return dt.datetime.fromisoformat(first[0]) if first else None
 
 
+def and_list(items):
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + (", and " if len(items) > 2 else " and ") + items[-1]
+
+
+def example(repo, command, session, width=160):
+    """An example refused command, cut to its first WIDTH characters, linked to its run."""
+    shown = command if len(command) <= width else command[:width].rstrip() + "..."
+    link = run_link(repo, session)
+    return report.code(shown) + (f" ([run]({link}))" if link else "")
+
+
+def body(repo, days, least, added, candidates, measured, allowed_now):
+    """The pull request's text: what it does first, then each rule once with its evidence."""
+    kinds = sorted({k for _, k, _ in added}, key=ORDER.index)
+    agents_ = sorted({a for a, _, _ in added})
+    said = []
+    if added:
+        said.append(f"adds {len(added)} rule{'s' if len(added) != 1 else ''} to the prompt"
+                    f"{'s' if len(agents_) != 1 else ''} of {and_list(agents_)}")
+    if candidates:
+        said.append(f"lists {len(candidates)} allowlist candidate{'s' if len(candidates) != 1 else ''} for you to decide")
+    if measured:
+        said.append(f"measures {len(measured)} rule{'s' if len(measured) != 1 else ''} already in place")
+    out = [("This " + (said[0] if len(said) == 1 else ", ".join(said[:-1]) + ", and " + said[-1]) + ".") if said
+           else "No refused calls to act on.", "",
+           f"From the GitHub agents' refused shell calls in {repo} over the last {days} days, in the transcript store. "
+           "Written by `bin/refusal-improve` with fixed rules: no model is involved, and a person merges it or not.", ""]
+    if added:
+        out += ["## Rules added to the agents' prompts", "",
+                f"Each goes in the \"Shell calls\" section at the end of the agent's prompt, for a kind of call the agent "
+                f"was refused at least {least} times. A rule only narrows what the agent does.", ""]
+        for k in kinds:
+            out += [f"### {TITLES[k]}", "", "> " + RULES[k], ""]
+            for a, kk, g in added:
+                if kk == k:
+                    out.append(f"- **{report.cell(a)}**: refused {g['n']} time{'s' if g['n'] != 1 else ''}, such as "
+                               + "; ".join(example(repo, c, sid) for c, sid in g["examples"]))
+            out.append("")
+        out += ["Each rule is measured once it is on main: the agent's refusals of that kind per run, against the 14 days "
+                "before. One that does not help is reported as such.", ""]
+    if candidates:
+        out += ["## For you to decide: allowlist candidates", "",
+                "Not edited. The allowlists are kept narrow on purpose, and each one's comments say why: widen one only if "
+                "the agent needs it and it cannot be used to run something it must not.", "",
+                "| Agent | Would need | Refused | Such as |", "|---|---|---|---|"]
+        out += [f"| {report.cell(a)} | {report.code(prog)} | {g['n']} | {example(repo, g['examples'][0][0], g['examples'][0][1], 100)} |"
+                for a, _, prog, g in candidates]
+        if allowed_now:
+            out += ["", "Left out, as the agent's allowlist allows them by now: "
+                    + ", ".join(f"{report.code(prog)} ({report.cell(a)})" for a, prog in allowed_now) + "."]
+        out.append("")
+    if measured:
+        out += ["## Rules already in place", "",
+                "| Agent | Rule | On main since | 14 days before | Since | Result |", "|---|---|---|---|---|---|"]
+        out += [f"| {report.cell(a)} | {TITLES[k]} | {w.date()} | {b} in {br} runs | {x} in {xr} runs | {v} |"
+                for a, k, w, b, br, x, xr, v in measured]
+        out.append("")
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
 def main(argv):
     opts, it = {}, iter(argv[1:])
     try:
@@ -157,12 +276,29 @@ def main(argv):
     def iso(t):
         return t.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
 
+    per_call = [True]  # whether the store has agent_refused_calls
+
     def refused(since):
+        """Refused calls since then: {agent, command, times, session}."""
+        if per_call[0]:
+            try:
+                rows = report.call(url, key, "agent_refused_calls", {"since": iso(since), "max_rows": 1000, "repo": repo})
+                if len(rows) == 1000:
+                    print(f"refusal-improve: 1000 refused calls since {iso(since)[:10]}, the most it reads: "
+                          "counts may be short", file=sys.stderr)
+                return [{"agent": r["agent"], "command": r["command"] or "?", "times": 1, "session": r["session_id"]}
+                        for r in rows]
+            except report.Store as e:
+                if "answered 404" not in str(e):
+                    raise
+                per_call[0] = False
+                print("refusal-improve: the store has no agent_refused_calls yet (store/schema.sql): "
+                      "the report has no run links", file=sys.stderr)
         rows = report.call(url, key, "agent_refused_commands", {"since": iso(since), "max_rows": 50, "repo": repo})
         if len(rows) == 50:
             print(f"refusal-improve: 50 refused commands since {iso(since)[:10]}, the most the store gives: "
                   "counts may be short", file=sys.stderr)
-        return rows
+        return [{"agent": r["agent"], "command": r["command"], "times": r["times"], "session": None} for r in rows]
 
     def runs(since):
         return {r["agent"]: r["runs"] for r in report.call(url, key, "agent_health", {"since": iso(since), "repo": repo})}
@@ -173,17 +309,19 @@ def main(argv):
     try:
         files = agents(root)
         recent = refused(now - dt.timedelta(days=days))
-        by = {}  # (agent, kind) -> {"n", "examples"}
+        by, progs = {}, {}  # (agent, kind) -> {"n", "examples"}; (agent, program) -> the same, for a person
         for r in recent:
             kind, prog = report.tried(r["command"])
-            g = by.setdefault((r["agent"], kind), {"n": 0, "examples": [], "progs": set()})
-            g["n"] += r["times"]
-            if len(g["examples"]) < 3:
-                g["examples"].append(r["command"])
-            if prog:
-                g["progs"].add(prog)
+            keys = [(by, (r["agent"], kind))]
+            if kind in FOR_A_PERSON:
+                keys.append((progs, (r["agent"], kind, program(r["command"], kind, prog))))
+            for table, k in keys:
+                g = table.setdefault(k, {"n": 0, "examples": []})
+                g["n"] += r["times"]
+                if len(g["examples"]) < 2 and r["command"] not in [c for c, _ in g["examples"]]:
+                    g["examples"].append((r["command"], r["session"]))
 
-        changed, added, candidates, measured, unknown = [], [], [], [], set()
+        changed, added, candidates, measured, unknown, allowed_now = [], [], [], [], set(), []
         for agent in sorted({a for a, _ in by}):
             path = files.get(agent)
             if not path:
@@ -193,9 +331,14 @@ def main(argv):
             text = open(full, encoding="utf-8").read()
             have = rules_in(text)
             want = [k for k in ORDER if k not in have and by.get((agent, k), {}).get("n", 0) >= least]
-            for k in sorted(FOR_A_PERSON):
-                if (agent, k) in by:
-                    candidates.append((agent, k, by[(agent, k)]))
+            patterns = allowlist(text)
+            for (a, k, prog), g in sorted(progs.items(), key=lambda kv: (kv[0][0], -kv[1]["n"], kv[0][2])):
+                if a != agent:
+                    continue
+                if all(allowed(c, patterns) for c, _ in g["examples"]):
+                    allowed_now.append((a, prog))
+                    continue
+                candidates.append((a, k, prog, g))
             if want:
                 added += [(agent, k, by[(agent, k)]) for k in want]
                 changed.append(path)
@@ -241,35 +384,8 @@ def main(argv):
         print(p)
 
     if "--body" in opts:
-        cell, code = report.cell, report.code
-        out = [f"The GitHub agents' refused shell calls in {repo}, last {days} days, from the transcript store, sorted the "
-               "way the weekly report sorts them. Written by `bin/refusal-improve` with fixed rules; no model is "
-               "involved. A person merges it or not.", ""]
-        if added:
-            out += ["## Rules added to the agents' prompts", "",
-                    f"Each agent below was refused at least {least} times for this kind of call. The rule goes in the "
-                    "\"Shell calls\" section at the end of its prompt.", "",
-                    "| Agent | Refused calls | Such as | Rule added |", "|---|---|---|---|"]
-            out += [f"| {cell(a)} | {g['n']} | {code(g['examples'][0])} | {cell(RULES[k])} |" for a, k, g in added]
-            out += ["", "Measured from the week after this merges: the agent's refusals of each kind per run, against "
-                    "the 14 days before. A rule that does not help is reported as such.", ""]
-        if candidates:
-            out += ["## For you to decide: allowlist candidates", "",
-                    "Not edited. The allowlists are kept narrow on purpose, and each one's comments say why; widen one "
-                    "only if the agent needs it and it cannot be used to run something it must not.", "",
-                    "| Agent | Kind | Refused calls | Such as |", "|---|---|---|---|"]
-            out += [f"| {cell(a)} | {k} | {g['n']} | {code(g['examples'][0])} |" for a, k, g in candidates]
-            out.append("")
-        if measured:
-            out += ["## Rules already in place", "",
-                    "| Agent | Rule | On main since | 14 days before | Since | Result |", "|---|---|---|---|---|---|"]
-            out += [f"| {cell(a)} | {k} | {w.date()} | {b} in {br} runs | {x} in {xr} runs | {v} |"
-                    for a, k, w, b, br, x, xr, v in measured]
-            out.append("")
-        if not (added or candidates or measured):
-            out.append("No refused calls to act on.")
         with open(opts["--body"], "w", encoding="utf-8") as f:
-            f.write("\n".join(out).rstrip("\n") + "\n")
+            f.write(body(repo, days, least, added, candidates, measured, allowed_now))
     return 0
 
 
