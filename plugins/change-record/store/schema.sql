@@ -303,8 +303,9 @@ grant execute on function public.probe_report_loops(), public.probe_report_probe
 --
 -- skill_usage reads each session's latest index row: per skill (and its plugin, the part before
 -- the colon), the sessions started since a time that used it, all that ever did, and all by
--- where they ran. skill_grades reads `scores`, each session's latest grading of each step: pass,
--- fail and not applicable, and when the skill was last graded.
+-- where they ran. skill_grades reads `scores`, one verdict per session and step, its latest
+-- grading (fields/1, /2 and /3 are versions of one grader, so a re-grading replaces the verdict
+-- rather than adding one): pass, fail and not applicable, and when the skill was last graded.
 
 create or replace function public.agent_health(since timestamptz)
 returns table (agent text, runs bigint, calls bigint, refused bigint, errors bigint)
@@ -386,8 +387,8 @@ returns table (skill text, step text, sessions bigint, pass bigint, fail bigint,
 language sql stable security definer set search_path = public, pg_temp
 as $$
   with latest as (
-    select distinct on (g.session_id, g.step, g.grader) g.session_id, g.step, g.skill, g.verdict, g.graded_at
-    from public.scores g order by g.session_id, g.step, g.grader, g.graded_at desc
+    select distinct on (g.session_id, g.step) g.session_id, g.step, g.skill, g.verdict, g.graded_at
+    from public.scores g order by g.session_id, g.step, g.graded_at desc, g.grader desc
   )
   select l.skill, l.step, count(distinct l.session_id),
          count(*) filter (where l.verdict = 'pass'), count(*) filter (where l.verdict = 'fail'),
