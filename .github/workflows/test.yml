@@ -93,6 +93,10 @@ jobs:
         run: bash bin/probe-sweep.test.sh
       - name: probe-sweep workflow
         run: bash bin/probe-sweep-workflow.test.sh
+      - name: refusal-improve
+        run: bash bin/refusal-improve.test.sh
+      - name: refusal-improve workflow
+        run: bash bin/refusal-improve-workflow.test.sh
       - name: agent-session-collect
         run: bash bin/agent-session-collect.test.sh
       - name: agent-sessions workflow

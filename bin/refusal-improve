@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""refusal-improve: turn the GitHub agents' refused shell calls into rules in their prompts, and
+measure the rules already there (docs/plans/2026-11-24-probe-loop.md, the improver's first step).
+
+  python3 -I bin/refusal-improve --repo OWNER/NAME [--root DIR] [--days D] [--min N] [--now ISO-TIME]
+                                 [--write] [--body FILE]
+
+Reads, with the publishable key in AGENT_TRANSCRIPTS_INSERT_KEY, the store's report functions
+(store/schema.sql) for the repository: the commands each agent's allowlist refused in the last D
+days (default 28) and its runs. Each refused command is sorted by what was tried, as the weekly
+report sorts it (bin/probe-report). No model is involved.
+
+For an agent whose prompt can be told what to do instead (a compound command, cd, an
+environment variable set in the command, the safeoutputs command, a script of its own) and
+that was refused that way at least N times (default 2), it adds one fixed rule to the "Shell
+calls" section at the end of the agent's workflow source (.github/workflows/<file>.md, found by
+the workflow's name), between the BEGIN and END refusal-improver lines it keeps there. A rule
+already there is not added again; nothing is ever taken out. Without --write it changes
+nothing and says what it would change.
+
+It never edits an allowlist. A test file not on main's list, a bin/ tool or another program is
+listed for a person to decide: the allowlists are kept narrow on purpose (each one's comments
+say why), and a wider one could let an agent run what it must not.
+
+For each rule already on main, it compares the agent's refusals of that kind per run in the 14
+days before the rule reached main (the first-parent commit that added it, so the checkout needs
+its history) with the time since.
+
+Prints the files it changed (or would change), one per line. --body FILE writes the markdown
+for the pull request: the evidence, the rules added, the allowlist candidates and the
+measurements. The store is AGENT_TRANSCRIPTS_URL (https only, but for 127.0.0.1 or localhost),
+and a redirect is refused. Exit 0; 1 the store or git failed; 2 usage.
+"""
+import datetime as dt
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+from urllib.parse import urlsplit
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+_loader = importlib.machinery.SourceFileLoader("probe_report", os.path.join(HERE, "probe-report"))
+_spec = importlib.util.spec_from_loader("probe_report", _loader)
+report = importlib.util.module_from_spec(_spec)
+_loader.exec_module(report)
+
+# What each kind of refusal is told in the prompt. Each rule only narrows what the agent does.
+RULES = {
+    "compound": "Every command in a call must be one of your assigned commands, each part joined with `&&`, `;`, "
+                "`||` or a pipe included; loops (`for`, `while`), subshells and `$(...)` are refused. When a step "
+                "needs more than that, make it separate calls.",
+    "env": "Do not set environment variables in a command (`VAR=value command`, `export`): this workflow sets the "
+           "environment you need, `TMPDIR` included.",
+    "cd": "Do not run `cd`: give each command full paths instead.",
+    "safeoutputs": "Call the safe-output tools (such as `add_comment`, `create_issue` and `noop`) as tools; the "
+                   "`safeoutputs` shell command is refused.",
+    "own": "Do not write a script and run it: run your assigned commands directly, one call each.",
+}
+ORDER = ["compound", "env", "cd", "safeoutputs", "own"]
+FOR_A_PERSON = {"test", "tool", "program"}
+BEGIN = "<!-- BEGIN refusal-improver: bin/refusal-improve keeps this section; it adds rules and removes none -->"
+END = "<!-- END refusal-improver -->"
+MARK = "<!-- rule: {} -->"
+BEFORE = dt.timedelta(days=14)
+
+
+class Failed(Exception):
+    pass
+
+
+def git(root, *args):
+    out = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise Failed(f"git {' '.join(args[:2])}: {out.stderr.strip()[:200]}")
+    return out.stdout
+
+
+def agents(root):
+    """agent slug (as bin/agent-session-collect names sessions) -> its workflow source."""
+    found = {}
+    wf = os.path.join(root, ".github", "workflows")
+    for f in sorted(os.listdir(wf)):
+        if not f.endswith(".md"):
+            continue
+        text = open(os.path.join(wf, f), encoding="utf-8").read()
+        m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+        name = re.search(r"^name:\s*(.+?)\s*$", m.group(1), re.M) if m else None
+        if name:
+            found[re.sub(r"[^a-z0-9]+", "-", name.group(1).strip("'\"").lower()).strip("-")[:40].strip("-")] = \
+                os.path.join(".github", "workflows", f)
+    return found
+
+
+def rules_in(text):
+    if BEGIN not in text and END not in text:
+        return []
+    if text.count(BEGIN) != 1 or text.count(END) != 1 or text.index(END) < text.index(BEGIN):
+        raise Failed("the refusal-improver section is not one BEGIN line followed by one END line")
+    block = text.split(BEGIN, 1)[1].split(END, 1)[0]
+    return [k for k in ORDER if MARK.format(k) in block]
+
+
+def with_rules(text, kinds):
+    """The source with the Shell calls section holding these rules, in their order."""
+    lines = "\n".join(f"- {RULES[k]} {MARK.format(k)}" for k in ORDER if k in kinds)
+    section = f"{BEGIN}\n## Shell calls\n\n{lines}\n{END}\n"
+    rules_in(text)  # stops on a section that is not one BEGIN and one END
+    if BEGIN in text:
+        head, rest = text.split(BEGIN, 1)
+        return head + section + rest.split(END, 1)[1].lstrip("\n")
+    return text.rstrip("\n") + "\n\n" + section
+
+
+def landed(root, path, kind):
+    """When the rule reached main: the first-parent commit that added its mark, or None."""
+    out = git(root, "log", "--first-parent", "--reverse", "--format=%cI", "-S", MARK.format(kind), "HEAD", "--", path)
+    first = out.split()
+    return dt.datetime.fromisoformat(first[0]) if first else None
+
+
+def main(argv):
+    opts, it = {}, iter(argv[1:])
+    try:
+        for a in it:
+            if a == "--write" and a not in opts:
+                opts[a] = True
+            elif a in ("--repo", "--root", "--days", "--min", "--now", "--body") and a not in opts:
+                opts[a] = next(it)
+            else:
+                raise ValueError(a)
+        repo = opts["--repo"]
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}", repo):
+            raise ValueError("repo")
+        days, least = int(opts.get("--days", 28)), int(opts.get("--min", 2))
+        if not 1 <= days <= 366 or not 1 <= least <= 100:
+            raise ValueError("days or min")
+        now = dt.datetime.fromisoformat(opts["--now"].replace("Z", "+00:00")) if "--now" in opts \
+            else dt.datetime.now(dt.timezone.utc)
+        if now.tzinfo is None:
+            raise ValueError("--now needs a time zone")
+        root = os.path.abspath(opts.get("--root", "."))
+    except (StopIteration, KeyError, ValueError):
+        print("usage: refusal-improve --repo OWNER/NAME [--root DIR] [--days D] [--min N] [--now ISO-TIME] [--write] "
+              "[--body FILE]", file=sys.stderr)
+        return 2
+    url = (os.environ.get("AGENT_TRANSCRIPTS_URL") or "").rstrip("/")
+    key = os.environ.get("AGENT_TRANSCRIPTS_INSERT_KEY") or ""
+    u = urlsplit(url)
+    if not key or not (u.scheme == "https" or (u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost"))):
+        print("refusal-improve: AGENT_TRANSCRIPTS_URL (https) and AGENT_TRANSCRIPTS_INSERT_KEY are both needed",
+              file=sys.stderr)
+        return 2
+
+    def iso(t):
+        return t.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
+
+    def refused(since):
+        rows = report.call(url, key, "agent_refused_commands", {"since": iso(since), "max_rows": 50, "repo": repo})
+        if len(rows) == 50:
+            print(f"refusal-improve: 50 refused commands since {iso(since)[:10]}, the most the store gives: "
+                  "counts may be short", file=sys.stderr)
+        return rows
+
+    def runs(since):
+        return {r["agent"]: r["runs"] for r in report.call(url, key, "agent_health", {"since": iso(since), "repo": repo})}
+
+    def count(rows, agent, kind):
+        return sum(r["times"] for r in rows if r["agent"] == agent and report.tried(r["command"])[0] == kind)
+
+    try:
+        files = agents(root)
+        recent = refused(now - dt.timedelta(days=days))
+        by = {}  # (agent, kind) -> {"n", "examples"}
+        for r in recent:
+            kind, prog = report.tried(r["command"])
+            g = by.setdefault((r["agent"], kind), {"n": 0, "examples": [], "progs": set()})
+            g["n"] += r["times"]
+            if len(g["examples"]) < 3:
+                g["examples"].append(r["command"])
+            if prog:
+                g["progs"].add(prog)
+
+        changed, added, candidates, measured, unknown = [], [], [], [], set()
+        for agent in sorted({a for a, _ in by}):
+            path = files.get(agent)
+            if not path:
+                unknown.add(agent)
+                continue
+            full = os.path.join(root, path)
+            text = open(full, encoding="utf-8").read()
+            have = rules_in(text)
+            want = [k for k in ORDER if k not in have and by.get((agent, k), {}).get("n", 0) >= least]
+            for k in sorted(FOR_A_PERSON):
+                if (agent, k) in by:
+                    candidates.append((agent, k, by[(agent, k)]))
+            if want:
+                added += [(agent, k, by[(agent, k)]) for k in want]
+                changed.append(path)
+                if "--write" in opts:
+                    new = with_rules(text, set(have) | set(want))
+                    with open(full, "w", encoding="utf-8") as f:
+                        f.write(new)
+
+        # The rules already on main, each against the 14 days before it landed.
+        for agent, path in sorted(files.items()):
+            try:
+                committed = git(root, "show", f"HEAD:{path}")
+            except Failed:
+                continue  # not committed yet
+            for k in rules_in(committed):
+                when = landed(root, path, k)
+                if when is None:
+                    continue
+                before_rows, after_rows = refused(when - BEFORE), refused(when)
+                before_runs, after_runs = runs(when - BEFORE), runs(when)
+                b = count(before_rows, agent, k) - count(after_rows, agent, k)
+                br = before_runs.get(agent, 0) - after_runs.get(agent, 0)
+                a, ar = count(after_rows, agent, k), after_runs.get(agent, 0)
+                if ar < 3:
+                    verdict = "too few runs since to tell"
+                elif br == 0 or b == 0:
+                    verdict = "fewer" if a == 0 else "no refusals before to compare with"
+                elif a / ar <= (b / br) / 2:
+                    verdict = "fewer"
+                else:
+                    verdict = "no better: look at the rule, or whether the allowlist should change"
+                measured.append((agent, k, when, b, br, a, ar, verdict))
+    except (report.Store, Failed, OSError, UnicodeDecodeError) as e:
+        print(f"refusal-improve: {e}", file=sys.stderr)
+        return 1
+    except (KeyError, TypeError, ValueError) as e:
+        print(f"refusal-improve: the store's answer is not what was expected ({type(e).__name__}: {e})", file=sys.stderr)
+        return 1
+
+    for a in sorted(unknown):
+        print(f"refusal-improve: {a} has refused calls but no workflow source here is named for it", file=sys.stderr)
+    for p in changed:
+        print(p)
+
+    if "--body" in opts:
+        cell, code = report.cell, report.code
+        out = [f"The GitHub agents' refused shell calls in {repo}, last {days} days, from the transcript store, sorted the "
+               "way the weekly report sorts them. Written by `bin/refusal-improve` with fixed rules; no model is "
+               "involved. A person merges it or not.", ""]
+        if added:
+            out += ["## Rules added to the agents' prompts", "",
+                    f"Each agent below was refused at least {least} times for this kind of call. The rule goes in the "
+                    "\"Shell calls\" section at the end of its prompt.", "",
+                    "| Agent | Refused calls | Such as | Rule added |", "|---|---|---|---|"]
+            out += [f"| {cell(a)} | {g['n']} | {code(g['examples'][0])} | {cell(RULES[k])} |" for a, k, g in added]
+            out += ["", "Measured from the week after this merges: the agent's refusals of each kind per run, against "
+                    "the 14 days before. A rule that does not help is reported as such.", ""]
+        if candidates:
+            out += ["## For you to decide: allowlist candidates", "",
+                    "Not edited. The allowlists are kept narrow on purpose, and each one's comments say why; widen one "
+                    "only if the agent needs it and it cannot be used to run something it must not.", "",
+                    "| Agent | Kind | Refused calls | Such as |", "|---|---|---|---|"]
+            out += [f"| {cell(a)} | {k} | {g['n']} | {code(g['examples'][0])} |" for a, k, g in candidates]
+            out.append("")
+        if measured:
+            out += ["## Rules already in place", "",
+                    "| Agent | Rule | On main since | 14 days before | Since | Result |", "|---|---|---|---|---|---|"]
+            out += [f"| {cell(a)} | {k} | {w.date()} | {b} in {br} runs | {x} in {xr} runs | {v} |"
+                    for a, k, w, b, br, x, xr, v in measured]
+            out.append("")
+        if not (added or candidates or measured):
+            out.append("No refused calls to act on.")
+        with open(opts["--body"], "w", encoding="utf-8") as f:
+            f.write("\n".join(out).rstrip("\n") + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

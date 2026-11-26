@@ -1,0 +1,113 @@
+name: refusal-improve
+
+# The improver's first step (docs/plans/2026-11-24-probe-loop.md), with no model: weekly,
+# bin/refusal-improve reads the GitHub agents' refused shell calls from the transcript store and
+# adds a fixed rule to an agent's prompt for each kind it was refused at least twice in 28 days.
+# It rebuilds those agents' lock files with the gh-aw version they were built with, and opens one
+# pull request for a person to merge or not. It lists allowlist candidates there and never edits
+# an allowlist. Every run also measures the rules already on main, in its summary.
+#
+# Wednesday 09:13 UTC, the day after the weekly report. By hand with "dry run" ticked it only
+# writes what it would do to the summary. While an earlier pull request of its own is open, it
+# opens no other.
+#
+# The pull request is opened with PROBE_TOKEN, so CI and the review agents run on it (one the
+# built-in token opens would start no workflow). That token is in the push and pull request
+# steps alone; the compiler runs without it.
+on:
+  schedule:
+    - cron: "13 9 * * 3"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only say what it would change"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: refusal-improve
+  cancel-in-progress: false
+
+jobs:
+  improve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # each rule is measured from the commit that brought it to main
+          persist-credentials: false
+
+      - name: Find the rules to add
+        id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_TRANSCRIPTS_URL: ${{ secrets.AGENT_TRANSCRIPTS_URL }}
+          AGENT_TRANSCRIPTS_INSERT_KEY: ${{ secrets.AGENT_TRANSCRIPTS_INSERT_KEY }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          if [ -z "$AGENT_TRANSCRIPTS_URL" ] || [ -z "$AGENT_TRANSCRIPTS_INSERT_KEY" ]; then
+            echo "::error::the AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY secrets are both needed"; exit 1
+          fi
+          open="$(gh pr list --repo "$REPO" --state open --json headRefName --jq '.[].headRefName' | grep -c '^chore/refusal-rules-' || true)"
+          write=(--write)
+          if [ "${DRY_RUN:-}" = true ]; then write=(); fi
+          if [ "$open" -gt 0 ]; then
+            echo "An earlier pull request of this workflow is still open: measuring only." >> "$GITHUB_STEP_SUMMARY"
+            write=()
+          fi
+          python3 -I bin/refusal-improve --repo "$REPO" ${write[@]+"${write[@]}"} --body "$RUNNER_TEMP/body.md" > "$RUNNER_TEMP/changed.txt"
+          cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ ${#write[@]} -gt 0 ] && [ -s "$RUNNER_TEMP/changed.txt" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebuild the changed agents' lock files, with the gh-aw version they were built with
+        if: steps.plan.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          version="$(sed -n 's/^# gh-aw-metadata: .*"compiler_version":"\(v[0-9][0-9.]*\)".*/\1/p' .github/workflows/ci-diagnose.lock.yml)"
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::no gh-aw compiler version in the lock files"; exit 1; }
+          gh extension install github/gh-aw --pin "$version"
+          while IFS= read -r path; do
+            [[ "$path" =~ ^\.github/workflows/[a-z0-9-]+\.md$ ]] || { echo "::error::unexpected path: $path"; exit 1; }
+            name="$(basename "$path" .md)"
+            gh aw compile "$name"
+          done < "$RUNNER_TEMP/changed.txt"
+          bin/agent-allowlists-sync --check
+          bash bin/agent-allowlists.test.sh > "$RUNNER_TEMP/allowlists.txt" || { cat "$RUNNER_TEMP/allowlists.txt"; exit 1; }
+          git status --short
+
+      - name: Open the pull request
+        if: steps.plan.outputs.changed == 'true'
+        shell: bash
+        env:
+          PROBE_TOKEN: ${{ secrets.PROBE_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          [ -n "$PROBE_TOKEN" ] || { echo "::error::PROBE_TOKEN is needed to open the pull request"; exit 1; }
+          branch="chore/refusal-rules-$(date -u +%Y-%m-%d)"
+          git config user.name "refusal-improve"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b "$branch"
+          git add .github/workflows
+          git commit -q -m "chore(agents): shell-call rules from the agents' refused calls" \
+            -m "Written by bin/refusal-improve from the transcript store; the pull request says why."
+          auth="$(printf 'x-access-token:%s' "$PROBE_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push -q "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
+          GH_TOKEN="$PROBE_TOKEN" gh pr create --repo "$REPO" --base main --head "$branch" \
+            --title "chore(agents): shell-call rules from the agents' refused calls" --body-file "$RUNNER_TEMP/body.md"
