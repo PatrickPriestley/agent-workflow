@@ -27,13 +27,26 @@ on="$(printf '%s\n' "$front" | sed -n '/^on:/,/^[a-z]/p')"
 has "$on" "workflow_dispatch:"; lacks "$on" 'pull_request|push:|label_command|issue_comment'
 has "$on" 'cron: "41 6 * * 2"'
 [ "$(printf '%s\n' "$on" | grep -c 'cron:')" = 1 ] && ok || bad "not exactly one schedule"
-it "a scheduled run, which has no inputs, plants a silent probe of any kind in a file the agent picks"
+it "a scheduled run has no inputs: any kind, in a file the agent picks, loud one week in four"
 has "$front" 'KIND="${KIND:-any}"'
 pre="$(printf '%s\n' "$front" | awk '/- name: Write down what was asked/ {s=1} s && /^safe-outputs:/ {exit} s')"
-out="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/plant-pre.XXXXXX")" && git init -q && git commit -q --allow-empty -m x -c user.name=t -c user.email=t@t 2>/dev/null; mkdir -p tmp; \
-  script="$(printf '%s\n' "$pre" | awk '/^    run: \|/ {r=1; next} r && /^      / {print substr($0, 7); next} r && /^ *$/ {print ""; next} r {exit}' | sed "s|/tmp/gh-aw/agent|$PWD/tmp|g")"; \
-  env KIND= LOUD= TARGET= bash -c "$script" >/dev/null 2>&1; cat tmp/plant/asked.json 2>/dev/null)"
-assert_eq '{"kind": "any", "loud": false, "target": ""}' "$out"
+asked() {  # EVENT WEEK KIND LOUD -> the asked.json the step writes
+  (cd "$(mktemp -d "${TMPDIR:-/tmp}/plant-pre.XXXXXX")" && git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m x; mkdir -p tmp
+   script="$(printf '%s\n' "$pre" | awk '/^    run: \|/ {r=1; next} r && /^      / {print substr($0, 7); next} r && /^ *$/ {print ""; next} r {exit}' | sed "s|/tmp/gh-aw/agent|$PWD/tmp|g")"
+   env GITHUB_EVENT_NAME="$1" PLANT_WEEK="$2" KIND="$3" LOUD="$4" TARGET= bash -c "$script" >/dev/null 2>&1; cat tmp/plant/asked.json 2>/dev/null)
+}
+assert_eq '{"kind": "any", "loud": false, "target": ""}' "$(asked schedule 47 '' '')"
+assert_eq '{"kind": "any", "loud": true, "target": ""}' "$(asked schedule 48 '' '')"
+assert_eq '{"kind": "any", "loud": false, "target": ""}' "$(asked schedule 49 '' '')"
+assert_eq '{"kind": "any", "loud": true, "target": ""}' "$(asked schedule 08 '' '')"
+it "a probe dispatched by hand is as loud as asked, whatever the week"
+assert_eq '{"kind": "off-by-one", "loud": false, "target": ""}' "$(asked workflow_dispatch 48 off-by-one false)"
+assert_eq '{"kind": "any", "loud": true, "target": ""}' "$(asked workflow_dispatch 47 any true)"
+it "CI diagnosis watches every branch type the planter can open a probe on"
+types="$(sed -n 's/^TITLE = re.compile(r"^(\([a-z|]*\)).*/\1/p' "$root/bin/probe-open" | tr '|' ' ')"
+[ -n "$types" ] && ok || bad "cannot read probe-open's types"
+diag="$(sed -n '/^on:/,/^[a-z]/p' "$root/.github/workflows/ci-diagnose.md" | grep 'branches:')"
+for t in $types; do printf '%s' "$diag" | grep -qF "\"$t/**\"" && ok || bad "CI diagnosis does not watch $t/** branches"; done
 has "$front" 'job-discriminator: ${{ github.run_id }}'
 it "the agent has a read-only token, the network's defaults, and no output but open-probe"
 has "$front" "  contents: read"; lacks "$(printf '%s\n' "$front" | sed '/^  jobs:/,$d')" ': *write'

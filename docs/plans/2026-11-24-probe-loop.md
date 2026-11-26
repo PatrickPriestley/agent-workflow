@@ -150,7 +150,10 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       `bin/probe-ready` (open, held, 30 minutes old, nothing running on the branch, no score
       yet; its key's planter run found by time) and dispatches `probe-score` (done 2026-11-25).
    b. The planter on a weekly schedule (Tuesday 06:41 UTC, a silent probe of any kind; done
-      2026-11-25). Still to come: one clean probe (no bug) a month, which needs the scorer
+      2026-11-25). One scheduled probe in four is loud (ISO weeks divisible by 4), so the CI
+      loops are scored too: CI diagnosis watches every branch type the planter names, and
+      `probe-ci-fix.yml` labels a held probe `ci-fix` once its test run fails, once per probe
+      (2026-11-26). Still to come: one clean probe (no bug) a month, which needs the scorer
       to read a loop's finding on a clean probe as a false alarm.
    c. The weekly report, read from the store (done 2026-11-25): `probe-report.yml` writes it to
       its run's summary, not an issue, because the review agents read this repository's issues

@@ -76,6 +76,7 @@ tools:
     - "bash bin/mutate.test.sh"
     - "bash bin/ocr-workflow.test.sh"
     - "bash bin/pr-size.test.sh"
+    - "bash bin/probe-ci-fix-workflow.test.sh"
     - "bash bin/probe-evidence.test.sh"
     - "bash bin/probe-key.test.sh"
     - "bash bin/probe-open.test.sh"
