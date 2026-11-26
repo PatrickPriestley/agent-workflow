@@ -92,8 +92,9 @@ assert e["source"]=="agent" and e["repository"]=="github.com/owner/repo", (e["so
 assert sorted(e["streams"])==["main","subagents/agent-toolu_01Px3oHxCRB1L5XsnhoSd4J5"], sorted(e["streams"])
 assert e["first_timestamp"]=="2026-11-25T12:39:00.974Z" and e["last_timestamp"]=="2026-11-25T12:39:05.917Z", e
 ' "$e" && ok || bad "entry: $(cat "$T/arch.err") $(head -c 600 "$e" 2>/dev/null)"
-it "the result line keeps only what the run cost"
+it "the result line keeps only what the run cost, and its tokens over the whole run, subagents included"
 assert_eq '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.00584974,"num_turns":3,"duration_ms":7359}' "$(tail -1 "$main" | q 'import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps({k: d[k] for k in ("type","subtype","is_error","total_cost_usd","num_turns","duration_ms")}, separators=(",",":")))')"
+assert_eq '{"input":10,"output":689,"cache_read":82069,"cache_write":29675}' "$(tail -1 "$main" | q 'import json,sys; print(json.dumps(json.loads(sys.stdin.read()).get("run_usage"), separators=(",",":")))')"
 # the run's final text (its "result" field) is not kept; the line is chained like the others
 assert_eq "sessionId uuid" "$(tail -1 "$main" | q 'import json,sys; d=json.loads(sys.stdin.read()); print(" ".join(k for k in ("result","sessionId","uuid") if k in d) or "none")')"
 it "the archive counts the run's effort per stream: one call per message, its tokens, tool calls, text, and the cost it reported"
@@ -103,6 +104,7 @@ m, sub = s["main"]["effort"], s["subagents/agent-toolu_01Px3oHxCRB1L5XsnhoSd4J5"
 got = {k: m[k] for k in ("calls","input","output","cache_read","cache_write","tool_calls","posted_chars","cost_usd","turns","duration_ms")}
 want = {"calls": 3, "input": 6, "output": 29, "cache_read": 66272, "cache_write": 12989, "tool_calls": 2, "posted_chars": 0,
         "cost_usd": 0.00584974, "turns": 3, "duration_ms": 7359}
+assert (m["run_input"], m["run_output"], m["run_cache_read"], m["run_cache_write"]) == (10, 689, 82069, 29675), m
 assert got == want, got
 assert m["text_chars"] > 0, m
 assert (sub["calls"], sub["output"], sub["tool_calls"]) == (1, 17, 1) and "cost_usd" not in sub, sub

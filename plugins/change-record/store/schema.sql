@@ -287,6 +287,9 @@ create policy probe_verdicts_insert on public.probe_verdicts for insert to anon 
 -- subagents included: model calls, input, output and cache tokens, tool calls, the characters of
 -- text the assistant wrote and of what it posted through gh-aw's safe outputs, and the cost a
 -- gh-aw run reported, with how many reported one. A count that is not a number is passed over.
+-- A gh-aw run's tokens are the totals its result reported for the whole run (run_input,
+-- run_output, run_cache_read, run_cache_write) where it has them: its per-message usage is
+-- taken as each message starts, before its output.
 --
 -- The return types changed when the repository column came in, so the earlier versions are
 -- dropped first; running the file again drops and makes them again, with their grants.
@@ -475,10 +478,14 @@ as $$
     select p.session_id, p.repository, p.who,
            exists (select 1 from jsonb_each(p.streams) st(name, val) where jsonb_typeof(st.val -> 'effort') = 'object') as measured,
            (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'calls') as calls,
-           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'input') as input_tokens,
-           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'output') as output_tokens,
-           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'cache_read') as cache_read,
-           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'cache_write') as cache_write,
+           coalesce((select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'run_input'),
+                    (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'input')) as input_tokens,
+           coalesce((select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'run_output'),
+                    (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'output')) as output_tokens,
+           coalesce((select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'run_cache_read'),
+                    (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'cache_read')) as cache_read,
+           coalesce((select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'run_cache_write'),
+                    (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'cache_write')) as cache_write,
            (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'tool_calls') as tool_calls,
            (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'text_chars') as text_chars,
            (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'posted_chars') as posted_chars,
