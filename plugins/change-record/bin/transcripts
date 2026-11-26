@@ -9,7 +9,7 @@
   transcripts materialize DIR [--session ID]... [--repo-dir DIR]
   transcripts messages [--session ID]... [--check]
   transcripts redact < lines > redacted-lines
-  transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store]
+  transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store [--new]]
   transcripts grade --transcript FILE [--cwd DIR]
   transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR]
   transcripts sheet --transcript FILE... --out DIR [--labels DIR]
@@ -98,8 +98,11 @@ evidence. The record is read at the session's first and last commit from the git
 --repo-dir (default the current directory), and record-check runs on that range. It writes one
 row per step to DIR/scores/<sessionId>.json and prints a summary. --store also inserts the rows
 into the store's scores table at AGENT_TRANSCRIPTS_URL with the read key (the owner's machine
-only). A session it cannot grade (a line that is not JSON, a commit the repository lacks) is
-reported and the others are graded; the exit status is then 1. --transcript grades one
+only); with --new, only the sessions the store holds no rows for from this grader version
+(GRADER), so a scheduled run grades each session once. A GitHub agent's session (source agent)
+is not graded: the agents review and fix pull requests, and the change skill's steps are not
+theirs to follow. A session it cannot grade (a line that is not JSON, a commit the repository
+lacks) is reported and the others are graded; the exit status is then 1. --transcript grades one
 transcript file, with no index entry and no commit, and prints the rows as JSON lines.
 
 sheet writes, for each session in DIR, DIR/sheets/<sessionId>.md: what the session did, call by
@@ -1674,7 +1677,7 @@ def grade_one(fields, lines, sid, entry, repo, scratch, note, root=None):
 
 
 def cmd_grade(args):
-    d, only, repo, store, transcript, cwd, i = None, [], os.getcwd(), False, None, None, 0
+    d, only, repo, store, transcript, cwd, new, i = None, [], os.getcwd(), False, None, None, False, 0
     while i < len(args):
         a = args[i]
         if a in ("--session", "--repo-dir", "--transcript", "--cwd") and i + 1 < len(args):
@@ -1690,11 +1693,16 @@ def cmd_grade(args):
             i += 2
         elif a == "--store":
             store, i = True, i + 1
+        elif a == "--new":
+            new, i = True, i + 1
         elif d is None and not a.startswith("--"):
             d, i = a, i + 1
         else:
-            say("usage: transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store] | grade --transcript FILE [--cwd DIR]")
+            say("usage: transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store [--new]] | grade --transcript FILE [--cwd DIR]")
             return 2
+    if new and not store:
+        say("--new reads what the store has graded: it needs --store")
+        return 2
     sys.dont_write_bytecode = True  # no __pycache__ beside the plugin's code
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "grade"))
     import fields
@@ -1732,12 +1740,24 @@ def cmd_grade(args):
         return 2
     sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
     sids = [s for s in sids if not only or s in only]
-    graded = failed = stored = 0
+    graded = failed = stored = skipped = 0
+    if new:
+        try:
+            done = {r["session_id"] for r in read_rows(url, key, "/rest/v1/scores?select=session_id&grader=eq."
+                                                         + quote(GRADER, safe=""))}
+        except (StoreError, ValueError, KeyError, TypeError) as e:
+            say(f"--new: what the store has graded could not be read ({e}); nothing graded")
+            return 1
+        skipped = sum(s in done for s in sids)
+        sids = [s for s in sids if s not in done]
     with tempfile.TemporaryDirectory() as scratch:
         for sid in sids:
             notes = []
             try:
                 entry = json.load(open(os.path.join(d, "sessions", sid + ".json")))
+                if isinstance(entry, dict) and entry.get("source") == "agent":
+                    say(f"{sid}: a GitHub agent's session; the change skill's steps are not its to follow, so it is not graded")
+                    continue
                 lines = session_lines(d, sid, entry)
                 record, rows = grade_one(fields, lines, sid, entry, repo, scratch, notes.append)
             except (OSError, ValueError, LookupError, fields.Unparsable) as e:
@@ -1764,6 +1784,7 @@ def cmd_grade(args):
                     failed += 1
                     store = False
     print(f"transcripts: graded {graded} sessions into {d}/scores" + (f", {failed} with problems" if failed else "")
+          + (f"; {skipped} already graded in the store" if new else "")
           + (f"; stored {stored} score rows at {url}" if url else ""))
     return 1 if failed else 0
 

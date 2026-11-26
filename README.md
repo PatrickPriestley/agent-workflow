@@ -195,8 +195,11 @@ of 6 runs with it and 3 of 6 without, so it is in the skill (record
 `docs/changes/2026-11-17-skill-red-first-workflow.md`).
 
 What stays with people: labelling, choosing which sessions are sent to a model, approving
-any run that spends money, and merging a skill edit. Not built yet: a scheduled job that
-rebuilds, grades and reports on its own and lists the failures waiting for a label.
+any run that spends money, and merging a skill edit. Grading runs weekly on its own: a Claude
+Code scheduled task, in a cloud environment that holds the store's secret key (never GitHub),
+rebuilds the sessions and grades those not graded yet (`transcripts grade --store --new`),
+leaving out the GitHub agents' sessions, and the weekly report shows the grades. Not built yet:
+a list of the failures waiting for a label.
 
 ## Commit hooks, per repository
 

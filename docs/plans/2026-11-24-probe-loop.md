@@ -188,8 +188,10 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
    Open Code Review's rules and other skills, each with its own replay case. Fed by probe
    misses and everyday feedback.
 4. Misses and confirmed wrong outputs filed as labelled failures in the transcript loop, so
-   skill edits can come from them too; the scheduled grading job the README lists as not
-   built.
+   skill edits can come from them too. Scheduled grading (2026-11-26): a weekly Claude Code
+   scheduled task in the cloud environment that holds the store's secret key, so the key is
+   never on GitHub, runs `transcripts grade --store --new` (only sessions not yet graded by
+   this grader; the GitHub agents' sessions are not graded against the change skill).
 Separately, once: rewrite the agent prompts as principles with reasons, keeping every hard
 limit, each change checked by the replay like any other.
 
