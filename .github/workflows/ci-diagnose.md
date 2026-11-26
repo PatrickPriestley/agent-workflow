@@ -14,7 +14,9 @@ on:
   workflow_run:
     workflows: ["test", "change-record protocol"]
     types: [completed]
-    branches: ["main", "ccr-*", "feat/**", "fix/**", "probe/**"]
+    # Every Conventional Commit type a branch may be named for, as the probe planter names its
+    # branches (bin/probe-open), so a loud probe on refactor/... is diagnosed too.
+    branches: ["main", "ccr-*", "probe/**", "build/**", "chore/**", "ci/**", "docs/**", "feat/**", "fix/**", "perf/**", "refactor/**", "revert/**", "style/**", "test/**"]
     conclusion: failure
   workflow_dispatch:
     inputs:
@@ -92,6 +94,7 @@ tools:
     - "bash /tmp/gh-aw/agent/ci/head/bin/mutate.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/ocr-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/pr-size.test.sh"
+    - "bash /tmp/gh-aw/agent/ci/head/bin/probe-ci-fix-workflow.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-evidence.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-key.test.sh"
     - "bash /tmp/gh-aw/agent/ci/head/bin/probe-open.test.sh"

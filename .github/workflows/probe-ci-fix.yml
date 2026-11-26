@@ -1,0 +1,52 @@
+name: probe-ci-fix
+
+# Lets CI fix be scored on loud probes (docs/plans/2026-11-24-probe-loop.md). CI fix starts on the
+# "ci-fix" label and fixes the pull request's failed test run; labelled when a probe opens, it
+# would find no failure yet. So when a test run fails on a pull request held as a probe (labelled
+# hold), this labels it ci-fix, once per probe: never again if it was ever labelled before, so a
+# fix that fails again does not start another round.
+#
+# The label is added with PROBE_TOKEN, as the planter adds its labels: one the built-in token
+# adds would not start CI fix. It runs main's code, checks out nothing, and acts only on open
+# pull requests labelled hold.
+on:
+  workflow_run:
+    workflows: ["test"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  label:
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Label a held probe ci-fix, once
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_TOKEN: ${{ secrets.PROBE_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected head sha"; exit 1; }
+          prs="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" | python3 -I -c '
+          import json, sys
+          for p in json.load(sys.stdin):
+              if (p.get("state") == "open" and type(p.get("number")) is int
+                      and any(lab.get("name") == "hold" for lab in p.get("labels", []))):
+                  print(p["number"])')"
+          if [ -z "$prs" ]; then echo "not a probe: nothing to do"; exit 0; fi
+          for n in $prs; do
+            before="$(gh api "repos/$REPO/issues/$n/events?per_page=100" | python3 -I -c '
+          import json, sys
+          print(sum(e.get("event") == "labeled" and (e.get("label") or {}).get("name") == "ci-fix" for e in json.load(sys.stdin)))')"
+            if [ "$before" -gt 0 ]; then echo "#$n: ci-fix was already asked for once; not again"; continue; fi
+            GH_TOKEN="$PROBE_TOKEN" gh pr edit "$n" --repo "$REPO" --add-label ci-fix
+            echo "- #$n: labelled ci-fix after its test run failed" >> "$GITHUB_STEP_SUMMARY"
+          done
