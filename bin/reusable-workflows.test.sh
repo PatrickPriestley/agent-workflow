@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the reusable workflows (docs/reusable-workflows.md): five plain workflows other
+# Tests for the reusable workflows (docs/reusable-workflows.md): six plain workflows other
 # repositories call. Each must declare, under workflow_call, every input and secret it reads (a
 # caller's are not seen otherwise), check out only this repository's tools, and the guide's
 # example callers must call them with declared inputs and secrets only.
@@ -11,7 +11,7 @@ it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n       %s\n' "$CURRENT" "$1"; }
 assert_eq() { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
-SHARED="probe-report agent-sessions probe-ci-fix probe-score probe-score-auto"
+SHARED="probe-report agent-sessions probe-ci-fix probe-score probe-score-auto probe-sweep"
 
 check() {  # python3 check over the workflows and the guide; prints one line per problem
   python3 -I - "$root" "$1" $SHARED <<'PY'
