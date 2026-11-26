@@ -461,13 +461,17 @@ assert_eq "patrickpriestley/effort|ci-diagnosis|3|2|6|6|57|100|50|3|40|300|0.75|
 it "effort: a session's latest index row counts; a count that is not a number, and a session before since, do not"
 assert_eq "1" "$(as_role anon "select count(*) from public.session_effort(now() - interval '7 days', 'patrickpriestley/effort') where who = 'local' and calls = 7")"
 assert_eq "4" "$(as_role anon "select sessions from public.session_effort(now() - interval '60 days', 'patrickpriestley/effort') where who = 'ci-diagnosis'")"
+it "effort: a gh-aw run's tokens are the totals its result reported, where it has them"
+rt="insert into public.sessions (session_id, row_id, sender, version, entry, created_at) values ('gh-aw-property-scout-80-1', $(h64 a), 's', 1, '{\"source\": \"agent\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"effort\": {\"calls\": 2, \"input\": 4, \"output\": 9, \"cache_read\": 10, \"cache_write\": 5, \"run_input\": 6, \"run_output\": 700, \"run_cache_read\": 30}}, \"subagents/agent-y\": {\"effort\": {\"calls\": 1, \"output\": 3, \"cache_write\": 2}}}}', now() - interval '1 day')"
+assert_eq "INSERT 0 1" "$(sql "$rt")"
+assert_eq "property-scout|3|6|700|30|7" "$(as_role anon "select concat_ws('|', who, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) from public.session_effort(now() - interval '7 days', 'patrickpriestley/effort') where who = 'property-scout'")"
 it "effort: other repositories are not counted, and the key may call it but not read the sessions"
 assert_eq "0" "$(as_role anon "select count(*) from public.session_effort(now() - interval '7 days', 'nobody/nothing')")"
 has "$(as_role anon "select count(*) from public.sessions")" "permission denied"
 has "$(as_role authenticated "select count(*) from public.session_effort(now())")" "permission denied for function session_effort"
 it "effort: schema.sql runs again with it, and it still answers"
 out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
-assert_eq "patrickpriestley/effort|ci-diagnosis|3|2|6|6|57|100|50|3|40|300|0.75|2;patrickpriestley/effort|local|1|1|7|0|140|0|0|0|1000|0|0" "$(as_role anon "$q_eff")"
+assert_eq "patrickpriestley/effort|ci-diagnosis|3|2|6|6|57|100|50|3|40|300|0.75|2;patrickpriestley/effort|local|1|1|7|0|140|0|0|0|1000|0|0;patrickpriestley/effort|property-scout|1|1|3|6|700|30|7|0|0|0|0" "$(as_role anon "$q_eff")"
 
 echo
 echo "store schema: passed=$pass failed=$fail"

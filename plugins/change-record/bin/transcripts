@@ -531,8 +531,10 @@ def count_effort(lines, st):
     """Fold the effort in new lines of one stream into its state: the model calls (one per message
     id, however many lines hold its blocks), their tokens (each message's largest count: a line
     written mid-stream can hold a smaller one), tool calls, the characters of text the assistant
-    wrote, the characters of what it posted through gh-aw's safe outputs, and the cost, turns and
-    duration a gh-aw run reported (its result line). A new generation of the stream starts its
+    wrote, the characters of what it posted through gh-aw's safe outputs, and the cost, turns,
+    duration and tokens a gh-aw run reported (its result line: run_input, run_output, run_cache_read
+    and run_cache_write cover the whole run, and are the ones to read for it, since gh-aw's
+    stream-json gives each message's usage as it starts, before its output). A new generation of the stream starts its
     state afresh, so nothing is counted twice."""
     e = st.setdefault("effort", {"calls": 0, "input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
                                   "tool_calls": 0, "text_chars": 0, "posted_chars": 0, "last": None})
@@ -548,6 +550,11 @@ def count_effort(lines, st):
                 v = d.get(k)
                 if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
                     e[out] = v
+            run = d.get("run_usage") if isinstance(d.get("run_usage"), dict) else {}
+            for k in ("input", "output", "cache_read", "cache_write"):
+                v = run.get(k)
+                if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                    e["run_" + k] = v
             continue
         msg = d.get("message")
         if d.get("type") != "assistant" or not isinstance(msg, dict):

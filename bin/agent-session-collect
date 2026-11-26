@@ -17,8 +17,9 @@ entrypoint "gh-aw", isSidechain and parentUuid (the line before it in the same s
 each subagent's lines in <that name>/subagents/agent-<tool call id>.jsonl. The session id is
 built from the run, never from the log, so the same run collected again gives the same bytes.
 The run's result line is kept last in the main transcript, cut to what it reports of the run's
-cost (total_cost_usd, num_turns, duration_ms, is_error, subtype), so the archive can count what
-the run cost; Claude Code's transcripts have no line of that type, and every reader of user and
+cost (total_cost_usd, num_turns, duration_ms, is_error, subtype) and its tokens over the whole
+run, subagents included (run_usage: modelUsage summed over the models), so the archive can count
+what the run cost: stream-json gives each message's usage as it starts, before its output; Claude Code's transcripts have no line of that type, and every reader of user and
 assistant lines passes over it. Every other line (system, stream events, text the sandbox
 printed) is left out.
 
@@ -72,6 +73,16 @@ def main(argv):
         if isinstance(d, dict) and d.get("type") == "result" and not d.get("parent_tool_use_id"):
             result = {"type": "result", **{k: d[k] for k in ("subtype", "is_error", "total_cost_usd", "num_turns", "duration_ms")
                                            if k in d and isinstance(d[k], (bool, int, float, str))}}
+            models = d.get("modelUsage") if isinstance(d.get("modelUsage"), dict) else {}
+            run = {}
+            for m in models.values():
+                for k, out in (("inputTokens", "input"), ("outputTokens", "output"),
+                               ("cacheReadInputTokens", "cache_read"), ("cacheCreationInputTokens", "cache_write")):
+                    v = m.get(k) if isinstance(m, dict) else None
+                    if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                        run[out] = run.get(out, 0) + v
+            if run:
+                result["run_usage"] = run
             continue
         if not isinstance(d, dict) or d.get("type") not in ("user", "assistant") or not isinstance(d.get("message"), dict):
             continue

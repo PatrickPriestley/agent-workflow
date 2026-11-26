@@ -175,10 +175,11 @@ it "effort: a message continued after a stop is not counted again; safe-output b
   line 2026-11-01T13:00:03.000Z '"type":"user","message":{"role":"user","content":"a long reply that is not the session'"'"'s own text"}'
   line 2026-11-01T13:00:04.000Z '"type":"assistant","message":{"id":"m2","role":"assistant","usage":{"input_tokens":4,"output_tokens":2},"content":[{"type":"tool_use","id":"e2","name":"mcp__safeoutputs__add_comment","input":{"body":"abcdef"}}]}'
   line 2026-11-01T13:00:05.000Z '"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"x"}]}'
-  printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.5,"num_turns":2,"duration_ms":900}\n'
+  printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.5,"num_turns":2,"duration_ms":900,"run_usage":{"input":40,"output":300,"cache_read":7,"cache_write":"x"}}\n'
 } | sed "s/$SID/$SIDE/" >> "$TRE"
 archive --transcript "$TRE" > /dev/null
 assert_eq "3 14 9 100 2 8 6 0.5 2" "$(eff)"
+assert_eq "40 300 7 None" "$(json "$AR/sessions/$SIDE.json" '" ".join(str(d["streams"]["main"]["effort"].get("run_" + k)) for k in ("input","output","cache_read","cache_write"))')"
 it "effort: a count that is not a number is passed over, and a transcript archived whole again is counted afresh"
 line 2026-11-01T13:00:06.000Z '"type":"assistant","message":{"id":"m3","role":"assistant","usage":{"input_tokens":"lots","output_tokens":true},"content":"not a list"}' | sed "s/$SID/$SIDE/" >> "$TRE"
 archive --transcript "$TRE" > /dev/null
