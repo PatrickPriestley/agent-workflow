@@ -1,6 +1,6 @@
 # Reusable workflows
 
-Five of this repository's plain workflows (no model in them) can be called from another
+Six of this repository's plain workflows (no model in them) can be called from another
 repository, so it reports to the same transcript store and gets every fix here without copying
 files:
 
@@ -11,6 +11,7 @@ files:
 | `probe-ci-fix.yml` | Labels a held probe `ci-fix` once its test run fails |
 | `probe-score.yml` | Scores one probe against its sealed key, stores the scores, closes it |
 | `probe-score-auto.yml` | Every three hours, dispatches `probe-score.yml` for each probe that is ready |
+| `probe-sweep.yml` | Daily, deletes closed probes' branches, closes probes left open 14 days, and closes gh-aw's expired issues |
 
 Each checks out its tools (`bin/`, `plugins/change-record`) from this repository, never the
 caller's code: they read the caller through the GitHub API and its artifacts. `github.repository`
@@ -149,6 +150,23 @@ permissions:
 jobs:
   dispatch:
     uses: PatrickPriestley/agent-workflow/.github/workflows/probe-score-auto.yml@main
+```
+
+The sweep needs no secret: the built-in token does it all.
+
+```yaml
+name: probe-sweep
+on:
+  schedule:
+    - cron: "29 5 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+jobs:
+  sweep:
+    uses: PatrickPriestley/agent-workflow/.github/workflows/probe-sweep.yml@main
 ```
 
 For loud probes, name the caller's test workflow:

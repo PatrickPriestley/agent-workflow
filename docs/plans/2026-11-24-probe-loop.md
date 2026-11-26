@@ -176,7 +176,11 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       are reusable (2026-11-26, docs/reusable-workflows.md): another repository calls them
       at `@main`, passes the store's secrets, and its tools come from here. The planter is
       not shared yet: it is written for this repository's files.
-   d. A sweep that closes any probe left open and deletes probe branches.
+   d. The sweep (done 2026-11-26): `probe-sweep.yml`, daily, with `bin/probe-sweep`. It
+      deletes a closed probe's branch a day after it closes (if nothing was pushed to it and
+      no open pull request uses it), closes a probe left open 14 days unscored, and closes
+      gh-aw's issues once the expiry gh-aw wrote into them has passed (gh-aw's own
+      maintenance job is not installed). `--dry-run` says what it would do.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The
    improver, built on `transcripts propose` and `compare` (above): first one target, the

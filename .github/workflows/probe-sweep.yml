@@ -1,0 +1,72 @@
+name: probe-sweep
+
+# Tidies up after the probe loop (docs/plans/2026-11-24-probe-loop.md, Phase 2d), with
+# bin/probe-sweep: deletes the branches of closed probes (a day after they close, if nothing was
+# pushed to them), closes a probe left open 14 days unscored, and closes gh-aw's issues once the
+# expiry gh-aw gave them has passed. Daily at 05:29 UTC; by hand with "dry run" ticked, it only
+# says what it would do.
+#
+# It runs main's code, checks out no pull request, and holds no secret: the built-in token may
+# delete branches and close pull requests and issues, which is all it does.
+on:
+  schedule:
+    - cron: "29 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only say what it would do"
+        type: boolean
+        default: false
+  workflow_call:  # other repositories: docs/reusable-workflows.md
+    inputs:
+      dry_run:
+        description: "Only say what it would do"
+        type: boolean
+        default: false
+      tools-repository:
+        description: "Where the probe and transcript tools come from"
+        type: string
+        default: PatrickPriestley/agent-workflow
+      tools-ref:
+        description: "The tools' branch, tag or commit; pin it to the ref you call this workflow at"
+        type: string
+        default: main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: probe-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the tools
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}
+          ref: ${{ inputs.tools-ref || 'main' }}
+          persist-credentials: false
+      - name: Sweep
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          dry=()
+          if [ "${DRY_RUN:-}" = true ]; then dry=(--dry-run); fi
+          python3 -I bin/probe-sweep --repo "$REPO" ${dry[@]+"${dry[@]}"} > "$RUNNER_TEMP/swept.txt" && rc=0 || rc=$?
+          {
+            echo "## Probe sweep"
+            echo
+            if [ -s "$RUNNER_TEMP/swept.txt" ]; then sed 's/^/- /' "$RUNNER_TEMP/swept.txt"; else echo "Nothing to tidy."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/swept.txt"
+          exit "$rc"

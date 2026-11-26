@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""probe-sweep: tidy up after the probe loop (docs/plans/2026-11-24-probe-loop.md, Phase 2d).
+
+  python3 -I bin/probe-sweep --repo OWNER/NAME [--now ISO-TIME] [--stale-days N] [--dry-run]
+
+A probe is a pull request labelled hold, from a branch of this repository named the way the
+planter names them (<type>/<slug>-<6 hex>, bin/probe-open). It does three things:
+
+- Deletes a probe's branch once the probe is closed without merging, at least a day ago, the
+  branch still points at the probe's own commit (nothing was pushed to it since), and no open
+  pull request uses it. probe-score reads a planted commit through the pull request, which
+  keeps it after its branch is gone.
+- Closes a probe still open --stale-days (default 14) after it was opened, saying it was not
+  scored: one probe-ready gave up on (its scoring failed twice) or could not match to a key.
+  Its branch is deleted by a later sweep, like any closed probe's.
+- Closes an issue gh-aw opened (by github-actions[bot], labelled agentic-workflows) once the
+  expiry gh-aw wrote into it (<!-- gh-aw-expires: TIME -->) has passed, as not planned. gh-aw's
+  own maintenance job, which would do this, is not installed here. An issue with no expiry is
+  left for a person.
+
+With --dry-run it says what it would do and changes nothing. Prints a line per change, and a
+line on stderr for each thing it leaves and why. One failed change does not stop the others.
+Reads and writes GitHub with `gh api` (GH_TOKEN). Exit 0; 1 GitHub failed; 2 usage.
+"""
+import datetime as dt
+import json
+import re
+import subprocess
+import sys
+from urllib.parse import quote
+
+PROBE_BRANCH = re.compile(r"[a-z]+/[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{6}")
+EXPIRES = re.compile(r"<!--\s*gh-aw-expires:\s*([0-9T:.\-+Z]+)\s*-->")
+GRACE = dt.timedelta(days=1)
+BOT = "github-actions[bot]"
+
+
+class GitHub(Exception):
+    pass
+
+
+class Gone(Exception):
+    pass
+
+
+def api(path, method="GET", fields=()):
+    args = ["gh", "api"] + (["-X", method] if method != "GET" else [])
+    for k, v in fields:
+        args += ["-f", f"{k}={v}"]
+    out = subprocess.run(args + [path], capture_output=True, text=True)
+    if out.returncode != 0:
+        if "HTTP 404" in out.stderr:
+            raise Gone(path)
+        raise GitHub(f"gh api {method} {path.split('?')[0]}: {out.stderr.strip()[:200]}")
+    try:
+        return json.loads(out.stdout or "null")
+    except ValueError as e:
+        raise GitHub(f"gh api {path.split('?')[0]}: not JSON ({e})")
+
+
+def when(s):
+    t = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if t.tzinfo is None:
+        raise ValueError("no time zone")
+    return t
+
+
+def is_probe(p, repo):
+    head = p.get("head") or {}
+    return (any((lab or {}).get("name") == "hold" for lab in p.get("labels") or [])
+            and isinstance(head.get("ref"), str) and PROBE_BRANCH.fullmatch(head["ref"]) is not None
+            and isinstance(head.get("sha"), str) and re.fullmatch(r"[0-9a-f]{40}", head["sha"]) is not None
+            and ((head.get("repo") or {}).get("full_name") or "").lower() == repo.lower()
+            and type(p.get("number")) is int)
+
+
+def main(argv):
+    opts, it = {}, iter(argv[1:])
+    try:
+        for a in it:
+            if a == "--dry-run" and a not in opts:
+                opts[a] = True
+            elif a in ("--repo", "--now", "--stale-days") and a not in opts:
+                opts[a] = next(it)
+            else:
+                raise ValueError(a)
+        repo = opts["--repo"]
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}", repo):
+            raise ValueError("repo")
+        now = when(opts["--now"]) if "--now" in opts else dt.datetime.now(dt.timezone.utc)
+        stale = int(opts.get("--stale-days", 14))
+        if not 1 <= stale <= 365:
+            raise ValueError("stale-days")
+    except (StopIteration, KeyError, ValueError):
+        print("usage: probe-sweep --repo OWNER/NAME [--now ISO-TIME] [--stale-days N] [--dry-run]", file=sys.stderr)
+        return 2
+    dry = opts.get("--dry-run", False)
+    failed = 0
+
+    def leave(what, why):
+        print(f"{what}: {why}", file=sys.stderr)
+
+    def change(verb, rest, *calls):  # verb: (past, present), so a dry run reads "would close ..."
+        nonlocal failed
+        line = (f"would {verb[1]} " if dry else f"{verb[0]} ") + rest
+        if not dry:
+            try:
+                for c in calls:
+                    api(*c)
+            except (GitHub, Gone) as e:
+                failed = 1
+                print(f"failed: {line}: {e}", file=sys.stderr)
+                return
+        print(line)
+
+    try:
+        open_pulls = api(f"repos/{repo}/pulls?state=open&per_page=100")
+        closed = api(f"repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100")
+        issues = api(f"repos/{repo}/issues?state=open&labels=agentic-workflows&per_page=100")
+        if not all(isinstance(x, list) for x in (open_pulls, closed, issues)):
+            raise GitHub("an answer that is not a list")
+        for name, page in (("open pull requests", open_pulls), ("closed pull requests", closed), ("issues", issues)):
+            if len(page) == 100:
+                leave(name, "a full page: only the latest 100 were looked at")
+        in_use = {((p.get("head") or {}).get("ref")) for p in open_pulls}
+
+        # Probes left open too long.
+        for p in open_pulls:
+            if not is_probe(p, repo):
+                continue
+            n, opened = p["number"], when(p["created_at"])
+            if now - opened < dt.timedelta(days=stale):
+                continue
+            days = (now - opened).days
+            change(("closed", "close"), f"#{n}: open {days} days, not scored",
+                   (f"repos/{repo}/issues/{n}/comments", "POST",
+                    [("body", f"Closed by probe-sweep: this probe was open {days} days and was not scored. "
+                              "Probes are never merged.")]),
+                   (f"repos/{repo}/pulls/{n}", "PATCH", [("state", "closed")]))
+
+        # Branches of closed probes.
+        for p in closed:
+            if not is_probe(p, repo) or p.get("merged_at"):
+                continue
+            n, ref, sha = p["number"], p["head"]["ref"], p["head"]["sha"]
+            if not p.get("closed_at") or now - when(p["closed_at"]) < GRACE:
+                leave(f"#{n}", "closed less than a day ago: its branch waits")
+                continue
+            if ref in in_use:
+                leave(f"#{n}", f"{ref} is the branch of an open pull request: kept")
+                continue
+            try:
+                at = (api(f"repos/{repo}/git/ref/heads/{quote(ref, safe='/')}").get("object") or {}).get("sha")
+            except Gone:
+                continue  # already deleted
+            if at != sha:
+                leave(f"#{n}", f"{ref} has moved since the probe closed: kept")
+                continue
+            change(("deleted", "delete"), f"{ref}, the branch of closed probe #{n}",
+                   (f"repos/{repo}/git/refs/heads/{quote(ref, safe='/')}", "DELETE"))
+
+        # gh-aw's issues past the expiry it gave them.
+        for i in issues:
+            if "pull_request" in i or (i.get("user") or {}).get("login") != BOT or type(i.get("number")) is not int:
+                continue
+            m = EXPIRES.search(i.get("body") or "")
+            if not m:
+                continue
+            try:
+                expired = when(m.group(1))
+            except ValueError:
+                leave(f"issue #{i['number']}", "an expiry that is not a time: kept")
+                continue
+            if expired > now:
+                continue
+            change(("closed", "close"), f"issue #{i['number']}: gh-aw's expiry {m.group(1)[:10]} has passed",
+                   (f"repos/{repo}/issues/{i['number']}/comments", "POST",
+                    [("body", f"Closed by probe-sweep: gh-aw set this issue to expire on {m.group(1)[:10]}.")]),
+                   (f"repos/{repo}/issues/{i['number']}", "PATCH", [("state", "closed"), ("state_reason", "not_planned")]))
+    except (GitHub, Gone) as e:
+        print(f"probe-sweep: {e}", file=sys.stderr)
+        return 1
+    except (KeyError, TypeError, ValueError) as e:
+        print(f"probe-sweep: GitHub's answer is not what was expected ({type(e).__name__}: {e})", file=sys.stderr)
+        return 1
+    return failed
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
