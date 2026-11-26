@@ -168,6 +168,10 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       rules turn the tables into candidates (a review loop that missed or failed probes, a skill
       step under 80%, stale grading, and each kind of refused call with one candidate change to
       the agent's prompt or allowlist). The improver's model step drafts a change for the top one.
+      Repository-aware (2026-11-26): every report function takes an optional repository and
+      returns a repository column, so one store serves several repositories. The scheduled
+      report covers its own repository; by hand it can cover them all, a Repository column
+      first in each table.
    d. A sweep that closes any probe left open and deletes probe branches.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The

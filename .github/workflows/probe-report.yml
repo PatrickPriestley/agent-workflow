@@ -11,10 +11,18 @@ name: probe-report
 # issues and pull requests, and must not learn which pull requests are probes. So the workflow
 # may only read the repository, and reads the store with the publishable key, through the
 # report functions that key may call (store/schema.sql); it cannot read a verdict's evidence.
+#
+# The store holds every repository that sends to it. The report covers this one; run it by hand
+# with "all repositories" ticked for every repository, a Repository column first in each table.
 on:
   schedule:
     - cron: "17 12 * * 2"
   workflow_dispatch:
+    inputs:
+      all_repositories:
+        description: "Every repository in the store, not only this one"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,12 +40,16 @@ jobs:
         env:
           AGENT_TRANSCRIPTS_URL: ${{ secrets.AGENT_TRANSCRIPTS_URL }}
           AGENT_TRANSCRIPTS_INSERT_KEY: ${{ secrets.AGENT_TRANSCRIPTS_INSERT_KEY }}
+          ALL_REPOSITORIES: ${{ inputs.all_repositories }}
+          REPO: ${{ github.repository }}
         run: |
           set -u
           if [ -z "$AGENT_TRANSCRIPTS_URL" ] || [ -z "$AGENT_TRANSCRIPTS_INSERT_KEY" ]; then
             echo "::error::the AGENT_TRANSCRIPTS_URL and AGENT_TRANSCRIPTS_INSERT_KEY secrets are both needed"; exit 1
           fi
-          if python3 -I bin/probe-report > "$RUNNER_TEMP/report.md"; then
+          only=(--repo "$REPO")
+          if [ "${ALL_REPOSITORIES:-}" = true ]; then only=(); fi
+          if python3 -I bin/probe-report ${only[@]+"${only[@]}"} > "$RUNNER_TEMP/report.md"; then
             cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "The probe report could not be read from the store; see this step's log." >> "$GITHUB_STEP_SUMMARY"

@@ -38,16 +38,21 @@ cat > "$T/ws/bin/probe-report" <<'STUB'
 import os, sys
 if os.environ.get("STUB_FAIL"):
     print("probe-report: the store answered 500", file=sys.stderr); sys.exit(1)
-print("## Review loops against planted bugs\n\n2 probes scored")
+print("## Review loops against planted bugs\n\n2 probes scored\nargs: " + " ".join(sys.argv[1:]))
 STUB
 step() {  # -> $rc; output in $T/out, summary in $T/summary
   : > "$T/summary"
   (cd "$T/ws" && env -i PATH="$PATH" HOME="$T" RUNNER_TEMP="$T" GITHUB_STEP_SUMMARY="$T/summary" \
     AGENT_TRANSCRIPTS_URL="${URL-https://example.supabase.co}" AGENT_TRANSCRIPTS_INSERT_KEY="${KEY-sb_publishable_test}" \
-    STUB_FAIL="${FAILS:-}" bash --noprofile --norc -eo pipefail -c "$script") > "$T/out" 2>&1; rc=$?
+    STUB_FAIL="${FAILS:-}" REPO="${REPO-o/r}" ALL_REPOSITORIES="${ALLR-}" bash --noprofile --norc -eo pipefail -c "$script") > "$T/out" 2>&1; rc=$?
 }
 it "the report is written to the run summary"
 step; assert_eq 0 "$rc"; grep -q '2 probes scored' "$T/summary" && ok || bad "summary: $(cat "$T/summary")"
+it "on schedule, and by hand by default, it covers this repository; ticked, every repository"
+step; grep -qx 'args: --repo o/r' "$T/summary" && ok || bad "summary: $(cat "$T/summary")"
+ALLR=false step; grep -qx 'args: --repo o/r' "$T/summary" && ok || bad "summary: $(cat "$T/summary")"
+ALLR=true step; assert_eq 0 "$rc"; grep -qx 'args: ' "$T/summary" && ok || bad "summary: $(cat "$T/summary")"
+has "$w" "all_repositories:"; has "$w" 'ALL_REPOSITORIES: ${{ inputs.all_repositories }}'; has "$w" 'REPO: ${{ github.repository }}'
 it "a store that fails fails the run, and the summary says so"
 FAILS=1 step; assert_eq 1 "$rc"; grep -q 'could not be read' "$T/summary" && ok || bad "summary: $(cat "$T/summary")"
 it "without both secrets the run fails and says which are needed"

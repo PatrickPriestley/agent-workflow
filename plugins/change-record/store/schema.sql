@@ -252,48 +252,21 @@ drop policy if exists probe_verdicts_insert on public.probe_verdicts;
 create policy probe_runs_insert on public.probe_runs for insert to anon with check (true);
 create policy probe_verdicts_insert on public.probe_verdicts for insert to anon with check (true);
 
--- ---- The weekly probe report (docs/plans/2026-11-24-probe-loop.md, Phase 2) ----
+
+-- ---- The weekly report's functions (docs/plans/2026-11-24-probe-loop.md, Phase 2) ----
 --
 -- probe-report.yml writes the week's report to its run summary with the publishable key, which
--- may read no table. These two functions are all it may call: they run as their owner and
--- return totals per loop and an outline of the recent probes, from each probe's latest scoring
--- only, never a verdict's evidence. The report is not posted where the review agents read.
-
-create or replace function public.probe_report_loops()
-returns table (loop text, probes bigint, caught bigint, missed bigint, not_run bigint, failed bigint,
-               no_data bigint, judge bigint)
-language sql stable security definer set search_path = public, pg_temp
-as $$
-  with latest as (
-    select distinct on (r.probe_id) r.probe_id, r.scorer_run
-    from public.probe_runs r order by r.probe_id, r.scorer_run desc
-  )
-  select v.loop, count(*),
-         count(*) filter (where v.verdict = 'caught'),  count(*) filter (where v.verdict = 'missed'),
-         count(*) filter (where v.verdict = 'not run'), count(*) filter (where v.verdict = 'failed'),
-         count(*) filter (where v.verdict = 'no data'), count(*) filter (where v.verdict = 'judge')
-  from public.probe_verdicts v join latest l on l.probe_id = v.probe_id and l.scorer_run = v.scorer_run
-  group by v.loop order by v.loop
-$$;
-
-create or replace function public.probe_report_probes(max_rows integer default 12)
-returns table (probe_id text, pr integer, kind text, loud boolean, file text, caught integer, ran integer,
-               scored_at timestamptz)
-language sql stable security definer set search_path = public, pg_temp
-as $$
-  select * from (
-    select distinct on (r.probe_id) r.probe_id, r.pr, r.kind, r.loud, r.file, r.caught, r.ran, r.created_at
-    from public.probe_runs r order by r.probe_id, r.scorer_run desc
-  ) latest order by latest.created_at desc, latest.probe_id limit greatest(least(max_rows, 100), 0)
-$$;
-
-revoke all on function public.probe_report_loops(), public.probe_report_probes(integer) from public, anon, authenticated;
-grant execute on function public.probe_report_loops(), public.probe_report_probes(integer) to anon, service_role;
-
--- ---- The weekly report's agent health and skills sections ----
+-- may read no table. These functions are all it may call: they run as their owner with a fixed
+-- search path and return aggregates, never a verdict's evidence. The report is not posted
+-- where the review agents read.
 --
--- Four more functions for the publishable key, built as the two above: they run as their owner
--- with a fixed search path and return aggregates, for probe-report.yml's run summary.
+-- Every one takes an optional repo, "owner/name" in any case, and returns a repository column
+-- in that form, lower case: with no repo they cover every repository in the store, a row per
+-- repository; with one, only it. probe_runs keeps "Owner/Name" and sessions keep
+-- "github.com/owner/name"; repo_key below turns both into "owner/name".
+--
+-- probe_report_loops and probe_report_probes: totals per loop and an outline of the recent
+-- probes, from each probe's latest scoring only.
 --
 -- agent_health and agent_refused_commands read the GitHub agents' sessions (source agent, named
 -- gh-aw-<workflow>-<run>-<attempt> by bin/agent-session-collect) started since a time: per agent,
@@ -305,16 +278,75 @@ grant execute on function public.probe_report_loops(), public.probe_report_probe
 -- the colon), the sessions started since a time that used it, all that ever did, and all by
 -- where they ran. skill_grades reads `scores`, one verdict per session and step, its latest
 -- grading (fields/1, /2 and /3 are versions of one grader, so a re-grading replaces the verdict
--- rather than adding one): pass, fail and not applicable, and when the skill was last graded.
+-- rather than adding one): pass, fail and not applicable, and when the skill was last graded;
+-- a grading whose session the store does not hold has no repository.
+--
+-- The return types changed when the repository column came in, so the earlier versions are
+-- dropped first; running the file again drops and makes them again, with their grants.
 
-create or replace function public.agent_health(since timestamptz)
-returns table (agent text, runs bigint, calls bigint, refused bigint, errors bigint)
+drop function if exists public.probe_report_loops();
+drop function if exists public.probe_report_probes(integer);
+drop function if exists public.agent_health(timestamptz);
+drop function if exists public.agent_refused_commands(timestamptz, integer);
+drop function if exists public.skill_usage(timestamptz);
+drop function if exists public.skill_grades();
+drop function if exists public.probe_report_loops(text);
+drop function if exists public.probe_report_probes(integer, text);
+drop function if exists public.agent_health(timestamptz, text);
+drop function if exists public.agent_refused_commands(timestamptz, integer, text);
+drop function if exists public.skill_usage(timestamptz, text);
+drop function if exists public.skill_grades(text);
+
+create or replace function public.repo_key(repository text)
+returns text
+language sql immutable set search_path = public, pg_temp
+as $$
+  select nullif(regexp_replace(lower(coalesce(repository, '')), '^(https?://)?github\.com/', ''), '')
+$$;
+
+create function public.probe_report_loops(repo text default null)
+returns table (repository text, loop text, probes bigint, caught bigint, missed bigint, not_run bigint,
+               failed bigint, no_data bigint, judge bigint)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with latest as (
+    select distinct on (r.probe_id) r.probe_id, r.scorer_run, public.repo_key(r.repository) as repository
+    from public.probe_runs r
+    where repo is null or public.repo_key(r.repository) = public.repo_key(repo)
+    order by r.probe_id, r.scorer_run desc
+  )
+  select l.repository, v.loop, count(*),
+         count(*) filter (where v.verdict = 'caught'),  count(*) filter (where v.verdict = 'missed'),
+         count(*) filter (where v.verdict = 'not run'), count(*) filter (where v.verdict = 'failed'),
+         count(*) filter (where v.verdict = 'no data'), count(*) filter (where v.verdict = 'judge')
+  from public.probe_verdicts v join latest l on l.probe_id = v.probe_id and l.scorer_run = v.scorer_run
+  group by l.repository, v.loop order by l.repository, v.loop
+$$;
+
+create function public.probe_report_probes(max_rows integer default 12, repo text default null)
+returns table (repository text, probe_id text, pr integer, kind text, loud boolean, file text, caught integer,
+               ran integer, scored_at timestamptz)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select * from (
+    select distinct on (r.probe_id) public.repo_key(r.repository), r.probe_id, r.pr, r.kind, r.loud, r.file,
+           r.caught, r.ran, r.created_at
+    from public.probe_runs r
+    where repo is null or public.repo_key(r.repository) = public.repo_key(repo)
+    order by r.probe_id, r.scorer_run desc
+  ) latest order by latest.created_at desc, latest.probe_id limit greatest(least(max_rows, 100), 0)
+$$;
+
+create function public.agent_health(since timestamptz, repo text default null)
+returns table (repository text, agent text, runs bigint, calls bigint, refused bigint, errors bigint)
 language sql stable security definer set search_path = public, pg_temp
 as $$
   with runs as (
-    select s.session_id, regexp_replace(s.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1') as agent
+    select s.session_id, regexp_replace(s.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1') as agent,
+           public.repo_key(max(s.entry ->> 'repository')) as repository
     from public.sessions s where s.session_id ~ '^gh-aw-.+-[0-9]+-[0-9]+$'
     group by s.session_id having min(s.created_at) >= since
+       and (repo is null or public.repo_key(max(s.entry ->> 'repository')) = public.repo_key(repo))
   ), calls as (
     select distinct m.session_id, m.call_id from public.messages m
     where m.kind = 'call' and m.call_id is not null and m.session_id in (select session_id from runs)
@@ -325,21 +357,26 @@ as $$
     where m.kind = 'result' and m.failed and m.call_id is not null and m.session_id in (select session_id from runs)
     order by m.session_id, m.call_id
   )
-  select r.agent, count(distinct r.session_id),
-         (select count(*) from calls c join runs r2 using (session_id) where r2.agent = r.agent),
-         (select count(*) from bad b join runs r2 using (session_id) where r2.agent = r.agent and b.refused),
-         (select count(*) from bad b join runs r2 using (session_id) where r2.agent = r.agent and not b.refused)
-  from runs r group by r.agent order by r.agent
+  select r.repository, r.agent, count(distinct r.session_id),
+         (select count(*) from calls c join runs r2 using (session_id)
+          where r2.agent = r.agent and r2.repository is not distinct from r.repository),
+         (select count(*) from bad b join runs r2 using (session_id)
+          where r2.agent = r.agent and r2.repository is not distinct from r.repository and b.refused),
+         (select count(*) from bad b join runs r2 using (session_id)
+          where r2.agent = r.agent and r2.repository is not distinct from r.repository and not b.refused)
+  from runs r group by r.repository, r.agent order by r.repository, r.agent
 $$;
 
-create or replace function public.agent_refused_commands(since timestamptz, max_rows integer default 10)
-returns table (agent text, tool text, command text, times bigint)
+create function public.agent_refused_commands(since timestamptz, max_rows integer default 10, repo text default null)
+returns table (repository text, agent text, tool text, command text, times bigint)
 language sql stable security definer set search_path = public, pg_temp
 as $$
   with runs as (
-    select s.session_id, regexp_replace(s.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1') as agent
+    select s.session_id, regexp_replace(s.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1') as agent,
+           public.repo_key(max(s.entry ->> 'repository')) as repository
     from public.sessions s where s.session_id ~ '^gh-aw-.+-[0-9]+-[0-9]+$'
     group by s.session_id having min(s.created_at) >= since
+       and (repo is null or public.repo_key(max(s.entry ->> 'repository')) = public.repo_key(repo))
   ), refused as (
     select distinct m.session_id, m.call_id from public.messages m
     where m.kind = 'result' and m.failed and m.text ~* '^Permission to use .* has been denied|not allowed'
@@ -352,16 +389,16 @@ as $$
     where c.kind = 'call'
     order by c.session_id, c.call_id
   )
-  select r.agent, coalesce(t.tool, '?'), t.command, count(*)
+  select r.repository, r.agent, coalesce(t.tool, '?'), t.command, count(*)
   from tried t join runs r using (session_id)
-  group by r.agent, t.tool, t.command
-  order by count(*) desc, r.agent, t.command
+  group by r.repository, r.agent, t.tool, t.command
+  order by count(*) desc, r.repository, r.agent, t.command
   limit greatest(least(max_rows, 50), 0)
 $$;
 
-create or replace function public.skill_usage(since timestamptz)
-returns table (skill text, plugin text, sessions bigint, sessions_all bigint, local bigint, cloud bigint,
-               agent bigint, dispatch bigint)
+create function public.skill_usage(since timestamptz, repo text default null)
+returns table (repository text, skill text, plugin text, sessions bigint, sessions_all bigint, local bigint,
+               cloud bigint, agent bigint, dispatch bigint)
 language sql stable security definer set search_path = public, pg_temp
 as $$
   with latest as (
@@ -369,35 +406,44 @@ as $$
            min(s.created_at) over (partition by s.session_id) as began
     from public.sessions s order by s.session_id, s.version desc, s.created_at desc
   ), used as (
-    select distinct l.session_id, l.began, l.entry ->> 'source' as source, k ->> 'name' as skill
+    select distinct l.session_id, l.began, l.entry ->> 'source' as source, k ->> 'name' as skill,
+           public.repo_key(l.entry ->> 'repository') as repository
     from latest l, jsonb_array_elements(case when jsonb_typeof(l.entry -> 'skills') = 'array'
                                              then l.entry -> 'skills' else '[]'::jsonb end) k
     where coalesce(k ->> 'name', '') <> ''
+      and (repo is null or public.repo_key(l.entry ->> 'repository') = public.repo_key(repo))
   )
-  select u.skill, case when position(':' in u.skill) > 0 then split_part(u.skill, ':', 1) end,
+  select u.repository, u.skill, case when position(':' in u.skill) > 0 then split_part(u.skill, ':', 1) end,
          count(*) filter (where u.began >= since), count(*),
          count(*) filter (where u.source = 'local'), count(*) filter (where u.source = 'cloud'),
          count(*) filter (where u.source = 'agent'), count(*) filter (where u.source = 'dispatch')
-  from used u group by u.skill order by count(*) desc, u.skill
+  from used u group by u.repository, u.skill order by u.repository, count(*) desc, u.skill
 $$;
 
-create or replace function public.skill_grades()
-returns table (skill text, step text, sessions bigint, pass bigint, fail bigint, not_applicable bigint,
-               last_graded timestamptz)
+create function public.skill_grades(repo text default null)
+returns table (repository text, skill text, step text, sessions bigint, pass bigint, fail bigint,
+               not_applicable bigint, last_graded timestamptz)
 language sql stable security definer set search_path = public, pg_temp
 as $$
-  with latest as (
-    select distinct on (g.session_id, g.step) g.session_id, g.step, g.skill, g.verdict, g.graded_at
-    from public.scores g order by g.session_id, g.step, g.graded_at desc, g.grader desc
+  with sessions_repo as (
+    select distinct on (s.session_id) s.session_id, public.repo_key(s.entry ->> 'repository') as repository
+    from public.sessions s order by s.session_id, s.version desc, s.created_at desc
+  ), latest as (
+    select distinct on (g.session_id, g.step) g.session_id, g.step, g.skill, g.verdict, g.graded_at, sr.repository
+    from public.scores g left join sessions_repo sr on sr.session_id = g.session_id
+    where repo is null or sr.repository = public.repo_key(repo)
+    order by g.session_id, g.step, g.graded_at desc, g.grader desc
   )
-  select l.skill, l.step, count(distinct l.session_id),
+  select l.repository, l.skill, l.step, count(distinct l.session_id),
          count(*) filter (where l.verdict = 'pass'), count(*) filter (where l.verdict = 'fail'),
-         count(*) filter (where l.verdict = 'not_applicable'),
-         (select max(g.graded_at) from public.scores g where g.skill = l.skill)
-  from latest l group by l.skill, l.step order by l.skill, l.step
+         count(*) filter (where l.verdict = 'not_applicable'), max(l.graded_at)
+  from latest l group by l.repository, l.skill, l.step order by l.repository, l.skill, l.step
 $$;
 
-revoke all on function public.agent_health(timestamptz), public.agent_refused_commands(timestamptz, integer),
-  public.skill_usage(timestamptz), public.skill_grades() from public, anon, authenticated;
-grant execute on function public.agent_health(timestamptz), public.agent_refused_commands(timestamptz, integer),
-  public.skill_usage(timestamptz), public.skill_grades() to anon, service_role;
+revoke all on function public.repo_key(text), public.probe_report_loops(text), public.probe_report_probes(integer, text),
+  public.agent_health(timestamptz, text), public.agent_refused_commands(timestamptz, integer, text),
+  public.skill_usage(timestamptz, text), public.skill_grades(text) from public, anon, authenticated;
+grant execute on function public.probe_report_loops(text), public.probe_report_probes(integer, text),
+  public.agent_health(timestamptz, text), public.agent_refused_commands(timestamptz, integer, text),
+  public.skill_usage(timestamptz, text), public.skill_grades(text) to anon, service_role;
+grant execute on function public.repo_key(text) to service_role;

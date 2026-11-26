@@ -62,17 +62,17 @@ trap 'kill "$srv" 2>/dev/null; [ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
 for _ in $(seq 300); do [ -s "$T/log.port" ] && break; sleep 0.1; done
 [ -s "$T/log.port" ] || { echo "the stand-in server did not start in 30 seconds"; exit 1; }
 URL="http://127.0.0.1:$(cat "$T/log.port")"
-report() {  # args... -> $rc, stdout in $T/out, stderr in $T/err
-  : > "$T/log"
+report() {  # args... (with --repo o/r unless ALL=1) -> $rc, stdout in $T/out, stderr in $T/err
+  : > "$T/log"; local only=(--repo o/r); [ -z "${ALL:-}" ] || only=()  # ALL=1: every repository
   env AGENT_TRANSCRIPTS_URL="${U-$URL}" AGENT_TRANSCRIPTS_INSERT_KEY="${K-sb_publishable_test}" \
-    "${PR[@]}" "$@" > "$T/out" 2> "$T/err"; rc=$?
+    "${PR[@]}" ${only[@]+"${only[@]}"} "$@" > "$T/out" 2> "$T/err"; rc=$?
 }
 
 it "it calls the six report functions with the insert key, and nothing else"
 report; assert_eq 0 "$rc"
 assert_eq "/rest/v1/rpc/probe_report_loops /rest/v1/rpc/probe_report_probes /rest/v1/rpc/agent_health /rest/v1/rpc/agent_refused_commands /rest/v1/rpc/skill_usage /rest/v1/rpc/skill_grades" "$(python3 -I -c 'import json,sys; print(" ".join(json.loads(l)["path"] for l in open(sys.argv[1])))' "$T/log")"
 assert_eq "sb_publishable_test" "$(python3 -I -c 'import json,sys; print(" ".join(sorted({json.loads(l)["apikey"] for l in open(sys.argv[1])})))' "$T/log")"
-assert_eq '{"max_rows": 12}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
+assert_eq '{"max_rows": 12, "repo": "o/r"}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
 it "the loop table gives each loop's catches of the probes it ran on, worst first, and says which did not run"
 out="$(cat "$T/out")"
 has "$out" "| Loop | Caught | Ran on | Missed | Not run | Failed | Judge |"
@@ -103,7 +103,8 @@ since = dt.datetime.fromisoformat(calls[2]["body"]["since"])
 age = dt.datetime.now(dt.timezone.utc) - since
 assert dt.timedelta(days=6, hours=23) < age < dt.timedelta(days=7, hours=1), age
 assert calls[3]["body"]["since"] == calls[2]["body"]["since"] == calls[4]["body"]["since"] and calls[3]["body"]["max_rows"] == 50
-assert calls[5]["body"] == {}, calls[5]
+assert calls[5]["body"] == calls[0]["body"] == {"repo": "o/r"}, calls[5]
+assert all(c["body"]["repo"] == "o/r" for c in calls), calls
 ' "$T/log" && ok || bad "$(cat "$T/log")"
 report --days 30; has "$(cat "$T/out")" "## Agent health, last 30 days"
 python3 -I -c '
@@ -186,7 +187,7 @@ answers 200 200
 it "the health functions failing fails the report too"
 answers 200 200 500; report; assert_eq 1 "$rc"; answers 200 200
 it "--max sets how many probes are listed, within 1 to 100"
-report --max 3; assert_eq '{"max_rows": 3}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
+report --max 3; assert_eq '{"max_rows": 3, "repo": "o/r"}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
 report --max 0; assert_eq 2 "$rc"; report --max 101; assert_eq 2 "$rc"; report --max x; assert_eq 2 "$rc"
 it "no probe scored yet is said plainly"
 LOOPS='[]' PROBES='[]' answers 200 200; LOOPS='[]'; PROBES='[]'; answers 200 200; report; assert_eq 0 "$rc"
@@ -200,6 +201,48 @@ answers 200 200
 it "the store must be https (or this machine), and both settings are needed"
 U="http://example.com" report; assert_eq 2 "$rc"; U="" report; assert_eq 2 "$rc"; K="" report; assert_eq 2 "$rc"
 assert_eq 0 "$(grep -c . "$T/log")"
+
+it "--repo names the repository in the heading; a repo that is not owner/name is refused before any call"
+report; has "$(cat "$T/out")" "## Review loops against planted bugs: o/r"
+grep -q '^| Repository' "$T/out" && bad "a Repository column in one repository's report" || ok
+for r in "o" "o/r/x" "o/r;x" "" "../o/r x"; do ALL=1 report --repo "$r"; assert_eq "2 0" "$rc $(grep -c . "$T/log")"; done
+report --repo o/r; assert_eq 2 "$rc"  # given twice
+ALL=1 report --repo Some.Owner/some_repo-2; assert_eq 0 "$rc"; has "$(cat "$T/out")" "planted bugs: Some.Owner/some_repo-2"
+
+it "without --repo: every repository, none named in the call, a Repository column first in each table"
+LOOPS='[{"repository": "a/one", "loop": "verify", "probes": 2, "caught": 1, "missed": 1, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0},
+        {"repository": "b/two", "loop": "verify", "probes": 3, "caught": 3, "missed": 0, "not_run": 0, "failed": 0, "no_data": 0, "judge": 0}]'
+PROBES='[{"repository": "b/two", "probe_id": "probe-9", "pr": 4, "kind": "k", "loud": false, "file": "f", "caught": 1, "ran": 2, "scored_at": "2026-11-25T17:09:30+00:00"}]'
+HEALTH='[{"repository": "a/one", "agent": "verify-pr-claims", "runs": 1, "calls": 10, "refused": 1, "errors": 0},
+         {"repository": "b/two", "agent": "verify-pr-claims", "runs": 2, "calls": 10, "refused": 5, "errors": 0}]'
+REFUSED='[{"repository": "b/two", "agent": "verify-pr-claims", "tool": "Bash", "command": "cd x", "times": 2},
+          {"repository": "a/one", "agent": "verify-pr-claims", "tool": "Bash", "command": "cd y", "times": 1}]'
+USAGE='[{"repository": "a/one", "skill": "s", "plugin": null, "sessions": 1, "sessions_all": 1, "local": 1, "cloud": 0, "agent": 0, "dispatch": 0}]'
+GRADES='[{"repository": "b/two", "skill": "s", "step": "red-first", "sessions": 4, "pass": 1, "fail": 3, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"},
+         {"repository": null, "skill": "s", "step": "tier-declared", "sessions": 1, "pass": 1, "fail": 0, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"}]'
+answers 200 200; ALL=1 report; assert_eq 0 "$rc"; o="$(cat "$T/out")"
+python3 -I -c '
+import json, sys
+calls = [json.loads(l) for l in open(sys.argv[1])]
+assert not any("repo" in c["body"] for c in calls), calls
+' "$T/log" && ok || bad "named a repo: $(cat "$T/log")"
+has "$o" "## Review loops against planted bugs
+"; has "$o" "5 probes scored"
+has "$o" "| Repository | Loop | Caught | Ran on | Missed | Not run | Failed | Judge |"
+has "$o" "|---|---|---|---|---|---|---|---|"
+has "$o" "| a/one | verify | 1 of 2 (50%) | 2 | 1 | 0 | 0 | 0 |"; has "$o" "| b/two | verify | 3 of 3 (100%) | 3 | 0 | 0 | 0 | 0 |"
+has "$o" "| Repository | Probe | PR | Kind | Planted | File | Caught |"; has "$o" "| b/two | probe-9 | #4 |"
+has "$o" "| b/two | verify-pr-claims | 2 | 10 | 5 (50%) | 0 |"; has "$o" "| a/one | verify-pr-claims | 1 | 10 | 1 (10%) | 0 |"
+has "$o" "| b/two | verify-pr-claims | Bash | \`cd x\` | 2 |"
+has "$o" "| a/one | s | (none) | 1 | 1 | 1 | 0 | 0 | 0 |"
+has "$o" "| b/two | s | red-first | 4 | 1 (25%) | 3 | 0 |"; has "$o" "| (none) | s | tier-declared | 1 |"
+it "without --repo, each suggestion names its repository, and one agent in two is two suggestions"
+sug="$(printf '%s\n' "$o" | sed -n '/^## Suggested changes/,$p')"
+has "$sug" "| Repository | Where | What the data shows | Candidate change |"
+has "$sug" "| a/one | verify | missed 1 of the 2 probes it ran on |"
+has "$sug" "| b/two | s | step red-first passes 1 of 4 graded sessions (25%) |"
+has "$sug" "| (all) | grading | last ran 2020-01-02"
+has "$sug" "| b/two | verify-pr-claims | 2 refused calls began with \`cd\`"; has "$sug" "| a/one | verify-pr-claims | 1 refused call began with \`cd\`"
 
 it "this test runs in CI"
 grep -qF 'bash bin/probe-report.test.sh' "$here/../.github/workflows/test.yml" && ok || bad "not in test.yml"
