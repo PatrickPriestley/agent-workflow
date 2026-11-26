@@ -162,6 +162,30 @@ SIDC=cccccccc-2222-3333-4444-555555555555; TRC="$TMPROOT/skillread/$SIDC.jsonl"
 } | sed "s/$SID/$SIDC/" > "$TRC"
 archive --transcript "$TRC" > /dev/null
 assert_eq "change-record:change Bash $BLOB" "$(json "$AR/sessions/$SIDC.json" '" ".join(str(d["skills"][0][k]) for k in ("name","how","blob")) if d["skills"] else "none"')"
+it "effort: one model call per message id, however many lines and stops hold it, with its largest token counts"
+SIDE=eeeeeeee-2222-3333-4444-555555555555; mkdir -p "$TMPROOT/effort"; TRE="$TMPROOT/effort/$SIDE.jsonl"
+eff() { json "$AR/sessions/$SIDE.json" '" ".join(str(d["streams"]["main"]["effort"].get(k)) for k in ("calls","input","output","cache_read","tool_calls","text_chars","posted_chars","cost_usd","turns"))'; }
+{ line 2026-11-01T13:00:00.000Z '"type":"assistant","message":{"id":"m1","role":"assistant","usage":{"input_tokens":10,"output_tokens":3,"cache_read_input_tokens":100},"content":[{"type":"tool_use","id":"e1","name":"Bash","input":{"command":"ls"}}]}'
+  line 2026-11-01T13:00:01.000Z '"type":"assistant","message":{"id":"m1","role":"assistant","usage":{"input_tokens":10,"output_tokens":7,"cache_read_input_tokens":100},"content":[{"type":"text","text":"Hello"}]}'
+} | sed "s/$SID/$SIDE/" > "$TRE"
+archive --transcript "$TRE" > /dev/null
+assert_eq "1 10 7 100 1 5 0 None None" "$(eff)"
+it "effort: a message continued after a stop is not counted again; safe-output bodies, a result's cost, and calls with no id count"
+{ line 2026-11-01T13:00:02.000Z '"type":"assistant","message":{"id":"m1","role":"assistant","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100},"content":[{"type":"text","text":"!!"}]}'
+  line 2026-11-01T13:00:03.000Z '"type":"user","message":{"role":"user","content":"a long reply that is not the session'"'"'s own text"}'
+  line 2026-11-01T13:00:04.000Z '"type":"assistant","message":{"id":"m2","role":"assistant","usage":{"input_tokens":4,"output_tokens":2},"content":[{"type":"tool_use","id":"e2","name":"mcp__safeoutputs__add_comment","input":{"body":"abcdef"}}]}'
+  line 2026-11-01T13:00:05.000Z '"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"x"}]}'
+  printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.5,"num_turns":2,"duration_ms":900}\n'
+} | sed "s/$SID/$SIDE/" >> "$TRE"
+archive --transcript "$TRE" > /dev/null
+assert_eq "3 14 9 100 2 8 6 0.5 2" "$(eff)"
+it "effort: a count that is not a number is passed over, and a transcript archived whole again is counted afresh"
+line 2026-11-01T13:00:06.000Z '"type":"assistant","message":{"id":"m3","role":"assistant","usage":{"input_tokens":"lots","output_tokens":true},"content":"not a list"}' | sed "s/$SID/$SIDE/" >> "$TRE"
+archive --transcript "$TRE" > /dev/null
+assert_eq "4 14 9 100 2 8 6 0.5 2" "$(eff)"
+line 2026-11-01T14:00:00.000Z '"type":"assistant","message":{"id":"n1","role":"assistant","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"text","text":"ab"}]}' | sed "s/$SID/$SIDE/" > "$TRE"
+archive --transcript "$TRE" > /dev/null
+assert_eq "2 1 1 1 0 0 2 0 None None" "$(json "$AR/sessions/$SIDE.json" 'str(d["streams"]["main"]["generation"])')$(printf ' ')$(eff)"
 it "a dispatch child records its parent and source; its own id as parent is ignored"
 SID3=33333333-2222-3333-4444-555555555555; TR3="$PROJ/$SID3.jsonl"; part1 | sed "s/$SID/$SID3/" > "$TR3"
 (cd "$REPO" && AGENT_TRANSCRIPTS="$AR" AGENT_TRANSCRIPTS_PARENT=parent-9 "$T" archive --transcript "$TR3" < /dev/null)

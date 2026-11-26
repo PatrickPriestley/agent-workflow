@@ -523,6 +523,61 @@ class Lock:
             pass
 
 
+EFFORT_TOKENS = (("input_tokens", "input"), ("output_tokens", "output"), ("cache_read_input_tokens", "cache_read"),
+                 ("cache_creation_input_tokens", "cache_write"))
+
+
+def count_effort(lines, st):
+    """Fold the effort in new lines of one stream into its state: the model calls (one per message
+    id, however many lines hold its blocks), their tokens (each message's largest count: a line
+    written mid-stream can hold a smaller one), tool calls, the characters of text the assistant
+    wrote, the characters of what it posted through gh-aw's safe outputs, and the cost, turns and
+    duration a gh-aw run reported (its result line). A new generation of the stream starts its
+    state afresh, so nothing is counted twice."""
+    e = st.setdefault("effort", {"calls": 0, "input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
+                                  "tool_calls": 0, "text_chars": 0, "posted_chars": 0, "last": None})
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        if d.get("type") == "result":
+            for k, out in (("total_cost_usd", "cost_usd"), ("num_turns", "turns"), ("duration_ms", "duration_ms")):
+                v = d.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                    e[out] = v
+            continue
+        msg = d.get("message")
+        if d.get("type") != "assistant" or not isinstance(msg, dict):
+            continue
+        mid = msg.get("id") if isinstance(msg.get("id"), str) else None
+        last = e.get("last") if isinstance(e.get("last"), dict) else None
+        if mid is None or last is None or last.get("id") != mid:
+            e["calls"] += 1
+            last = {"id": mid}
+        usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
+        for k, out in EFFORT_TOKENS:
+            v = usage.get(k)
+            if isinstance(v, int) and not isinstance(v, bool) and v > last.get(out, 0):
+                e[out] += v - last.get(out, 0)
+                last[out] = v
+        e["last"] = last
+        content = msg.get("content")
+        for b in content if isinstance(content, list) else []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text" and isinstance(b.get("text"), str):
+                e["text_chars"] += len(b["text"])
+            elif b.get("type") == "tool_use":
+                e["tool_calls"] += 1
+                inp = b.get("input")
+                if str(b.get("name") or "").startswith("mcp__safeoutputs__") and isinstance(inp, dict) \
+                        and isinstance(inp.get("body"), str):
+                    e["posted_chars"] += len(inp["body"])
+
+
 def archive_session(ar, path, hook_cwd=None, imported=False):
     """Archive one transcript and its subagents; returns the number of new parts written."""
     if not os.path.isfile(path):
@@ -579,6 +634,7 @@ def archive_session(ar, path, hook_cwd=None, imported=False):
                 write_atomic(os.path.join(ar, "parts", sid, name, "g%d-%06d.jsonl" % (st["generation"], n)), new)
                 lines = new.splitlines()
                 scan(lines, entry, cwd, root)
+                count_effort(lines, st)
                 st.update(parts=n, lines=st["lines"] + len(lines), bytes=len(cut), sha256=hashlib.sha256(cut).hexdigest())
                 new_parts += 1
             entry["streams"][name] = st

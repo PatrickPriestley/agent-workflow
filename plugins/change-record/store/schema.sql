@@ -281,6 +281,13 @@ create policy probe_verdicts_insert on public.probe_verdicts for insert to anon 
 -- rather than adding one): pass, fail and not applicable, and when the skill was last graded;
 -- a grading whose session the store does not hold has no repository.
 --
+-- session_effort: per agent (a GitHub agent's sessions) or, for the others, per source (local,
+-- cloud, dispatch, eval), the sessions started since a time, how many carry effort counts
+-- (transcripts archive counts them per stream from 2026-11-26), and their sums over all streams,
+-- subagents included: model calls, input, output and cache tokens, tool calls, the characters of
+-- text the assistant wrote and of what it posted through gh-aw's safe outputs, and the cost a
+-- gh-aw run reported, with how many reported one. A count that is not a number is passed over.
+--
 -- The return types changed when the repository column came in, so the earlier versions are
 -- dropped first; running the file again drops and makes them again, with their grants.
 
@@ -296,6 +303,7 @@ drop function if exists public.agent_health(timestamptz, text);
 drop function if exists public.agent_refused_commands(timestamptz, integer, text);
 drop function if exists public.skill_usage(timestamptz, text);
 drop function if exists public.skill_grades(text);
+drop function if exists public.session_effort(timestamptz, text);
 
 create or replace function public.repo_key(repository text)
 returns text
@@ -440,10 +448,57 @@ as $$
   from latest l group by l.repository, l.skill, l.step order by l.repository, l.skill, l.step
 $$;
 
+create function public.session_effort(since timestamptz, repo text default null)
+returns table (repository text, who text, sessions bigint, measured bigint, calls numeric, input_tokens numeric,
+               output_tokens numeric, cache_read_tokens numeric, cache_write_tokens numeric, tool_calls numeric,
+               text_chars numeric, posted_chars numeric, cost_usd numeric, costed bigint)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with latest as (
+    select distinct on (s.session_id) s.session_id, s.entry,
+           min(s.created_at) over (partition by s.session_id) as began
+    from public.sessions s order by s.session_id, s.version desc, s.created_at desc
+  ), picked as (
+    select l.session_id, public.repo_key(l.entry ->> 'repository') as repository,
+           case when l.session_id ~ '^gh-aw-.+-[0-9]+-[0-9]+$'
+                then regexp_replace(l.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1')
+                else coalesce(l.entry ->> 'source', '?') end as who,
+           case when jsonb_typeof(l.entry -> 'streams') = 'object' then l.entry -> 'streams' else '{}'::jsonb end as streams
+    from latest l
+    where l.began >= since and (repo is null or public.repo_key(l.entry ->> 'repository') = public.repo_key(repo))
+  ), counts as (
+    select p.session_id, p.repository, p.who, f.k, f.v
+    from picked p, jsonb_each(p.streams) st(name, val),
+         jsonb_each(case when jsonb_typeof(st.val -> 'effort') = 'object' then st.val -> 'effort' else '{}'::jsonb end) f(k, v)
+    where jsonb_typeof(f.v) = 'number' and (f.v #>> '{}')::numeric >= 0
+  ), per as (
+    select p.session_id, p.repository, p.who,
+           exists (select 1 from jsonb_each(p.streams) st(name, val) where jsonb_typeof(st.val -> 'effort') = 'object') as measured,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'calls') as calls,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'input') as input_tokens,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'output') as output_tokens,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'cache_read') as cache_read,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'cache_write') as cache_write,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'tool_calls') as tool_calls,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'text_chars') as text_chars,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'posted_chars') as posted_chars,
+           (select sum((c.v #>> '{}')::numeric) from counts c where c.session_id = p.session_id and c.k = 'cost_usd') as cost_usd
+    from picked p
+  )
+  select r.repository, r.who, count(*), count(*) filter (where r.measured),
+         coalesce(sum(r.calls), 0), coalesce(sum(r.input_tokens), 0), coalesce(sum(r.output_tokens), 0),
+         coalesce(sum(r.cache_read), 0), coalesce(sum(r.cache_write), 0), coalesce(sum(r.tool_calls), 0),
+         coalesce(sum(r.text_chars), 0), coalesce(sum(r.posted_chars), 0),
+         sum(r.cost_usd), count(*) filter (where r.cost_usd is not null)
+  from per r group by r.repository, r.who order by r.repository, r.who
+$$;
+
 revoke all on function public.repo_key(text), public.probe_report_loops(text), public.probe_report_probes(integer, text),
   public.agent_health(timestamptz, text), public.agent_refused_commands(timestamptz, integer, text),
-  public.skill_usage(timestamptz, text), public.skill_grades(text) from public, anon, authenticated;
+  public.skill_usage(timestamptz, text), public.skill_grades(text), public.session_effort(timestamptz, text)
+  from public, anon, authenticated;
 grant execute on function public.probe_report_loops(text), public.probe_report_probes(integer, text),
   public.agent_health(timestamptz, text), public.agent_refused_commands(timestamptz, integer, text),
-  public.skill_usage(timestamptz, text), public.skill_grades(text) to anon, service_role;
+  public.skill_usage(timestamptz, text), public.skill_grades(text), public.session_effort(timestamptz, text)
+  to anon, service_role;
 grant execute on function public.repo_key(text) to service_role;

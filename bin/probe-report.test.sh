@@ -14,14 +14,18 @@ assert_eq() { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
 has() { printf '%s' "$1" | grep -qF -- "$2" && ok || bad "missing [$2] in: $(printf '%s' "$1" | head -c 400)"; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/probe-report.XXXXXX")"
 cat > "$T/server.py" <<'PY'
-import http.server, json, sys
+import datetime as dt, http.server, json, sys
 log, answers = sys.argv[1], sys.argv[2]
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
         with open(log, "a") as f:
             f.write(json.dumps({"path": self.path, "apikey": self.headers.get("apikey"), "body": json.loads(body or "null")}) + "\n")
-        a = json.load(open(answers)).get(self.path, {"status": 404, "body": []})
+        known, b = json.load(open(answers)), json.loads(body or "null")
+        # an answer for PATH@DAYS is given when the body's since is DAYS days back
+        since = b.get("since") if isinstance(b, dict) else None
+        age = round((dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(since)).total_seconds() / 86400) if since else None
+        a = known.get(f"{self.path}@{age}") or known.get(self.path, {"status": 404, "body": []})
         self.send_response(a["status"])
         if a["status"] in (301, 302, 307, 308):
             self.send_header("Location", "http://127.0.0.1:%d/redirected" % self.server.server_port)
@@ -48,13 +52,20 @@ REFUSED='[{"agent": "ci-diagnosis", "tool": "Bash", "command": "bash bin/probe-s
           {"agent": "verify-pr-claims", "tool": "Bash", "command": "source <(grep `x` bin/a|b)", "times": 2}]'
 USAGE='[{"skill": "change-record:change", "plugin": "change-record", "sessions": 1, "sessions_all": 6, "local": 2, "cloud": 4, "agent": 0, "dispatch": 0},
         {"skill": "claude-api", "plugin": null, "sessions": 0, "sessions_all": 1, "local": 0, "cloud": 1, "agent": 0, "dispatch": 0}]'
+EFFORT='[{"who": "ci-diagnosis", "sessions": 5, "measured": 4, "calls": 40, "input_tokens": 40, "output_tokens": 8000, "cache_read_tokens": 360, "cache_write_tokens": 0, "tool_calls": 60, "text_chars": 4000, "posted_chars": 6000, "cost_usd": 2.0, "costed": 4},
+        {"who": "local", "sessions": 2, "measured": 2, "calls": 30, "input_tokens": 10, "output_tokens": 3000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 20, "text_chars": 900, "posted_chars": 0, "cost_usd": null, "costed": 0},
+        {"who": "triage", "sessions": 1, "measured": 1, "calls": 1, "input_tokens": 1, "output_tokens": 1, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 1, "text_chars": 1, "posted_chars": 1, "cost_usd": 0.1, "costed": 1},
+        {"who": "verify-pr-claims", "sessions": 2, "measured": 0, "calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 0, "text_chars": 0, "posted_chars": 0, "cost_usd": null, "costed": 0}]'
+WEEK='[]'; FIVE='[]'
 GRADES='[{"skill": "change-record:change", "step": "red-first", "sessions": 9, "pass": 5, "fail": 3, "not_applicable": 1, "last_graded": "2020-01-02T00:00:00+00:00"},
          {"skill": "change-record:change", "step": "tier-declared", "sessions": 9, "pass": 9, "fail": 0, "not_applicable": 0, "last_graded": "2020-01-02T00:00:00+00:00"}]'
 answers() {  # LOOPS_STATUS PROBES_STATUS [HEALTH_STATUS]
   printf '{"/rest/v1/rpc/probe_report_loops": {"status": %s, "body": %s}, "/rest/v1/rpc/probe_report_probes": {"status": %s, "body": %s},
            "/rest/v1/rpc/agent_health": {"status": %s, "body": %s}, "/rest/v1/rpc/agent_refused_commands": {"status": 200, "body": %s},
-           "/rest/v1/rpc/skill_usage": {"status": 200, "body": %s}, "/rest/v1/rpc/skill_grades": {"status": 200, "body": %s}}' \
-    "$1" "$LOOPS" "$2" "$PROBES" "${3:-200}" "$HEALTH" "$REFUSED" "$USAGE" "$GRADES" > "$T/answers.json"
+           "/rest/v1/rpc/skill_usage": {"status": 200, "body": %s}, "/rest/v1/rpc/skill_grades": {"status": 200, "body": %s},
+           "/rest/v1/rpc/session_effort": {"status": 200, "body": %s}, "/rest/v1/rpc/session_effort@7": {"status": 200, "body": %s},
+           "/rest/v1/rpc/session_effort@35": {"status": 200, "body": %s}}' \
+    "$1" "$LOOPS" "$2" "$PROBES" "${3:-200}" "$HEALTH" "$REFUSED" "$USAGE" "$GRADES" "$EFFORT" "$WEEK" "$FIVE" > "$T/answers.json"
 }
 answers 200 200
 python3 -I "$T/server.py" "$T/log" "$T/answers.json" & srv=$!
@@ -68,9 +79,9 @@ report() {  # args... (with --repo o/r unless ALL=1) -> $rc, stdout in $T/out, s
     "${PR[@]}" ${only[@]+"${only[@]}"} "$@" > "$T/out" 2> "$T/err"; rc=$?
 }
 
-it "it calls the six report functions with the insert key, and nothing else"
+it "it calls the seven report functions with the insert key, and nothing else"
 report; assert_eq 0 "$rc"
-assert_eq "/rest/v1/rpc/probe_report_loops /rest/v1/rpc/probe_report_probes /rest/v1/rpc/agent_health /rest/v1/rpc/agent_refused_commands /rest/v1/rpc/skill_usage /rest/v1/rpc/skill_grades" "$(python3 -I -c 'import json,sys; print(" ".join(json.loads(l)["path"] for l in open(sys.argv[1])))' "$T/log")"
+assert_eq "/rest/v1/rpc/probe_report_loops /rest/v1/rpc/probe_report_probes /rest/v1/rpc/agent_health /rest/v1/rpc/agent_refused_commands /rest/v1/rpc/skill_usage /rest/v1/rpc/skill_grades /rest/v1/rpc/session_effort /rest/v1/rpc/session_effort /rest/v1/rpc/session_effort" "$(python3 -I -c 'import json,sys; print(" ".join(json.loads(l)["path"] for l in open(sys.argv[1])))' "$T/log")"
 assert_eq "sb_publishable_test" "$(python3 -I -c 'import json,sys; print(" ".join(sorted({json.loads(l)["apikey"] for l in open(sys.argv[1])})))' "$T/log")"
 assert_eq '{"max_rows": 12, "repo": "o/r"}' "$(python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1])][1]["body"]))' "$T/log")"
 it "the loop table gives each loop's catches of the probes it ran on, worst first, and says which did not run"
@@ -243,6 +254,43 @@ has "$sug" "| a/one | verify | missed 1 of the 2 probes it ran on |"
 has "$sug" "| b/two | s | step red-first passes 1 of 4 graded sessions (25%) |"
 has "$sug" "| (all) | grading | last ran 2020-01-02"
 has "$sug" "| b/two | verify-pr-claims | 2 refused calls began with \`cd\`"; has "$sug" "| a/one | verify-pr-claims | 1 refused call began with \`cd\`"
+
+it "cost and effort: per run, over the sessions with counts, agents first; a source has no cost"
+answers 200 200; report --days 30; o="$(cat "$T/out")"   # 30: the 7 and 35 day answers are the trend's
+has "$o" "## Cost and effort, last 30 days"
+has "$o" "| Agent or source | Runs | Cost | Model calls | Output tokens | Input tokens | Tool calls | Written | Posted |"
+has "$o" "| ci-diagnosis | 4 of 5 | \$0.50 | 10.0 | 2,000 | 100 | 15.0 | 1,000 | 1,500 |"
+has "$o" "| local | 2 | - | 15.0 | 1,500 | 5 | 10.0 | 450 | 0 |"
+printf '%s' "$o" | grep -q '^| verify-pr-claims | 0' && bad "listed an agent with no counted run" || ok
+lci="$(printf '%s\n' "$o" | grep -n '^| ci-diagnosis | 4 of 5' | cut -d: -f1)"; llo="$(printf '%s\n' "$o" | grep -n '^| local | 2 |' | cut -d: -f1)"
+ltr="$(printf '%s\n' "$o" | grep -n '^| triage | 1 |' | cut -d: -f1)"
+[ -n "$lci" ] && [ -n "$llo" ] && [ -n "$ltr" ] && [ "$lci" -lt "$llo" ] && [ "$ltr" -lt "$llo" ] && ok || bad "agents not first"
+python3 -I -c '
+import json, sys
+calls = [json.loads(l) for l in open(sys.argv[1])]
+e = [c["body"] for c in calls if c["path"] == "/rest/v1/rpc/session_effort"]
+assert len(e) == 3 and all(b["repo"] == "o/r" for b in e) and e[0]["since"] == calls[2]["body"]["since"], e
+' "$T/log" && ok || bad "$(cat "$T/log")"
+it "cost and effort: none counted yet is said plainly"
+EFFORT='[]'; answers 200 200; report --days 30; has "$(cat "$T/out")" "No session with effort counts yet"
+it "suggested changes: an agent whose cost or posting per run rose by half, the last 7 days against the 28 before"
+EFFORT='[]'
+WEEK='[{"who": "ci-diagnosis", "sessions": 3, "measured": 3, "calls": 30, "input_tokens": 0, "output_tokens": 3000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 30, "text_chars": 0, "posted_chars": 3000, "cost_usd": 3.0, "costed": 3},
+       {"who": "verify-pr-claims", "sessions": 3, "measured": 3, "calls": 30, "input_tokens": 0, "output_tokens": 3000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 30, "text_chars": 0, "posted_chars": 300, "cost_usd": null, "costed": 0},
+       {"who": "local", "sessions": 3, "measured": 3, "calls": 30, "input_tokens": 0, "output_tokens": 9000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 30, "text_chars": 0, "posted_chars": 0, "cost_usd": null, "costed": 0},
+       {"who": "property-scout", "sessions": 2, "measured": 2, "calls": 30, "input_tokens": 0, "output_tokens": 9000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 30, "text_chars": 0, "posted_chars": 0, "cost_usd": 9.0, "costed": 2}]'
+FIVE='[{"who": "ci-diagnosis", "sessions": 7, "measured": 7, "calls": 50, "input_tokens": 0, "output_tokens": 7000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 50, "text_chars": 0, "posted_chars": 5000, "cost_usd": 5.0, "costed": 7},
+       {"who": "verify-pr-claims", "sessions": 7, "measured": 7, "calls": 50, "input_tokens": 0, "output_tokens": 5000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 50, "text_chars": 0, "posted_chars": 700, "cost_usd": null, "costed": 0},
+       {"who": "local", "sessions": 7, "measured": 7, "calls": 50, "input_tokens": 0, "output_tokens": 10000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 50, "text_chars": 0, "posted_chars": 0, "cost_usd": null, "costed": 0},
+       {"who": "property-scout", "sessions": 6, "measured": 6, "calls": 50, "input_tokens": 0, "output_tokens": 10000, "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": 50, "text_chars": 0, "posted_chars": 0, "cost_usd": 10.0, "costed": 6}]'
+answers 200 200; report; sug="$(sed -n '/^## Suggested changes/,$p' "$T/out")"
+has "$sug" "| ci-diagnosis | cost per run rose from \$0.50 to \$1.00, the last 7 days against the 28 before |"
+has "$sug" "| ci-diagnosis | posted characters per run rose from 500 to 1,000, the last 7 days against the 28 before |"
+has "$sug" "how long its comment should be"
+has "$sug" "| verify-pr-claims | output tokens per run rose from 500 to 1,000"
+printf '%s' "$sug" | grep -q '^| local |' && bad "a source is not an agent to change" || ok
+printf '%s' "$sug" | grep -q '^| property-scout |' && bad "flagged an agent with fewer than 3 runs this week" || ok
+WEEK='[]'; FIVE='[]'; answers 200 200
 
 it "this test runs in CI"
 grep -qF 'bash bin/probe-report.test.sh' "$here/../.github/workflows/test.yml" && ok || bad "not in test.yml"
