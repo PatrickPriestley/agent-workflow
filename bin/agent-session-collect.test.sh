@@ -29,12 +29,12 @@ collect "$fx" "${std[@]}" --out "$T/s"; assert_eq 0 "$rc"
 main="$T/s/gh-aw-verify-pr-claims-4242-2.jsonl"
 assert_eq "$main" "$(cat "$T/out.txt")"
 [ -f "$main" ] && ok || bad "no $main"
-it "only user and assistant lines are kept; system, stream events, results and plain text are not"
-assert_eq "user assistant user assistant assistant user assistant" "$(q 'import json,sys; print(" ".join(json.loads(l)["type"] for l in open(sys.argv[1])))' "$main" 2>/dev/null)"
+it "only user and assistant lines are kept, and the run's result, last; system, stream events and plain text are not"
+assert_eq "user assistant user assistant assistant user assistant result" "$(q 'import json,sys; print(" ".join(json.loads(l)["type"] for l in open(sys.argv[1])))' "$main" 2>/dev/null)"
 grep -q 'skipped 1 line that is not JSON' "$T/err.txt" && ok || bad "$(cat "$T/err.txt")"
 { cat "$fx"; printf '%s\n' '{"type":"summary","message":{"role":"user","content":"a summary"},"uuid":"u-s","session_id":"x"}'; } > "$T/other.log"
 collect "$T/other.log" "${std[@]}" --out "$T/o"
-assert_eq "user assistant user assistant assistant user assistant" "$(q 'import json,sys; print(" ".join(json.loads(l)["type"] for l in open(sys.argv[1])))' "$T/o/gh-aw-verify-pr-claims-4242-2.jsonl" 2>/dev/null)"
+assert_eq "user assistant user assistant assistant user assistant result" "$(q 'import json,sys; print(" ".join(json.loads(l)["type"] for l in open(sys.argv[1])))' "$T/o/gh-aw-verify-pr-claims-4242-2.jsonl" 2>/dev/null)"
 it "the prompt comes first, as the user's message, at the first line's time"
 q 'import json,sys; d=json.loads(open(sys.argv[1]).readline()); assert d["message"]=={"role":"user","content":"Check the claims.\n"}, d; assert d["timestamp"]=="2026-11-25T12:39:00.974Z", d' "$main" && ok || bad "first line"
 it "each line names the session, the checkout, gh-aw as entrypoint, and the line before it"
@@ -92,6 +92,21 @@ assert e["source"]=="agent" and e["repository"]=="github.com/owner/repo", (e["so
 assert sorted(e["streams"])==["main","subagents/agent-toolu_01Px3oHxCRB1L5XsnhoSd4J5"], sorted(e["streams"])
 assert e["first_timestamp"]=="2026-11-25T12:39:00.974Z" and e["last_timestamp"]=="2026-11-25T12:39:05.917Z", e
 ' "$e" && ok || bad "entry: $(cat "$T/arch.err") $(head -c 600 "$e" 2>/dev/null)"
+it "the result line keeps only what the run cost"
+assert_eq '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.00584974,"num_turns":3,"duration_ms":7359}' "$(tail -1 "$main" | q 'import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps({k: d[k] for k in ("type","subtype","is_error","total_cost_usd","num_turns","duration_ms")}, separators=(",",":")))')"
+# the run's final text (its "result" field) is not kept; the line is chained like the others
+assert_eq "sessionId uuid" "$(tail -1 "$main" | q 'import json,sys; d=json.loads(sys.stdin.read()); print(" ".join(k for k in ("result","sessionId","uuid") if k in d) or "none")')"
+it "the archive counts the run's effort per stream: one call per message, its tokens, tool calls, text, and the cost it reported"
+q '
+import json,sys; s=json.load(open(sys.argv[1]))["streams"]
+m, sub = s["main"]["effort"], s["subagents/agent-toolu_01Px3oHxCRB1L5XsnhoSd4J5"]["effort"]
+got = {k: m[k] for k in ("calls","input","output","cache_read","cache_write","tool_calls","posted_chars","cost_usd","turns","duration_ms")}
+want = {"calls": 3, "input": 6, "output": 29, "cache_read": 66272, "cache_write": 12989, "tool_calls": 2, "posted_chars": 0,
+        "cost_usd": 0.00584974, "turns": 3, "duration_ms": 7359}
+assert got == want, got
+assert m["text_chars"] > 0, m
+assert (sub["calls"], sub["output"], sub["tool_calls"]) == (1, 17, 1) and "cost_usd" not in sub, sub
+' "$e" && ok || bad "effort: $(q 'import json,sys; print(json.dumps({k: v.get("effort") for k, v in json.load(open(sys.argv[1]))["streams"].items()}))' "$e" 2>&1 | head -c 600)"
 it "the redaction reads it, keeping the agent's tool call"
 "$root/plugins/change-record/bin/transcripts" redact < "$main" | grep -q 'cat a.txt' && ok || bad "redact lost the tool call"
 

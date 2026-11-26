@@ -445,6 +445,30 @@ out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
 assert_eq "patrickpriestley/meal-plan|verify|1|0|1" "$(as_role anon "select string_agg(concat_ws('|', repository, loop, probes, caught, missed), ';') from public.probe_report_loops('patrickpriestley/meal-plan')")"
 has "$(as_role authenticated "select count(*) from public.skill_grades()")" "permission denied for function skill_grades"
 
+# ---- session_effort: cost, effort and verbosity per agent or source ----
+ef="insert into public.sessions (session_id, row_id, sender, version, entry, created_at) values
+ ('gh-aw-ci-diagnosis-70-1', $(h64 a), 's', 1, '{\"source\": \"agent\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"effort\": {\"calls\": 3, \"input\": 6, \"output\": 29, \"cache_read\": 100, \"cache_write\": 50, \"tool_calls\": 2, \"text_chars\": 40, \"posted_chars\": 300, \"cost_usd\": 0.25, \"turns\": 3, \"last\": {\"id\": \"m\"}}}, \"subagents/agent-x\": {\"effort\": {\"calls\": 1, \"output\": 17, \"tool_calls\": 1}}}}', now() - interval '1 day'),
+ ('gh-aw-ci-diagnosis-71-1', $(h64 a), 's', 1, '{\"source\": \"agent\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"effort\": {\"calls\": 2, \"output\": 11, \"cost_usd\": 0.5, \"tool_calls\": \"many\"}}}}', now() - interval '2 days'),
+ ('gh-aw-ci-diagnosis-72-1', $(h64 a), 's', 1, '{\"source\": \"agent\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"generation\": 1}}}', now() - interval '3 days'),
+ ('eff-local-1', $(h64 a), 's', 1, '{\"source\": \"local\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"effort\": {\"calls\": 5, \"output\": 100, \"text_chars\": 900}}}}', now() - interval '1 day'),
+ ('eff-local-1', $(h64 b), 's', 2, '{\"source\": \"local\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"effort\": {\"calls\": 7, \"output\": 140, \"text_chars\": 1000}}}}', now() - interval '1 day'),
+ ('gh-aw-ci-diagnosis-60-1', $(h64 a), 's', 1, '{\"source\": \"agent\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"effort\": {\"calls\": 90, \"cost_usd\": 9}}}}', now() - interval '40 days')"
+it "effort: the sessions go in"
+ef="$(printf '%s' "$ef" | tr '\n' ' ')"; assert_eq "INSERT 0 6" "$(sql "$ef")"
+q_eff="select string_agg(concat_ws('|', repository, who, sessions, measured, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, tool_calls, text_chars, posted_chars, cost_usd, costed), ';' order by who) from public.session_effort(now() - interval '7 days', 'PatrickPriestley/Effort')"
+it "effort: per agent its sessions since, those with counts, and sums over every stream, subagents included"
+assert_eq "patrickpriestley/effort|ci-diagnosis|3|2|6|6|57|100|50|3|40|300|0.75|2;patrickpriestley/effort|local|1|1|7|0|140|0|0|0|1000|0|0" "$(as_role anon "$q_eff")"
+it "effort: a session's latest index row counts; a count that is not a number, and a session before since, do not"
+assert_eq "1" "$(as_role anon "select count(*) from public.session_effort(now() - interval '7 days', 'patrickpriestley/effort') where who = 'local' and calls = 7")"
+assert_eq "4" "$(as_role anon "select sessions from public.session_effort(now() - interval '60 days', 'patrickpriestley/effort') where who = 'ci-diagnosis'")"
+it "effort: other repositories are not counted, and the key may call it but not read the sessions"
+assert_eq "0" "$(as_role anon "select count(*) from public.session_effort(now() - interval '7 days', 'nobody/nothing')")"
+has "$(as_role anon "select count(*) from public.sessions")" "permission denied"
+has "$(as_role authenticated "select count(*) from public.session_effort(now())")" "permission denied for function session_effort"
+it "effort: schema.sql runs again with it, and it still answers"
+out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
+assert_eq "patrickpriestley/effort|ci-diagnosis|3|2|6|6|57|100|50|3|40|300|0.75|2;patrickpriestley/effort|local|1|1|7|0|140|0|0|0|1000|0|0" "$(as_role anon "$q_eff")"
+
 echo
 echo "store schema: passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

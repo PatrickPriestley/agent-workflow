@@ -21,6 +21,11 @@ Prints the report:
   to run on, and those left to a judge; then the latest N probes (default 12, at most 100).
 - Agent health: per agent, its runs, tool calls, the calls its allowlist refused (the highest
   share first) and other tool errors; then the commands refused most often, by first line.
+- Cost and effort: per agent, and per kind of session for the others, what a run took on
+  average (session_effort): its cost where the run reported one, model calls, output tokens,
+  input tokens (cache included), tool calls, and how much it wrote to people: its own text, and
+  what it posted through safe outputs (verbosity). Only sessions archived with effort counts
+  (from 2026-11-26) are averaged.
 - Skills and plugins: per skill, the sessions that used it in the last D days and in all, by
   where they ran; then its grades per step, from `transcripts grade`, and when it was last
   graded (grading runs by hand, so the date says how current the grades are).
@@ -30,7 +35,9 @@ Prints the report:
   calls, grouped by what was tried (a compound command, cd, an environment variable set in
   the command, the safeoutputs command, a test file not yet on main's allowlist, a bin/ tool not
   on the agent's allowlist, a script the agent wrote, or a program not on its allowlist), each
-  with one candidate change. Candidates, not decisions.
+  with one candidate change; and an agent whose cost per run (output tokens where no cost was
+  reported) or whose posting per run rose by half or more, the last 7 days against the 28
+  before, with at least 3 measured runs in each. Candidates, not decisions.
 
 The report is meant for a run summary, not an issue or a comment: the review agents read this
 repository's issues and pull requests, and must not learn which are probes.
@@ -120,6 +127,65 @@ def health(rows, refused, days):
     return out
 
 
+SOURCES = ("local", "cloud", "dispatch", "eval", "agent", "?")
+
+
+def per_run(r, k, n="measured"):
+    return r[k] / r[n] if r.get(n) else None
+
+
+def num(x, digits=0):
+    return "-" if x is None else f"{x:,.{digits}f}"
+
+
+def effort(rows, days):
+    out = ["", f"## Cost and effort, last {days} days", ""]
+    rows = [r for r in rows if r.get("measured")]
+    if not rows:
+        return out + ["No session with effort counts yet: they are counted for sessions archived from 2026-11-26."]
+    out += ["Per run, averaged over the sessions with effort counts. Cost is what a GitHub agent's run reported; "
+            "input tokens include the cache. Written is the session's own text, posted what it put on GitHub "
+            "through safe outputs (characters).", ""]
+    out += head(["Agent or source", "Runs", "Cost", "Model calls", "Output tokens", "Input tokens", "Tool calls",
+                 "Written", "Posted"])
+    agents_first = sorted(rows, key=lambda r: (r["who"] in SOURCES, r.get("repository") or "", r["who"]))
+    for r in agents_first:
+        cost = per_run(r, "cost_usd", "costed")
+        inp = (r["input_tokens"] + r["cache_read_tokens"] + r["cache_write_tokens"]) / r["measured"]
+        runs = f"{r['measured']}" + (f" of {r['sessions']}" if r["sessions"] != r["measured"] else "")
+        out.append(row(r, f"{cell(r['who'])} | {runs} | {'-' if cost is None else f'${cost:.2f}'} | "
+                          f"{num(per_run(r, 'calls'), 1)} | {num(per_run(r, 'output_tokens'))} | {num(inp)} | "
+                          f"{num(per_run(r, 'tool_calls'), 1)} | {num(per_run(r, 'text_chars'))} | {num(per_run(r, 'posted_chars'))} |"))
+    return out
+
+
+def effort_trend(recent, wide):
+    """Per agent: (repository, agent, what, before, now) for a cost or posting per run up by half or more."""
+    before = {}
+    for r in wide:
+        before[(r.get("repository"), r["who"])] = dict(r)
+    rows = []
+    for r in recent:
+        key = (r.get("repository"), r["who"])
+        if r["who"] in SOURCES or key not in before:
+            continue
+        b = before[key]
+        prior = {k: b[k] - r[k] for k in ("measured", "costed", "output_tokens", "posted_chars")}
+        prior["cost_usd"] = (b["cost_usd"] or 0) - (r["cost_usd"] or 0)
+        if r["measured"] < 3 or prior["measured"] < 3:
+            continue
+        if r["costed"] >= 3 and prior["costed"] >= 3:
+            what, now, was = "cost per run", r["cost_usd"] / r["costed"], prior["cost_usd"] / prior["costed"]
+        else:
+            what, now, was = "output tokens per run", r["output_tokens"] / r["measured"], prior["output_tokens"] / prior["measured"]
+        if was > 0 and now >= 1.5 * was:
+            rows.append((r, what, was, now))
+        p_now, p_was = r["posted_chars"] / r["measured"], prior["posted_chars"] / prior["measured"]
+        if p_was > 0 and p_now >= 1.5 * p_was:
+            rows.append((r, "posted characters per run", p_was, p_now))
+    return rows
+
+
 def skills(usage, grades, days):
     out = ["", "## Skills and plugins", "", "### Use", ""]
     if not usage:
@@ -180,7 +246,7 @@ def tried(command):
     return "program", (c.split() or ["?"])[0]
 
 
-def suggestions(loops, refused, grades, now):
+def suggestions(loops, refused, grades, now, trend=()):
     out = ["", "## Suggested changes", "",
            "Worked out from the tables above with fixed rules, no model involved. Each is a candidate to look at, not a decision.", ""]
     rows = []  # (the row it comes from, where, what, change)
@@ -217,6 +283,13 @@ def suggestions(loops, refused, grades, now):
         calls = f"{g['n']} refused call" + ("s" if g["n"] != 1 else "")
         rows.append(({"repository": where}, agent, what.format(n=calls, prog=cell(prog or "")) + f", such as {code(g['example'])}",
                      change.format(prog=cell(prog or ""))))
+    for r, what, was, now_ in trend:
+        fmt = (lambda x: f"${x:.2f}") if what == "cost per run" else (lambda x: f"{x:,.0f}")
+        rows.append((r, r["who"], f"{what} rose from {fmt(was)} to {fmt(now_)}, the last 7 days against the 28 before",
+                     "Read its latest sessions against older ones: what it now does more of (model calls, tool calls, "
+                     "what it posts), and whether its prompt or its inputs changed." if what != "posted characters per run" else
+                     "Read what it posted lately: if it says more than the reader needs, tell its prompt how long its "
+                     "comment should be."))
     if not rows:
         return out + ["Nothing to suggest this week."]
     out += head(["Where", "What the data shows", "Candidate change"])
@@ -290,8 +363,12 @@ def main(argv):
         refused = call(url, key, "agent_refused_commands", {"since": since, "max_rows": 50, **only})
         usage = call(url, key, "skill_usage", {"since": since, **only})
         grades = call(url, key, "skill_grades", dict(only))
-        text = render(loops, probes, health(agents, refused[:10], days) + skills(usage, grades, days)
-                      + suggestions(loops, refused, grades, dt.datetime.now(dt.timezone.utc)), name)
+        spent = call(url, key, "session_effort", {"since": since, **only})
+        now = dt.datetime.now(dt.timezone.utc)
+        week = call(url, key, "session_effort", {"since": (now - dt.timedelta(days=7)).isoformat(timespec="seconds"), **only})
+        five = call(url, key, "session_effort", {"since": (now - dt.timedelta(days=35)).isoformat(timespec="seconds"), **only})
+        text = render(loops, probes, health(agents, refused[:10], days) + effort(spent, days) + skills(usage, grades, days)
+                      + suggestions(loops, refused, grades, now, effort_trend(week, five)), name)
     except Store as e:
         print(f"probe-report: {e}", file=sys.stderr)
         return 1

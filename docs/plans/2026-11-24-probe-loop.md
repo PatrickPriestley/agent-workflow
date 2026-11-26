@@ -188,7 +188,12 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
    it was refused at least twice in 28 days (`bin/refusal-improve`), rebuilds the lock files,
    and opens one pull request with `PROBE_TOKEN` for a person to merge. It never edits an
    allowlist: those candidates are listed for a person. Each rule on main is measured, its
-   refusals per run in the 14 days before it landed against the time since. Then the
+   refusals per run in the 14 days before it landed against the time since. Cost, effort
+   and verbosity (2026-11-26): `transcripts archive` counts each session's model calls, tokens,
+   tool calls, the text it wrote and what it posted through safe outputs, and the cost a gh-aw
+   run reported (the collector keeps its result line); `session_effort` sums them per agent
+   or source, and the weekly report shows them per run and suggests a look at an agent whose
+   cost or posting per run rose by half. Then the
    improver, built on `transcripts propose` and `compare` (above): first one target, the
    verify agent's prompt, with a replay case from a probe it missed; then the other agents,
    Open Code Review's rules and other skills, each with its own replay case. Fed by probe
