@@ -93,6 +93,8 @@ tools:
     - "bash bin/probe-sweep.test.sh"
     - "bash bin/property-scout-workflow.test.sh"
     - "bash bin/red-check-workflow.test.sh"
+    - "bash bin/refusal-improve-workflow.test.sh"
+    - "bash bin/refusal-improve.test.sh"
     - "bash bin/reusable-workflows.test.sh"
     - "bash bin/verify-workflow.test.sh"
     - "bash install.test.sh"

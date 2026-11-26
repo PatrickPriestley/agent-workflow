@@ -183,6 +183,12 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
       maintenance job is not installed). `--dry-run` says what it would do.
    e. The `feedback` table and its job.
 3. The review agents' sessions collected into the store (done: `agent-sessions.yml`). The
+   refusal improver, the improver's first step with no model (2026-11-26):
+   `refusal-improve.yml`, weekly, adds a fixed rule to an agent's prompt for each kind of call
+   it was refused at least twice in 28 days (`bin/refusal-improve`), rebuilds the lock files,
+   and opens one pull request with `PROBE_TOKEN` for a person to merge. It never edits an
+   allowlist: those candidates are listed for a person. Each rule on main is measured, its
+   refusals per run in the 14 days before it landed against the time since. Then the
    improver, built on `transcripts propose` and `compare` (above): first one target, the
    verify agent's prompt, with a replay case from a probe it missed; then the other agents,
    Open Code Review's rules and other skills, each with its own replay case. Fed by probe
