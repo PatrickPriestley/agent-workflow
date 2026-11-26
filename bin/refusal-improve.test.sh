@@ -15,9 +15,10 @@ has() { printf '%s' "$1" | grep -qF -- "$2" && ok || bad "missing [$2] in: $(pri
 lacks() { printf '%s' "$1" | grep -qF -- "$2" && bad "found [$2]" || ok; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/refusal-improve.XXXXXX")"
 cat > "$T/server.py" <<'PY'
-# Answers agent_refused_commands and agent_health from events.json: {"refused": [{agent, command,
-# at}], "runs": [{agent, at}]}, counting the events at or after the body's since, as the store's
-# functions count sessions started since then. Logs each call's body.
+# Answers agent_refused_commands, agent_health and (when events.json has "per_call") agent_refused_calls
+# from events.json: {"refused": [{agent, command, at, session}], "runs": [{agent, at}]}, counting the
+# events at or after the body's since, as the store's functions count sessions started since then.
+# Logs each call's body.
 import http.server, json, sys
 log, events = sys.argv[1], sys.argv[2]
 class H(http.server.BaseHTTPRequestHandler):
@@ -29,7 +30,11 @@ class H(http.server.BaseHTTPRequestHandler):
         if ev.get("fail"):
             self.send_response(500); self.end_headers(); self.wfile.write(b'{"message": "no"}'); return
         since = body.get("since", "")
-        if self.path.endswith("/agent_refused_commands"):
+        if self.path.endswith("/agent_refused_calls") and ev.get("per_call"):
+            out = [{"repository": "o/r", "agent": e["agent"], "session_id": e.get("session"), "tool": "Bash",
+                    "command": e["command"], "at": e["at"]} for e in ev["refused"] if e["at"] >= since]
+            out = sorted(out, key=lambda r: r["at"], reverse=True)[:body.get("max_rows", 500)]
+        elif self.path.endswith("/agent_refused_commands"):
             counts = {}
             for e in ev["refused"]:
                 if e["at"] >= since:
@@ -61,7 +66,8 @@ events() {  # python expressions building the events file: R(agent, command, at)
   python3 -I - "$T/events.json" "$@" <<'PY'
 import json, sys
 ev = {"refused": [], "runs": []}
-R = lambda a, c, at: ev["refused"].append({"agent": a, "command": c, "at": at})
+R = lambda a, c, at, s=None: ev["refused"].append({"agent": a, "command": c, "at": at, "session": s})
+P = lambda: ev.update(per_call=True)  # the store has agent_refused_calls
 N = lambda a, at: ev["runs"].append({"agent": a, "at": at})
 for x in sys.argv[2:]:
     eval(x)
@@ -99,16 +105,20 @@ it "without --write: it says which sources it would change, and changes none"
 repo; standard; before="$(cat "$R/$CD")"; improve; assert_eq 0 "$rc"
 assert_eq "$CD" "$(cat "$T/out")"; assert_eq "$before" "$(cat "$R/$CD")"
 body="$(cat "$T/body.md")"
+has "$body" "This adds 1 rule to the prompt of ci-diagnosis, and lists 1 allowlist candidate for you to decide."
 has "$body" "## Rules added to the agents' prompts"
-has "$body" "| ci-diagnosis | 2 | \`cat a \\| head\` | Every command in a call must be one of your assigned commands"
+has "$body" "### Compound commands"
+has "$body" "> Every command in a call must be one of your assigned commands"
+has "$body" "- **ci-diagnosis**: refused 2 times, such as \`cat a \\| head\`; \`ls x && cat y\`"
+assert_eq 1 "$(grep -c 'Every command in a call' "$T/body.md")"
 it "it reads the repository's refusals of the last 28 days, with the publishable key, and calls no model"
 python3 -I -c '
 import json, sys
 calls = [json.loads(l) for l in open(sys.argv[1])]
 first = calls[0]
-assert first["path"] == "/rest/v1/rpc/agent_refused_commands", first
+assert first["path"] == "/rest/v1/rpc/agent_refused_calls", first
 assert first["body"]["repo"] == "o/r" and first["body"]["since"].startswith("2026-10-29"), first
-assert all(c["path"] in ("/rest/v1/rpc/agent_refused_commands", "/rest/v1/rpc/agent_health") for c in calls), calls
+assert all(c["path"] in ("/rest/v1/rpc/agent_refused_calls", "/rest/v1/rpc/agent_refused_commands", "/rest/v1/rpc/agent_health") for c in calls), calls
 ' "$T/log" && ok || bad "$(cat "$T/log")"
 has "$body" "no model is involved"
 
@@ -124,7 +134,7 @@ it "the frontmatter and the allowlist are never touched"
 assert_eq "$(sed -n '1,/^---$/p' <<< "$before" | head -6)" "$(head -6 "$R/$CD")"
 it "a refusal the prompt cannot fix is listed for a person, and edits nothing"
 has "$(cat "$T/body.md")" "## For you to decide: allowlist candidates"
-has "$(cat "$T/body.md")" "| ci-diagnosis | program | 2 | \`git -C x log\` |"
+has "$(cat "$T/body.md")" "| ci-diagnosis | \`git -C\` | 2 | \`git -C x log\` |"
 it "verify, refused once for cd, is not changed; an agent with no source here is said so"
 assert_eq "$(source_md "Verify PR claims")" "$(cat "$R/.github/workflows/verify.md")"
 has "$(cat "$T/err")" "nobody-here has refused calls but no workflow source"
@@ -148,7 +158,7 @@ events "R('ci-diagnosis', 'cat a | head', '2026-11-01T00:00:00Z')" "R('ci-diagno
        "N('ci-diagnosis', '2026-11-01T00:00:00Z')" "N('ci-diagnosis', '2026-11-02T00:00:00Z')" \
        "N('ci-diagnosis', '2026-11-15T00:00:00Z')" "N('ci-diagnosis', '2026-11-16T00:00:00Z')" "N('ci-diagnosis', '2026-11-17T00:00:00Z')"
 improve; assert_eq 0 "$rc"
-has "$(cat "$T/body.md")" "| ci-diagnosis | compound | 2026-11-12 | 2 in 2 runs | 0 in 3 runs | fewer |"
+has "$(cat "$T/body.md")" "| ci-diagnosis | Compound commands | 2026-11-12 | 2 in 2 runs | 0 in 3 runs | fewer |"
 it "no better since it landed is said so"
 events "R('ci-diagnosis', 'cat a | head', '2026-11-01T00:00:00Z')" "N('ci-diagnosis', '2026-11-01T00:00:00Z')" \
        "R('ci-diagnosis', 'cat c | head', '2026-11-15T00:00:00Z')" "R('ci-diagnosis', 'cat d | head', '2026-11-16T00:00:00Z')" \
@@ -162,10 +172,43 @@ repo; events "R('ci-diagnosis', 'cat a | head', '$D1')"; git -C "$R" checkout -q
 improve --write --min 1; git -C "$R" add -A; GIT_COMMITTER_DATE=2026-11-05T00:00:00Z git -C "$R" commit -q -m rules
 git -C "$R" checkout -q main; GIT_COMMITTER_DATE=2026-11-12T00:00:00Z git -C "$R" merge -q --no-ff -m merge chore/rules
 events "R('ci-diagnosis', 'cat a | head', '2026-11-01T00:00:00Z')" "N('ci-diagnosis', '2026-11-01T00:00:00Z')"
-improve; has "$(cat "$T/body.md")" "| ci-diagnosis | compound | 2026-11-12 |"
+improve; has "$(cat "$T/body.md")" "| ci-diagnosis | Compound commands | 2026-11-12 |"
 it "a rule only in the working tree, not yet on main, is not measured"
 repo; events "R('ci-diagnosis', 'cat a | head', '$D1')" "R('ci-diagnosis', 'cat b | head', '$D1')"; improve --write
 lacks "$(cat "$T/body.md")" "## Rules already in place"
+
+it "candidates: one row per program, a git flag its own; what the allowlist allows by now is left out, and said so"
+repo; printf -- '---\nname: %s\ntools:\n  bash:\n    # read tools\n    - "cat:*"\n    - "git log:*"\n    - "mkdir -p /tmp/x"\n---\n\n# Do the work\n' "CI diagnosis" > "$R/$CD"
+events "R('ci-diagnosis', 'git -C x log', '$D1')" "R('ci-diagnosis', 'git -C y status', '$D2')" "R('ci-diagnosis', 'git --version', '$D2')" \
+       "R('ci-diagnosis', 'git log --oneline', '$D1')" "R('ci-diagnosis', 'mkdir -p /tmp/x', '$D2')" "R('ci-diagnosis', 'python3 -m venv /v', '$D2')" \
+       "R('ci-diagnosis', 'bash bin/commit-gate run x', '$D2')" "R('ci-diagnosis', 'bash bin/new.test.sh', '$D2')" \
+       "R('ci-diagnosis', 'catalog x', '$D2')"
+improve; b="$(cat "$T/body.md")"
+has "$b" "| ci-diagnosis | \`catalog\` | 1 |"   # cat:* allows cat, not another program that starts with it
+has "$b" "| ci-diagnosis | \`git -C\` | 2 | \`git -C"
+has "$b" "| ci-diagnosis | \`git --version\` | 1 |"; has "$b" "| ci-diagnosis | \`python3 -m venv\` | 1 |"
+has "$b" "| ci-diagnosis | \`bash bin/commit-gate\` | 1 |"; has "$b" "| ci-diagnosis | \`bash bin/new.test.sh\` | 1 |"
+has "$b" "Left out, as the agent's allowlist allows them by now: \`git log\` (ci-diagnosis), \`mkdir -p\` (ci-diagnosis)."
+lgc="$(printf '%s\n' "$b" | grep -n 'git -C' | head -1 | cut -d: -f1)"; lgv="$(printf '%s\n' "$b" | grep -n 'git --version' | head -1 | cut -d: -f1)"
+[ -n "$lgc" ] && [ -n "$lgv" ] && [ "$lgc" -lt "$lgv" ] && ok || bad "not the most refused first"
+
+it "with agent_refused_calls: examples link to their runs, and are kept longer"
+repo; long="cat $(python3 -c 'print("x" * 200)') | head"
+events "P()" "R('ci-diagnosis', '$long', '$D2', 'gh-aw-ci-diagnosis-777-2')" "R('ci-diagnosis', 'ls x && cat y', '$D1', 'gh-aw-ci-diagnosis-776-1')" \
+       "R('ci-diagnosis', 'git -C x log', '$D1', 'gh-aw-ci-diagnosis-776-1')"
+improve; b="$(cat "$T/body.md")"; assert_eq 0 "$rc"
+has "$b" "([run](https://github.com/o/r/actions/runs/777/attempts/2))"
+has "$b" "\`ls x && cat y\` ([run](https://github.com/o/r/actions/runs/776/attempts/1))"
+has "$b" "\`cat $(python3 -c 'print("x" * 156)')...\`"
+has "$b" "| ci-diagnosis | \`git -C\` | 1 | \`git -C x log\` ([run](https://github.com/o/r/actions/runs/776/attempts/1)) |"
+python3 -I -c '
+import json, sys
+paths = [json.loads(l)["path"] for l in open(sys.argv[1])]
+assert "/rest/v1/rpc/agent_refused_calls" in paths and "/rest/v1/rpc/agent_refused_commands" not in paths, paths
+' "$T/log" && ok || bad "$(cat "$T/log")"
+it "without agent_refused_calls in the store: the commands, unlinked, and it says why"
+repo; standard; improve; assert_eq 0 "$rc"; has "$(cat "$T/err")" "no agent_refused_calls yet"
+lacks "$(cat "$T/body.md")" "([run]("
 
 it "nothing refused says so"
 repo; events; improve; assert_eq "0 " "$rc $(cat "$T/out")"; has "$(cat "$T/body.md")" "No refused calls to act on."

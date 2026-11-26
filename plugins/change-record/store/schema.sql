@@ -281,6 +281,10 @@ create policy probe_verdicts_insert on public.probe_verdicts for insert to anon 
 -- rather than adding one): pass, fail and not applicable, and when the skill was last graded;
 -- a grading whose session the store does not hold has no repository.
 --
+-- agent_refused_calls: the same refused calls as agent_refused_commands, one row each, newest
+-- first, with the session they were in (so a run can be linked) and the command's first line cut
+-- to 300 characters; at most max_rows (up to 2000).
+--
 -- session_effort: per agent (a GitHub agent's sessions) or, for the others, per source (local,
 -- cloud, dispatch, eval), the sessions started since a time, how many carry effort counts
 -- (transcripts archive counts them per stream from 2026-11-26), and their sums over all streams,
@@ -307,6 +311,7 @@ drop function if exists public.agent_refused_commands(timestamptz, integer, text
 drop function if exists public.skill_usage(timestamptz, text);
 drop function if exists public.skill_grades(text);
 drop function if exists public.session_effort(timestamptz, text);
+drop function if exists public.agent_refused_calls(timestamptz, integer, text);
 
 create or replace function public.repo_key(repository text)
 returns text
@@ -451,6 +456,34 @@ as $$
   from latest l group by l.repository, l.skill, l.step order by l.repository, l.skill, l.step
 $$;
 
+create function public.agent_refused_calls(since timestamptz, max_rows integer default 500, repo text default null)
+returns table (repository text, agent text, session_id text, tool text, command text, at timestamptz)
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  with runs as (
+    select s.session_id, regexp_replace(s.session_id, '^gh-aw-(.*)-[0-9]+-[0-9]+$', '\1') as agent,
+           public.repo_key(max(s.entry ->> 'repository')) as repository
+    from public.sessions s where s.session_id ~ '^gh-aw-.+-[0-9]+-[0-9]+$'
+    group by s.session_id having min(s.created_at) >= since
+       and (repo is null or public.repo_key(max(s.entry ->> 'repository')) = public.repo_key(repo))
+  ), refused as (
+    select distinct m.session_id, m.call_id from public.messages m
+    where m.kind = 'result' and m.failed and m.text ~* '^Permission to use .* has been denied|not allowed'
+      and m.session_id in (select session_id from runs)
+  ), tried as (
+    select distinct on (c.session_id, c.call_id) c.session_id, c.tool, c.at,
+           left(replace(split_part(coalesce(substring(c.text from '"command": "((?:[^"\\]|\\.)*)"'), c.tool, '?'),
+                                   '\n', 1), '\"', '"'), 300) as command
+    from public.messages c join refused f on f.session_id = c.session_id and f.call_id = c.call_id
+    where c.kind = 'call'
+    order by c.session_id, c.call_id
+  )
+  select r.repository, r.agent, t.session_id, coalesce(t.tool, '?'), t.command, t.at
+  from tried t join runs r using (session_id)
+  order by t.at desc nulls last, t.session_id, t.command
+  limit greatest(least(max_rows, 2000), 0)
+$$;
+
 create function public.session_effort(since timestamptz, repo text default null)
 returns table (repository text, who text, sessions bigint, measured bigint, calls numeric, input_tokens numeric,
                output_tokens numeric, cache_read_tokens numeric, cache_write_tokens numeric, tool_calls numeric,
@@ -502,10 +535,10 @@ $$;
 
 revoke all on function public.repo_key(text), public.probe_report_loops(text), public.probe_report_probes(integer, text),
   public.agent_health(timestamptz, text), public.agent_refused_commands(timestamptz, integer, text),
-  public.skill_usage(timestamptz, text), public.skill_grades(text), public.session_effort(timestamptz, text)
-  from public, anon, authenticated;
+  public.skill_usage(timestamptz, text), public.skill_grades(text), public.session_effort(timestamptz, text),
+  public.agent_refused_calls(timestamptz, integer, text) from public, anon, authenticated;
 grant execute on function public.probe_report_loops(text), public.probe_report_probes(integer, text),
   public.agent_health(timestamptz, text), public.agent_refused_commands(timestamptz, integer, text),
-  public.skill_usage(timestamptz, text), public.skill_grades(text), public.session_effort(timestamptz, text)
-  to anon, service_role;
+  public.skill_usage(timestamptz, text), public.skill_grades(text), public.session_effort(timestamptz, text),
+  public.agent_refused_calls(timestamptz, integer, text) to anon, service_role;
 grant execute on function public.repo_key(text) to service_role;

@@ -445,6 +445,18 @@ out="$(sql_file "$here/schema.sql")"; rc=$?; assert_eq "0 " "$rc $out"
 assert_eq "patrickpriestley/meal-plan|verify|1|0|1" "$(as_role anon "select string_agg(concat_ws('|', repository, loop, probes, caught, missed), ';') from public.probe_report_loops('patrickpriestley/meal-plan')")"
 has "$(as_role authenticated "select count(*) from public.skill_grades()")" "permission denied for function skill_grades"
 
+# ---- agent_refused_calls: each refused call, with its session ----
+long="$(python3 -c 'print("a" * 400)')"
+assert_eq "INSERT 0 4" "$(sql "insert into public.messages (session_id, stream, chunk_id, shape, line, block, at, who, kind, tool, call_id, failed, text) values ('gh-aw-verify-pr-claims-21-1', 'main', $(h64 d), 1, 1, 0, now() - interval '1 hour', 'assistant', 'call', 'Bash', 'm9', false, '{\"command\": \"cat $long\"}'), ('gh-aw-verify-pr-claims-21-1', 'main', $(h64 d), 1, 2, 0, now() - interval '1 hour', 'tool', 'result', null, 'm9', true, 'Permission to use Bash has been denied.'), ('gh-aw-verify-pr-claims-21-1', 'main', $(h64 d), 1, 3, 0, now() - interval '2 hours', 'assistant', 'call', 'Bash', 'm10', false, '{\"command\": \"ls -la\"}'), ('gh-aw-verify-pr-claims-21-1', 'main', $(h64 d), 1, 4, 0, now() - interval '2 hours', 'tool', 'result', null, 'm10', true, 'Permission to use Bash has been denied.')")"
+it "refused calls: one row per call, newest first, with its session, for the repository"
+assert_eq "patrickpriestley/meal-plan|verify-pr-claims|gh-aw-verify-pr-claims-21-1|Bash|cat aaa;patrickpriestley/meal-plan|verify-pr-claims|gh-aw-verify-pr-claims-21-1|Bash|ls -la;patrickpriestley/meal-plan|verify-pr-claims|gh-aw-verify-pr-claims-21-1|Bash|pnpm te" "$(as_role anon "select string_agg(concat_ws('|', repository, agent, session_id, tool, left(command, 7)), ';') from public.agent_refused_calls(now() - interval '7 days', 10, 'PatrickPriestley/meal-plan')")"
+it "refused calls: the command's first line is cut to 300 characters, and max_rows is kept"
+assert_eq "300" "$(as_role anon "select length(command) from public.agent_refused_calls(now() - interval '7 days', 10, 'patrickpriestley/meal-plan') where command like 'cat %'")"
+assert_eq "1" "$(as_role anon "select count(*) from public.agent_refused_calls(now() - interval '7 days', 1, 'patrickpriestley/meal-plan')")"
+it "refused calls: the same calls agent_refused_commands counts, and only the key's functions may read them"
+assert_eq "$(as_role anon "select sum(times) from public.agent_refused_commands(now() - interval '7 days', 50)")" "$(as_role anon "select count(*) from public.agent_refused_calls(now() - interval '7 days', 2000)")"
+has "$(as_role authenticated "select count(*) from public.agent_refused_calls(now())")" "permission denied for function agent_refused_calls"
+
 # ---- session_effort: cost, effort and verbosity per agent or source ----
 ef="insert into public.sessions (session_id, row_id, sender, version, entry, created_at) values
  ('gh-aw-ci-diagnosis-70-1', $(h64 a), 's', 1, '{\"source\": \"agent\", \"repository\": \"github.com/patrickpriestley/effort\", \"streams\": {\"main\": {\"effort\": {\"calls\": 3, \"input\": 6, \"output\": 29, \"cache_read\": 100, \"cache_write\": 50, \"tool_calls\": 2, \"text_chars\": 40, \"posted_chars\": 300, \"cost_usd\": 0.25, \"turns\": 3, \"last\": {\"id\": \"m\"}}}, \"subagents/agent-x\": {\"effort\": {\"calls\": 1, \"output\": 17, \"tool_calls\": 1}}}}', now() - interval '1 day'),
