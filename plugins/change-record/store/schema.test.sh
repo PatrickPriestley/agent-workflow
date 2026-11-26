@@ -384,8 +384,11 @@ grades="insert into public.scores (session_id, step, skill, grader, verdict, gra
  ('rep-a', 'red-first', 'testplug:testskill', 'fields/1', 'fail', now() - interval '3 days'),
  ('rep-a', 'red-first', 'testplug:testskill', 'fields/1', 'pass', now() - interval '2 days'),
  ('rep-b', 'red-first', 'testplug:testskill', 'fields/1', 'not_applicable', now() - interval '2 days'),
- ('rep-b', 'tier-declared', 'testplug:testskill', 'fields/1', 'fail', now() - interval '2 days')"
-grades="$(printf '%s' "$grades" | tr '\n' ' ')"; assert_eq "INSERT 0 4" "$(sql "$grades")"
+ ('rep-b', 'tier-declared', 'testplug:testskill', 'fields/1', 'fail', now() - interval '2 days'),
+ ('rep-b', 'tier-declared', 'testplug:testskill', 'fields/2', 'pass', now() - interval '1 day'),
+ ('rep-a', 'tier-declared', 'testplug:testskill', 'fields/2', 'pass', now() - interval '2 days'),
+ ('rep-a', 'tier-declared', 'testplug:testskill', 'fields/3', 'fail', now() - interval '1 day')"
+grades="$(printf '%s' "$grades" | tr '\n' ' ')"; assert_eq "INSERT 0 7" "$(sql "$grades")"
 since="now() - interval '7 days'"
 it "health: per agent, runs, calls, refused calls and other errors, since a time"
 assert_eq "verify-pr-claims|2|4|2|1" "$(as_role anon "select string_agg(concat_ws('|', agent, runs, calls, refused, errors), ';' order by agent) from public.agent_health($since)")"
@@ -394,8 +397,9 @@ it "health: the refused commands, by their first line, most tried first"
 assert_eq 'verify-pr-claims|Bash|source <(grep x bin/commit-gate)|2' "$(as_role anon "select string_agg(concat_ws('|', agent, tool, command, times), ';') from public.agent_refused_commands($since, 10)")"
 it "skills: per skill and plugin, sessions in the period and in all, from each session's latest row, by where it ran"
 assert_eq "testplug:other|testplug|1|1|0|1|0|0;testplug:testskill|testplug|1|2|1|1|0|0" "$(as_role anon "select string_agg(concat_ws('|', skill, plugin, sessions, sessions_all, local, cloud, agent, dispatch), ';' order by skill) from public.skill_usage($since) where skill like 'testplug:%'")"
-it "skills: grades per step from each session's latest grading, and when it was last graded"
-assert_eq "testplug:testskill|red-first|2|1|0|1;testplug:testskill|tier-declared|1|0|1|0" "$(as_role anon "select string_agg(concat_ws('|', skill, step, sessions, pass, fail, not_applicable), ';' order by step) from public.skill_grades() where skill like 'testplug:%'")"
+it "skills: one verdict per session and step, its latest grading by any grader version, and when last graded"
+# fields/1, /2 and /3 are versions of one grader: a re-grading replaces the verdict, it is not a second vote.
+assert_eq "testplug:testskill|red-first|2|1|0|1;testplug:testskill|tier-declared|2|1|1|0" "$(as_role anon "select string_agg(concat_ws('|', skill, step, sessions, pass, fail, not_applicable), ';' order by step) from public.skill_grades() where skill like 'testplug:%'")"
 assert_eq "t" "$(as_role anon "select bool_and(last_graded > now() - interval '3 days') from public.skill_grades() where skill like 'testplug:%'")"
 it "health and skills: a signed-in user, or any other role, may not call them; they run as their owner with a fixed path"
 for f in "agent_health(now())" "agent_refused_commands(now(), 5)" "skill_usage(now())" "skill_grades()"; do
