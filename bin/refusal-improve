@@ -16,7 +16,10 @@ environment variable set in the command, the safeoutputs command, a script of it
 that was refused that way at least N times (default 2), it adds one fixed rule to the "Shell
 calls" section at the end of the agent's workflow source (.github/workflows/<file>.md, found by
 the workflow's name), between the BEGIN and END refusal-improver lines it keeps there. A rule
-already there is not added again; nothing is ever taken out. Without --write it changes
+already there is not added again; nothing is ever taken out. Some refusals also get a rule that
+names what to do instead, a command the agent's allowlist already has (HINTS: jq for JSON, a
+test's full path, a test run again as separate calls, a file given to head): one refusal is
+enough for those, and each is added only when the allowlist does hold that command. Without --write it changes
 nothing and says what it would change.
 
 It never edits an allowlist. A test file not on main's list, a bin/ tool or another program is
@@ -50,7 +53,7 @@ report = importlib.util.module_from_spec(_spec)
 _loader.exec_module(report)
 
 # What each kind of refusal is told in the prompt. Each rule only narrows what the agent does.
-RULES = {
+RULES = {  # the kinds of refusal; the hints' rules are added to these below
     "compound": "Every command in a call must be one of your assigned commands, each part joined with `&&`, `;`, "
                 "`||` or a pipe included; loops (`for`, `while`), subshells and `$(...)` are refused. When a step "
                 "needs more than that, make it separate calls.",
@@ -61,7 +64,7 @@ RULES = {
                    "`safeoutputs` shell command is refused.",
     "own": "Do not write a script and run it: run your assigned commands directly, one call each.",
 }
-ORDER = ["compound", "env", "cd", "safeoutputs", "own"]
+KINDS = ["compound", "env", "cd", "safeoutputs", "own"]
 FOR_A_PERSON = {"test", "tool", "program"}
 BEGIN = "<!-- BEGIN refusal-improver: bin/refusal-improve keeps this section; it adds rules and removes none -->"
 END = "<!-- END refusal-improver -->"
@@ -76,6 +79,43 @@ class Failed(Exception):
 TITLES = {"compound": "Compound commands", "env": "Environment variables set in a command", "cd": "Running cd",
           "safeoutputs": "The safeoutputs shell command", "own": "Running a script of its own"}
 WITH_ARG = ("git", "gh", "npm", "pnpm", "cargo", "go", "docker")
+
+
+def test_entries(patterns):
+    return [p for p in patterns if re.fullmatch(r"bash /\S+\.test\.sh", p)]
+
+
+# "Use this instead": a rule that names a command the agent is already allowed, for a refusal
+# that has one. Each says what it detects, what the allowlist must already hold for the rule to be
+# true, and the rule. One refusal is enough for these, as each only points at an allowed command.
+HINTS = {
+    "use-jq": {
+        "title": "Reading JSON",
+        "rule": "Read JSON files with `jq` (for example `jq '.jobs' FILE`): `python3` is not one of your commands.",
+        "match": lambda c: re.search(r"\bpython3?\b", c) is not None and "json" in c.lower(),
+        "needs": lambda ps: allowed("jq .", ps)},
+    "full-path": {
+        "title": "Running tests",
+        "rule": "Run a test file by the full path on your list, as `bash /tmp/gh-aw/...`; a relative path, or one "
+                "run after `cd`, is refused.",
+        "match": lambda c: re.search(r"(^|[;&|]\s*)bash\s+(?!/)\S+\.test\.sh", c) is not None,
+        "needs": lambda ps: bool(test_entries(ps))},
+    "rerun": {
+        "title": "Checking whether a test is flaky",
+        "rule": "To see whether a test fails every time, run it again as separate calls, up to three; a loop is "
+                "refused.",
+        "match": lambda c: re.search(r"\b(for|while)\b.*\.test\.sh", c) is not None,
+        "needs": lambda ps: bool(test_entries(ps))},
+    "head-file": {
+        "title": "Reading part of a file",
+        "rule": "Give the file to `head`, `tail` or `grep` itself (`head -n 50 FILE`), rather than piping `cat` into "
+                "them.",
+        "match": lambda c: re.search(r"\bcat\s+[^|;&]+\|\s*(head|tail|grep)\b", c) is not None,
+        "needs": lambda ps: any(allowed(f"{t} x", ps) for t in ("head", "tail", "grep"))},
+}
+ORDER = KINDS + list(HINTS)
+RULES.update({k: h["rule"] for k, h in HINTS.items()})
+TITLES.update({k: h["title"] for k, h in HINTS.items()})
 
 
 def program(command, kind, prog):
@@ -210,12 +250,13 @@ def body(repo, days, least, added, candidates, measured, allowed_now):
     if added:
         out += ["## Rules added to the agents' prompts", "",
                 f"Each goes in the \"Shell calls\" section at the end of the agent's prompt, for a kind of call the agent "
-                f"was refused at least {least} times. A rule only narrows what the agent does.", ""]
+                f"was refused at least {least} times, or once for a rule that names a command its allowlist already "
+                "has. A rule only narrows what the agent does, or points at what it may do instead.", ""]
         for k in kinds:
             out += [f"### {TITLES[k]}", "", "> " + RULES[k], ""]
             for a, kk, g in added:
                 if kk == k:
-                    out.append(f"- **{report.cell(a)}**: refused {g['n']} time{'s' if g['n'] != 1 else ''}, such as "
+                    out.append(f"- **{report.cell(a)}**: refused {'once' if g['n'] == 1 else str(g['n']) + ' times'}, such as "
                                + "; ".join(example(repo, c, sid) for c, sid in g["examples"]))
             out.append("")
         out += ["Each rule is measured once it is on main: the agent's refusals of that kind per run, against the 14 days "
@@ -303,8 +344,11 @@ def main(argv):
     def runs(since):
         return {r["agent"]: r["runs"] for r in report.call(url, key, "agent_health", {"since": iso(since), "repo": repo})}
 
+    def matches(command, kind):
+        return HINTS[kind]["match"](command) if kind in HINTS else report.tried(command)[0] == kind
+
     def count(rows, agent, kind):
-        return sum(r["times"] for r in rows if r["agent"] == agent and report.tried(r["command"])[0] == kind)
+        return sum(r["times"] for r in rows if r["agent"] == agent and matches(r["command"], kind))
 
     try:
         files = agents(root)
@@ -312,7 +356,7 @@ def main(argv):
         by, progs = {}, {}  # (agent, kind) -> {"n", "examples"}; (agent, program) -> the same, for a person
         for r in recent:
             kind, prog = report.tried(r["command"])
-            keys = [(by, (r["agent"], kind))]
+            keys = [(by, (r["agent"], kind))] + [(by, (r["agent"], h)) for h, d in HINTS.items() if d["match"](r["command"])]
             if kind in FOR_A_PERSON:
                 keys.append((progs, (r["agent"], kind, program(r["command"], kind, prog))))
             for table, k in keys:
@@ -330,8 +374,9 @@ def main(argv):
             full = os.path.join(root, path)
             text = open(full, encoding="utf-8").read()
             have = rules_in(text)
-            want = [k for k in ORDER if k not in have and by.get((agent, k), {}).get("n", 0) >= least]
             patterns = allowlist(text)
+            want = [k for k in ORDER if k not in have and by.get((agent, k), {}).get("n", 0) >= (1 if k in HINTS else least)
+                    and (k not in HINTS or HINTS[k]["needs"](patterns))]
             for (a, k, prog), g in sorted(progs.items(), key=lambda kv: (kv[0][0], -kv[1]["n"], kv[0][2])):
                 if a != agent:
                     continue

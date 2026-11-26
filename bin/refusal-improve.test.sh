@@ -210,6 +210,32 @@ it "without agent_refused_calls in the store: the commands, unlinked, and it say
 repo; standard; improve; assert_eq 0 "$rc"; has "$(cat "$T/err")" "no agent_refused_calls yet"
 lacks "$(cat "$T/body.md")" "([run]("
 
+it "hints: one refusal with an allowed alternative gets the rule that names it; none without the alternative"
+repo; printf -- '---\nname: %s\ntools:\n  bash:\n    - "jq:*"\n    - "head:*"\n    - "bash /tmp/w/bin/a.test.sh"\n---\n\n# Do the work\n' "CI diagnosis" > "$R/$CD"
+events "R('ci-diagnosis', 'cat runs.json | python3 -m json.tool', '$D2')" "R('ci-diagnosis', 'cd /tmp/w && bash bin/a.test.sh', '$D2')" \
+       "R('ci-diagnosis', 'for i in 1 2; do bash /tmp/w/bin/a.test.sh; done', '$D2')" "R('ci-diagnosis', 'cat log.txt | head -5', '$D2')" \
+       "R('verify-pr-claims', 'cat runs.json | python3 -m json.tool', '$D2')"
+improve --write; assert_eq 0 "$rc"; f="$(cat "$R/$CD")"; b="$(cat "$T/body.md")"
+for k in use-jq full-path rerun head-file; do has "$f" "<!-- rule: $k -->"; done
+has "$b" "### Reading JSON"; has "$b" "> Read JSON files with \`jq\`"; has "$b" "- **ci-diagnosis**: refused once, such as"
+lacks "$(cat "$R/.github/workflows/verify.md")" "rule: use-jq"   # verify has no jq to point at
+# the four are compound calls as well, so the compound rule comes too, first, in the fixed order
+assert_eq "compound use-jq full-path rerun head-file" "$(grep -o 'rule: [a-z-]*' "$R/$CD" | cut -d' ' -f2 | tr '\n' ' ' | sed 's/ $//')"
+it "hints: a call that only looks like one is not taken for it"
+repo; printf -- '---\nname: %s\ntools:\n  bash:\n    - "jq:*"\n    - "head:*"\n    - "bash /tmp/w/bin/a.test.sh"\n---\n\n# Do the work\n' "CI diagnosis" > "$R/$CD"
+events "R('ci-diagnosis', 'python3 -m venv /v', '$D2')" "R('ci-diagnosis', 'bash /tmp/w/bin/a.test.sh; echo done', '$D2')" \
+       "R('ci-diagnosis', 'grep x a.txt | head', '$D2')" "R('ci-diagnosis', 'for f in a b; do echo f; done', '$D2')" \
+       "R('ci-diagnosis', 'cat a.txt | wc -l', '$D2')"
+improve --write; f="$(cat "$R/$CD")"
+for k in use-jq full-path rerun head-file; do lacks "$f" "<!-- rule: $k -->"; done
+it "hints: a hint on main is measured by the calls it is for"
+repo; printf -- '---\nname: %s\ntools:\n  bash:\n    - "jq:*"\n---\n\n# Do the work\n' "CI diagnosis" > "$R/$CD"; git -C "$R" add -A; git -C "$R" commit -q -m src
+events "R('ci-diagnosis', 'cat r.json | python3 -m json.tool', '$D1')"; improve --write; git -C "$R" add -A
+GIT_COMMITTER_DATE=2026-11-12T00:00:00Z git -C "$R" commit -q -m hint
+events "R('ci-diagnosis', 'cat r.json | python3 -m json.tool', '2026-11-01T00:00:00Z')" "N('ci-diagnosis', '2026-11-01T00:00:00Z')" \
+       "N('ci-diagnosis', '2026-11-15T00:00:00Z')" "N('ci-diagnosis', '2026-11-16T00:00:00Z')" "N('ci-diagnosis', '2026-11-17T00:00:00Z')"
+improve; has "$(cat "$T/body.md")" "| ci-diagnosis | Reading JSON | 2026-11-12 | 1 in 1 runs | 0 in 3 runs | fewer |"
+
 it "nothing refused says so"
 repo; events; improve; assert_eq "0 " "$rc $(cat "$T/out")"; has "$(cat "$T/body.md")" "No refused calls to act on."
 it "a store that fails fails the run and changes nothing"
