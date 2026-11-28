@@ -745,6 +745,19 @@ out="$(grade --new 2>&1)"; assert_eq 2 "$?"; has "$out" "needs --store"
 rm -f "$AR/scores/$D2.json"
 out="$(AGENT_TRANSCRIPTS_URL="http://127.0.0.1:1" grade --session "$D2" --store --new 2>&1)"; rc=$?
 assert_eq "1 no" "$rc $([ -f "$AR/scores/$D2.json" ] && echo yes || echo no)"; has "$out" "could not be read"
+it "--same-repo grades only the sessions of the repository at --repo-dir; another's are left for its own checkout"
+for x in "same-repo-session-1 github.com/owner/shout" "other-repo-session-1 github.com/someone/else"; do
+  set -- $x
+  python3 -c 'import json,sys; e=json.load(open(sys.argv[1])); e["repository"]=sys.argv[3]; json.dump(e, open(sys.argv[2], "w"))' "$AR/sessions/$D2.json" "$AR/sessions/$1.json" "$2"
+  [ -d "$AR/parts/$D2" ] && cp -R "$AR/parts/$D2" "$AR/parts/$1"; rm -f "$AR/scores/$1.json"
+done
+out="$(grade --session same-repo-session-1 --session other-repo-session-1 --same-repo 2>&1)"; rc=$?
+assert_eq "0 yes no" "$rc $([ -f "$AR/scores/same-repo-session-1.json" ] && echo yes || echo no) $([ -f "$AR/scores/other-repo-session-1.json" ] && echo yes || echo no)"
+has "$out" "1 of other repositories left for their own checkouts"
+out="$(grade --session other-repo-session-1 2>&1)"; [ -f "$AR/scores/other-repo-session-1.json" ] && ok || bad "without --same-repo every session is graded: $out"
+NOORIGIN="$TMPROOT/no-origin"; mkdir -p "$NOORIGIN" && git -C "$NOORIGIN" init -q
+out="$("$T" grade "$AR" --repo-dir "$NOORIGIN" --same-repo 2>&1)"; assert_eq 2 "$?"; has "$out" "has no origin remote"
+for x in same-repo-session-1 other-repo-session-1; do rm -rf "$AR/sessions/$x.json" "$AR/parts/$x" "$AR/scores/$x.json"; done
 it "a GitHub agent's session is not graded against the change skill"
 AG=gh-aw-property-scout-45631299483-1
 python3 -c 'import json,sys; e=json.load(open(sys.argv[1])); e["source"]="agent"; json.dump(e, open(sys.argv[2], "w"))' "$AR/sessions/$D2.json" "$AR/sessions/$AG.json"

@@ -1,6 +1,6 @@
 # Reusable workflows
 
-Six of this repository's plain workflows (no model in them) can be called from another
+Seven of this repository's plain workflows (no model in them) can be called from another
 repository, so it reports to the same transcript store and gets every fix here without copying
 files:
 
@@ -12,9 +12,12 @@ files:
 | `probe-score.yml` | Scores one probe against its sealed key, stores the scores, closes it |
 | `probe-score-auto.yml` | Every three hours, dispatches `probe-score.yml` for each probe that is ready |
 | `probe-sweep.yml` | Daily, deletes closed probes' branches, closes probes left open 14 days, and closes gh-aw's expired issues |
+| `refusal-improve.yml` | Weekly, a pull request of rules for the caller's agents' refused shell calls, and the measure of those already in place |
 
-Each checks out its tools (`bin/`, `plugins/change-record`) from this repository, never the
-caller's code: they read the caller through the GitHub API and its artifacts. `github.repository`
+Each checks out its tools (`bin/`, `plugins/change-record`) from this repository, and reads
+the caller through the GitHub API and its artifacts. Only `refusal-improve.yml` checks out the
+caller too, with its history, because it edits the caller's agent prompts; its tools go beside
+it, in `.agent-workflow-tools`. `github.repository`
 in them is the caller, so everything they store or report is the caller's.
 
 ## Updates and pinning
@@ -41,7 +44,9 @@ it uses:
   functions take a repository, and each row carries its own.
 - `PROBE_KEY`: opens the planter's sealed answer keys (probe scoring only).
 - `PROBE_TOKEN`: a fine-grained token that can label pull requests, so the label starts CI fix
-  (probe-ci-fix only).
+  (probe-ci-fix); for refusal-improve, one with Contents, Pull requests and Workflows read and
+  write, as its pull request changes the agents' lock files, and opened with this token it
+  starts CI and the review agents.
 
 A called workflow gets no more permissions than the calling job grants, so each caller below
 grants what its workflow needs.
@@ -167,6 +172,37 @@ permissions:
 jobs:
   sweep:
     uses: PatrickPriestley/agent-workflow/.github/workflows/probe-sweep.yml@main
+```
+
+### The refusal improver
+
+It tunes the caller's own gh-aw agents (their workflow sources, `.github/workflows/*.md`, found by
+name), from their sessions in the store, so the caller needs `agent-sessions.yml` collecting them
+first. It adds rules to their prompts, rebuilds their lock files with the gh-aw version those were
+built with, lists allowlist candidates for a person, and never edits an allowlist.
+
+```yaml
+name: refusal-improve
+on:
+  schedule:
+    - cron: "13 9 * * 3"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  improve:
+    uses: PatrickPriestley/agent-workflow/.github/workflows/refusal-improve.yml@main
+    with:
+      dry_run: ${{ inputs.dry_run || false }}
+    secrets:
+      AGENT_TRANSCRIPTS_URL: ${{ secrets.AGENT_TRANSCRIPTS_URL }}
+      AGENT_TRANSCRIPTS_INSERT_KEY: ${{ secrets.AGENT_TRANSCRIPTS_INSERT_KEY }}
+      PROBE_TOKEN: ${{ secrets.PROBE_TOKEN }}
 ```
 
 For loud probes, name the caller's test workflow:

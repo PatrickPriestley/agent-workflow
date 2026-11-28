@@ -193,7 +193,10 @@ refuses them in any agent workflow, as it does `PROBE_KEY`.
    tool calls, the text it wrote and what it posted through safe outputs, and the cost a gh-aw
    run reported (the collector keeps its result line); `session_effort` sums them per agent
    or source, and the weekly report shows them per run and suggests a look at an agent whose
-   cost or posting per run rose by half. Then the
+   cost or posting per run rose by half. For other repositories (2026-11-28): the refusal
+   improver is a reusable workflow too, and `transcripts grade --same-repo` grades only the
+   sessions of the repository checked out, so the weekly grading can take each repository
+   against its own history. Then the
    improver, built on `transcripts propose` and `compare` (above): first one target, the
    verify agent's prompt, with a replay case from a probe it missed; then the other agents,
    Open Code Review's rules and other skills, each with its own replay case. Fed by probe

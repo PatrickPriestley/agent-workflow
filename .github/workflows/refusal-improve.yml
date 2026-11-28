@@ -12,8 +12,13 @@ name: refusal-improve
 # opens no other.
 #
 # The pull request is opened with PROBE_TOKEN, so CI and the review agents run on it (one the
-# built-in token opens would start no workflow). That token is in the push and pull request
-# steps alone; the compiler runs without it.
+# built-in token opens would start no workflow); it needs Contents, Pull requests and Workflows
+# (the lock files are workflows). That token is in the push and pull request steps alone; the
+# compiler runs without it.
+#
+# Other repositories call it (docs/reusable-workflows.md): it checks out the caller, with its
+# history, and this repository's tools beside it in .agent-workflow-tools, and edits only the
+# caller's own agents.
 on:
   schedule:
     - cron: "13 9 * * 3"
@@ -23,6 +28,27 @@ on:
         description: "Only say what it would change"
         type: boolean
         default: false
+  workflow_call:  # other repositories: docs/reusable-workflows.md
+    inputs:
+      dry_run:
+        description: "Only say what it would change"
+        type: boolean
+        default: false
+      tools-repository:
+        description: "Where the probe and transcript tools come from"
+        type: string
+        default: PatrickPriestley/agent-workflow
+      tools-ref:
+        description: "The tools' branch, tag or commit; pin it to the ref you call this workflow at"
+        type: string
+        default: main
+    secrets:
+      AGENT_TRANSCRIPTS_URL:
+        required: false
+      AGENT_TRANSCRIPTS_INSERT_KEY:
+        required: false
+      PROBE_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -37,9 +63,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the repository whose agents it tunes
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0  # each rule is measured from the commit that brought it to main
+          persist-credentials: false
+      - name: Check out the tools
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}
+          ref: ${{ inputs.tools-ref || 'main' }}
+          path: .agent-workflow-tools
           persist-credentials: false
 
       - name: Find the rules to add
@@ -63,7 +97,8 @@ jobs:
             echo "An earlier pull request of this workflow is still open: measuring only." >> "$GITHUB_STEP_SUMMARY"
             write=()
           fi
-          python3 -I bin/refusal-improve --repo "$REPO" ${write[@]+"${write[@]}"} --body "$RUNNER_TEMP/body.md" > "$RUNNER_TEMP/changed.txt"
+          python3 -I .agent-workflow-tools/bin/refusal-improve --repo "$REPO" --root . ${write[@]+"${write[@]}"} \
+            --body "$RUNNER_TEMP/body.md" > "$RUNNER_TEMP/changed.txt"
           cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
           if [ ${#write[@]} -gt 0 ] && [ -s "$RUNNER_TEMP/changed.txt" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -78,17 +113,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -u
-          version="$(sed -n 's/^# gh-aw-metadata: .*"compiler_version":"\(v[0-9][0-9.]*\)".*/\1/p' .github/workflows/ci-diagnose.lock.yml)"
-          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::no gh-aw compiler version in the lock files"; exit 1; }
-          gh extension install github/gh-aw --pin "$version"
           while IFS= read -r path; do
             [[ "$path" =~ ^\.github/workflows/[a-z0-9-]+\.md$ ]] || { echo "::error::unexpected path: $path"; exit 1; }
-            name="$(basename "$path" .md)"
-            gh aw compile "$name"
           done < "$RUNNER_TEMP/changed.txt"
-          bin/agent-allowlists-sync --check
-          bash bin/agent-allowlists.test.sh > "$RUNNER_TEMP/allowlists.txt" || { cat "$RUNNER_TEMP/allowlists.txt"; exit 1; }
-          git status --short
+          # the version the first changed agent's lock file was built with
+          lock="$(head -1 "$RUNNER_TEMP/changed.txt" | sed 's/\.md$/.lock.yml/')"
+          version="$(sed -n 's/^# gh-aw-metadata: .*"compiler_version":"\(v[0-9][0-9.]*\)".*/\1/p' "$lock" 2>/dev/null)"
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::no gh-aw compiler version in $lock"; exit 1; }
+          gh extension install github/gh-aw --pin "$version"
+          while IFS= read -r path; do
+            gh aw compile "$(basename "$path" .md)"
+          done < "$RUNNER_TEMP/changed.txt"
+          # this repository keeps its agents' allowlists in step with its tests; a caller may not
+          if [ -x bin/agent-allowlists-sync ]; then
+            bin/agent-allowlists-sync --check
+            bash bin/agent-allowlists.test.sh > "$RUNNER_TEMP/allowlists.txt" || { cat "$RUNNER_TEMP/allowlists.txt"; exit 1; }
+          fi
+          git status --short -- .github/workflows
 
       - name: Open the pull request
         if: steps.plan.outputs.changed == 'true'
@@ -96,6 +137,7 @@ jobs:
         env:
           PROBE_TOKEN: ${{ secrets.PROBE_TOKEN }}
           REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -u
           [ -n "$PROBE_TOKEN" ] || { echo "::error::PROBE_TOKEN is needed to open the pull request"; exit 1; }
@@ -109,5 +151,5 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$PROBE_TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
           git -c http.extraheader="AUTHORIZATION: basic $auth" push -q "https://github.com/$REPO.git" "HEAD:refs/heads/$branch"
-          GH_TOKEN="$PROBE_TOKEN" gh pr create --repo "$REPO" --base main --head "$branch" \
+          GH_TOKEN="$PROBE_TOKEN" gh pr create --repo "$REPO" --base "${DEFAULT_BRANCH:-main}" --head "$branch" \
             --title "chore(agents): shell-call rules from the agents' refused calls" --body-file "$RUNNER_TEMP/body.md"

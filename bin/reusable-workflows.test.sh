@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the reusable workflows (docs/reusable-workflows.md): six plain workflows other
+# Tests for the reusable workflows (docs/reusable-workflows.md): seven plain workflows other
 # repositories call. Each must declare, under workflow_call, every input and secret it reads (a
 # caller's are not seen otherwise), check out only this repository's tools, and the guide's
 # example callers must call them with declared inputs and secrets only.
@@ -11,7 +11,7 @@ it() { CURRENT="$1"; }
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$CURRENT"; }
 bad() { fail=$((fail+1)); printf '  FAIL %s\n       %s\n' "$CURRENT" "$1"; }
 assert_eq() { [ "$1" = "$2" ] && ok || bad "expected [$1] got [$2]"; }
-SHARED="probe-report agent-sessions probe-ci-fix probe-score probe-score-auto probe-sweep"
+SHARED="probe-report agent-sessions probe-ci-fix probe-score probe-score-auto probe-sweep refusal-improve"
 
 check() {  # python3 check over the workflows and the guide; prints one line per problem
   python3 -I - "$root" "$1" $SHARED <<'PY'
@@ -49,6 +49,7 @@ def declared(text):
     return inputs, secrets
 
 wf = {n: open(f"{root}/.github/workflows/{n}.yml").read() for n in names}
+EDITS_CALLER = {"refusal-improve"}  # checks out the caller too, to edit its agents' prompts
 problems = []
 if what == "workflows":
     for n, text in wf.items():
@@ -60,10 +61,10 @@ if what == "workflows":
             problems.append(f"{n}: reads secret {s} but workflow_call does not declare it")
         for i in sorted(set(re.findall(r"inputs\.([A-Za-z0-9_-]+)", body)) - set(inputs)):
             problems.append(f"{n}: reads input {i} but workflow_call does not declare it")
-        checkouts = body.count("actions/checkout@")
+        checkouts = body.count("actions/checkout@") - (n in EDITS_CALLER)  # its own first checkout is the caller
         tools = body.count("repository: ${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}")
         refs = body.count("ref: ${{ inputs.tools-ref || 'main' }}")
-        if not (checkouts == tools == refs) or body.count("persist-credentials: false") < checkouts:
+        if not (checkouts == tools == refs) or body.count("persist-credentials: false") < checkouts + (n in EDITS_CALLER):
             problems.append(f"{n}: a checkout that is not this repository's tools, or keeps credentials")
         if checkouts and not {"tools-repository", "tools-ref"} <= set(inputs):
             problems.append(f"{n}: checks out tools but takes no tools-repository and tools-ref")

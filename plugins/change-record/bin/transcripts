@@ -9,7 +9,7 @@
   transcripts materialize DIR [--session ID]... [--repo-dir DIR]
   transcripts messages [--session ID]... [--check]
   transcripts redact < lines > redacted-lines
-  transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store [--new]]
+  transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--same-repo] [--store [--new]]
   transcripts grade --transcript FILE [--cwd DIR]
   transcripts sheet [DIR] [--session ID]... [--repo-dir DIR] [--labels DIR]
   transcripts sheet --transcript FILE... --out DIR [--labels DIR]
@@ -99,7 +99,9 @@ evidence. The record is read at the session's first and last commit from the git
 row per step to DIR/scores/<sessionId>.json and prints a summary. --store also inserts the rows
 into the store's scores table at AGENT_TRANSCRIPTS_URL with the read key (the owner's machine
 only); with --new, only the sessions the store holds no rows for from this grader version
-(GRADER), so a scheduled run grades each session once. A GitHub agent's session (source agent)
+(GRADER), so a scheduled run grades each session once. --same-repo grades only the sessions of
+the repository checked out at --repo-dir (its origin), so a run over several repositories
+grades each one's sessions against its own history, and none against another's. A GitHub agent's session (source agent)
 is not graded: the agents review and fix pull requests, and the change skill's steps are not
 theirs to follow. A session it cannot grade (a line that is not JSON, a commit the repository
 lacks) is reported and the others are graded; the exit status is then 1. --transcript grades one
@@ -1740,7 +1742,7 @@ def grade_one(fields, lines, sid, entry, repo, scratch, note, root=None):
 
 
 def cmd_grade(args):
-    d, only, repo, store, transcript, cwd, new, i = None, [], os.getcwd(), False, None, None, False, 0
+    d, only, repo, store, transcript, cwd, new, same, i = None, [], os.getcwd(), False, None, None, False, False, 0
     while i < len(args):
         a = args[i]
         if a in ("--session", "--repo-dir", "--transcript", "--cwd") and i + 1 < len(args):
@@ -1758,10 +1760,13 @@ def cmd_grade(args):
             store, i = True, i + 1
         elif a == "--new":
             new, i = True, i + 1
+        elif a == "--same-repo":
+            same, i = True, i + 1
         elif d is None and not a.startswith("--"):
             d, i = a, i + 1
         else:
-            say("usage: transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--store [--new]] | grade --transcript FILE [--cwd DIR]")
+            say("usage: transcripts grade [DIR] [--session ID]... [--repo-dir DIR] [--same-repo] [--store [--new]] "
+                "| grade --transcript FILE [--cwd DIR]")
             return 2
     if new and not store:
         say("--new reads what the store has graded: it needs --store")
@@ -1803,7 +1808,20 @@ def cmd_grade(args):
         return 2
     sids = sorted(os.path.basename(p)[:-5] for p in glob.glob(os.path.join(d, "sessions", "*.json")))
     sids = [s for s in sids if not only or s in only]
-    graded = failed = stored = skipped = 0
+    graded = failed = stored = skipped = elsewhere = 0
+    if same:
+        here = (repository(repo) or "").lower()
+        if not here:
+            say(f"--same-repo: {repo} has no origin remote to name its repository; nothing graded")
+            return 2
+
+        def of(sid):
+            try:
+                return (json.load(open(os.path.join(d, "sessions", sid + ".json"))).get("repository") or "").lower()
+            except (OSError, ValueError, AttributeError):
+                return ""
+        kept = [s for s in sids if of(s) == here]
+        elsewhere, sids = len(sids) - len(kept), kept
     if new:
         try:
             done = {r["session_id"] for r in read_rows(url, key, "/rest/v1/scores?select=session_id&grader=eq."
@@ -1848,6 +1866,7 @@ def cmd_grade(args):
                     store = False
     print(f"transcripts: graded {graded} sessions into {d}/scores" + (f", {failed} with problems" if failed else "")
           + (f"; {skipped} already graded in the store" if new else "")
+          + (f"; {elsewhere} of other repositories left for their own checkouts" if same else "")
           + (f"; stored {stored} score rows at {url}" if url else ""))
     return 1 if failed else 0
 

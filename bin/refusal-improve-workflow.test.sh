@@ -44,8 +44,8 @@ lacks "$w" "gh pr merge|--force|push -f|refs/heads/main"
 
 # The planning step, run with stubs: the improver and gh.
 T="$(mktemp -d "${TMPDIR:-/tmp}/refusal-improve-wf.XXXXXX")"; [ -n "${KEEP:-}" ] || trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/ws/bin" "$T/stub"
-cat > "$T/ws/bin/refusal-improve" <<'STUB'
+mkdir -p "$T/ws/.agent-workflow-tools/bin" "$T/stub"
+cat > "$T/ws/.agent-workflow-tools/bin/refusal-improve" <<'STUB'
 #!/usr/bin/env python3
 import os, sys
 args = sys.argv[1:]
@@ -65,7 +65,7 @@ plan() {  # -> $rc; summary in $T/summary, outputs in $T/output
     STUB_CHANGES="${CHANGES:-}" STUB_OPEN="${OPEN:-}" bash --noprofile --norc -eo pipefail -c "$(script_of 'Find the rules to add')") > "$T/out" 2>&1; rc=$?
 }
 it "on schedule it writes the rules, and a change goes on to a pull request"
-CHANGES=1 plan; assert_eq 0 "$rc"; has "$(cat "$T/summary")" "body: --repo o/r --write --body"; assert_eq "changed=true" "$(cat "$T/output")"
+CHANGES=1 plan; assert_eq 0 "$rc"; has "$(cat "$T/summary")" "body: --repo o/r --root . --write --body"; assert_eq "changed=true" "$(cat "$T/output")"
 it "with nothing to change, no pull request"
 plan; assert_eq "changed=false" "$(cat "$T/output")"
 it "a dry run only says what it would do"
@@ -74,6 +74,20 @@ it "while its earlier pull request is open, it only measures"
 OPEN="chore/refusal-rules-2026-11-25" CHANGES=1 plan; assert_eq 0 "$rc"
 has "$(cat "$T/summary")" "still open: measuring only"; lacks "$(cat "$T/summary")" "--write"; assert_eq "changed=false" "$(cat "$T/output")"
 OPEN="feat/other" CHANGES=1 plan; assert_eq "changed=true" "$(cat "$T/output")"
+
+it "other repositories call it: the caller is checked out with its history, the tools beside it, both without credentials"
+has "$w" "workflow_call:"; has "$w" "path: .agent-workflow-tools"
+has "$w" "repository: \${{ inputs.tools-repository || 'PatrickPriestley/agent-workflow' }}"
+assert_eq 2 "$(grep -c 'persist-credentials: false' "$wf")"
+has "$(script_of 'Find the rules to add')" "python3 -I .agent-workflow-tools/bin/refusal-improve --repo \"\$REPO\" --root ."
+it "the compiler is the version the changed agent's own lock was built with, and the allowlist checks run where the caller has them"
+s="$(script_of 'Rebuild the changed')"
+has "$s" "lock=\"\$(head -1 \"\$RUNNER_TEMP/changed.txt\" | sed 's/\\.md\$/.lock.yml/')\""
+has "$s" "if [ -x bin/agent-allowlists-sync ]; then"
+lacks "$s" "ci-diagnose.lock.yml"
+it "the pull request goes to the caller's default branch"
+has "$(step_of 'Open the pull request')" 'DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}'
+has "$(script_of 'Open the pull request')" '--base "${DEFAULT_BRANCH:-main}"'
 
 it "this test runs in CI"
 grep -qF 'bash bin/refusal-improve-workflow.test.sh' "$root/.github/workflows/test.yml" && ok || bad "not in test.yml"
